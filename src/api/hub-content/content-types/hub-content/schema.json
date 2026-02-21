@@ -1,0 +1,51 @@
+{
+  "kind": "collectionType",
+  "collectionName": "hub_contents",
+  "info": {
+    "singularName": "hub-content",
+    "pluralName": "hub-contents",
+    "displayName": "HubContent"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "kind": {
+      "type": "string"
+    },
+    "state": {
+      "type": "string"
+    },
+    "authorName": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
+    "descShort": {
+      "type": "text"
+    },
+    "description": {
+      "type": "text"
+    },
+    "body": {
+      "type": "text"
+    },
+    "content": {
+      "type": "text"
+    },
+    "location": {
+      "type": "string"
+    },
+    "likes": {
+      "type": "integer"
+    },
+    "comments": {
+      "type": "integer"
+    },
+    "createdAtClient": {
+      "type": "datetime"
+    }
+  }
+}

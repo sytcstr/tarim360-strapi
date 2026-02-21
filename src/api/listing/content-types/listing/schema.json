@@ -1,0 +1,124 @@
+{
+  "kind": "collectionType",
+  "collectionName": "listings",
+  "info": {
+    "singularName": "listing",
+    "pluralName": "listings",
+    "displayName": "Listing"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "title": {
+      "type": "string"
+    },
+    "description": {
+      "type": "text"
+    },
+    "mode": {
+      "type": "string"
+    },
+    "mainType": {
+      "type": "string"
+    },
+    "subType": {
+      "type": "string"
+    },
+    "price": {
+      "type": "decimal"
+    },
+    "priceUnit": {
+      "type": "string"
+    },
+    "demandAmount": {
+      "type": "decimal"
+    },
+    "maxBudget": {
+      "type": "decimal"
+    },
+    "hasatYear": {
+      "type": "integer"
+    },
+    "hasatDate": {
+      "type": "string"
+    },
+    "qualityGrade": {
+      "type": "string"
+    },
+    "moisture": {
+      "type": "decimal"
+    },
+    "protein": {
+      "type": "decimal"
+    },
+    "certificateType": {
+      "type": "string"
+    },
+    "analysisNote": {
+      "type": "text"
+    },
+    "packaging": {
+      "type": "string"
+    },
+    "storage": {
+      "type": "string"
+    },
+    "delivery": {
+      "type": "string"
+    },
+    "minOrder": {
+      "type": "decimal"
+    },
+    "minOrderUnit": {
+      "type": "string"
+    },
+    "location": {
+      "type": "json"
+    },
+    "ownerProfileId": {
+      "type": "string"
+    },
+    "ownerId": {
+      "type": "string"
+    },
+    "ownerName": {
+      "type": "string"
+    },
+    "ownerCity": {
+      "type": "string"
+    },
+    "ownerEmail": {
+      "type": "email"
+    },
+    "isPremiumOwner": {
+      "type": "boolean"
+    },
+    "isPremium": {
+      "type": "boolean"
+    },
+    "isDoping": {
+      "type": "boolean"
+    },
+    "rocketEndsAt": {
+      "type": "datetime"
+    },
+    "listingNo": {
+      "type": "integer"
+    },
+    "createdAtClient": {
+      "type": "datetime"
+    },
+    "photos": {
+      "type": "media",
+      "multiple": true,
+      "allowedTypes": [
+        "images",
+        "files",
+        "videos",
+        "audios"
+      ]
+    }
+  }
+}

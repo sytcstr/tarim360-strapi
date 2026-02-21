@@ -1,0 +1,42 @@
+{
+  "kind": "collectionType",
+  "collectionName": "notifications",
+  "info": {
+    "singularName": "notification",
+    "pluralName": "notifications",
+    "displayName": "Notification"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "notificationId": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
+    "message": {
+      "type": "text"
+    },
+    "isRead": {
+      "type": "boolean"
+    },
+    "targetEmail": {
+      "type": "string"
+    },
+    "targetProfileId": {
+      "type": "string"
+    },
+    "createdAtClient": {
+      "type": "datetime"
+    },
+    "updatedAtClient": {
+      "type": "datetime"
+    }
+  }
+}

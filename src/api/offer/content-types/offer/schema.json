@@ -1,0 +1,66 @@
+{
+  "kind": "collectionType",
+  "collectionName": "offers",
+  "info": {
+    "singularName": "offer",
+    "pluralName": "offers",
+    "displayName": "Offer"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "offerId": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
+    "listingId": {
+      "type": "string"
+    },
+    "qtyText": {
+      "type": "string"
+    },
+    "priceText": {
+      "type": "string"
+    },
+    "note": {
+      "type": "text"
+    },
+    "imageUrl": {
+      "type": "string"
+    },
+    "ownerName": {
+      "type": "string"
+    },
+    "ownerCity": {
+      "type": "string"
+    },
+    "ownerAvatarUrl": {
+      "type": "string"
+    },
+    "offerStatus": {
+      "type": "string"
+    },
+    "isIncoming": {
+      "type": "boolean"
+    },
+    "direction": {
+      "type": "string"
+    },
+    "requesterEmail": {
+      "type": "string"
+    },
+    "requesterProfileId": {
+      "type": "string"
+    },
+    "approved": {
+      "type": "boolean"
+    },
+    "createdAtClient": {
+      "type": "datetime"
+    }
+  }
+}

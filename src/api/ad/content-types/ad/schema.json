@@ -1,0 +1,123 @@
+{
+  "kind": "collectionType",
+  "collectionName": "ads",
+  "info": {
+    "singularName": "ad",
+    "pluralName": "ads",
+    "displayName": "Ad"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "title": {
+      "type": "string"
+    },
+    "description": {
+      "type": "text"
+    },
+    "mediaUrl": {
+      "type": "string"
+    },
+    "mediaType": {
+      "type": "string"
+    },
+    "prompt": {
+      "type": "text"
+    },
+    "requestedByEmail": {
+      "type": "string"
+    },
+    "requestedByProfileId": {
+      "type": "string"
+    },
+    "requestedByName": {
+      "type": "string"
+    },
+    "requestedByCity": {
+      "type": "string"
+    },
+    "smartAdsPlanTitle": {
+      "type": "string"
+    },
+    "smartAdsPlanDays": {
+      "type": "integer"
+    },
+    "smartAdsPriceTl": {
+      "type": "integer"
+    },
+    "smartAdsTransactionId": {
+      "type": "string"
+    },
+    "requestedAt": {
+      "type": "datetime"
+    },
+    "publishStartsAt": {
+      "type": "datetime"
+    },
+    "publishEndsAt": {
+      "type": "datetime"
+    },
+    "publishDurationDays": {
+      "type": "integer"
+    },
+    "approvalStatus": {
+      "type": "string"
+    },
+    "reviewStatus": {
+      "type": "string"
+    },
+    "isApproved": {
+      "type": "boolean"
+    },
+    "approved": {
+      "type": "boolean"
+    },
+    "likes": {
+      "type": "integer"
+    },
+    "impressions": {
+      "type": "integer"
+    },
+    "videoViews": {
+      "type": "integer"
+    },
+    "likeCount": {
+      "type": "integer"
+    },
+    "favoriteCount": {
+      "type": "integer"
+    },
+    "showCount": {
+      "type": "integer"
+    },
+    "displayCount": {
+      "type": "integer"
+    },
+    "viewCount": {
+      "type": "integer"
+    },
+    "izlenmeCount": {
+      "type": "integer"
+    },
+    "n8nUsed": {
+      "type": "boolean"
+    },
+    "ownerProfileId": {
+      "type": "string"
+    },
+    "ownerName": {
+      "type": "string"
+    },
+    "ownerCity": {
+      "type": "string"
+    },
+    "submitter": {
+      "type": "string"
+    },
+    "isPremiumOwner": {
+      "type": "boolean"
+    }
+  }
+}

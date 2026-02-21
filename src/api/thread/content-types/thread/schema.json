@@ -1,0 +1,52 @@
+{
+  "kind": "collectionType",
+  "collectionName": "threads",
+  "info": {
+    "singularName": "thread",
+    "pluralName": "threads",
+    "displayName": "Thread"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "threadId": {
+      "type": "string",
+      "unique": true
+    },
+    "personName": {
+      "type": "string"
+    },
+    "personCity": {
+      "type": "string"
+    },
+    "listingTitle": {
+      "type": "string"
+    },
+    "listingQtyText": {
+      "type": "string"
+    },
+    "imageUrl": {
+      "type": "string"
+    },
+    "personAvatarUrl": {
+      "type": "string"
+    },
+    "lastMessage": {
+      "type": "text"
+    },
+    "lastTimeText": {
+      "type": "string"
+    },
+    "unreadCount": {
+      "type": "integer"
+    },
+    "lastMessageMe": {
+      "type": "boolean"
+    },
+    "updatedAtClient": {
+      "type": "datetime"
+    }
+  }
+}

@@ -1,0 +1,162 @@
+{
+  "kind": "collectionType",
+  "collectionName": "profile_settings",
+  "info": {
+    "singularName": "profile-setting",
+    "pluralName": "profile-settings",
+    "displayName": "ProfileSetting"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "profileId": {
+      "type": "string",
+      "required": true,
+      "unique": true
+    },
+    "displayName": {
+      "type": "string"
+    },
+    "city": {
+      "type": "string"
+    },
+    "roleText": {
+      "type": "string"
+    },
+    "bio": {
+      "type": "text"
+    },
+    "aboutText": {
+      "type": "text"
+    },
+    "featuredListingIds": {
+      "type": "json"
+    },
+    "coverImage": {
+      "type": "media",
+      "multiple": false,
+      "allowedTypes": [
+        "images",
+        "files"
+      ]
+    },
+    "avatarImage": {
+      "type": "media",
+      "multiple": false,
+      "allowedTypes": [
+        "images",
+        "files"
+      ]
+    },
+    "purchaseHistory": {
+      "type": "json"
+    },
+    "purchaseRecords": {
+      "type": "json"
+    },
+    "activePremium": {
+      "type": "json"
+    },
+    "activePremiumSubscription": {
+      "type": "json"
+    },
+    "purchaseUpdatedAt": {
+      "type": "datetime"
+    },
+    "incomingProfileComments": {
+      "type": "json"
+    },
+    "incomingComments": {
+      "type": "json"
+    },
+    "incomingCommentsUpdatedAt": {
+      "type": "datetime"
+    },
+    "myComments": {
+      "type": "json"
+    },
+    "myCommentItems": {
+      "type": "json"
+    },
+    "myCommentsUpdatedAt": {
+      "type": "datetime"
+    },
+    "favoriteListingIds": {
+      "type": "json"
+    },
+    "favoritesListingIds": {
+      "type": "json"
+    },
+    "favoritesUpdatedAt": {
+      "type": "datetime"
+    },
+    "favoriteProfilesMap": {
+      "type": "json"
+    },
+    "favoriteProfiles": {
+      "type": "json"
+    },
+    "favoriteProfilesUpdatedAt": {
+      "type": "datetime"
+    },
+    "followerIds": {
+      "type": "json"
+    },
+    "followersIds": {
+      "type": "json"
+    },
+    "followers": {
+      "type": "json"
+    },
+    "followingIds": {
+      "type": "json"
+    },
+    "followsIds": {
+      "type": "json"
+    },
+    "following": {
+      "type": "json"
+    },
+    "followersFallback": {
+      "type": "integer"
+    },
+    "followingFallback": {
+      "type": "integer"
+    },
+    "followersCountBase": {
+      "type": "integer"
+    },
+    "followingCountBase": {
+      "type": "integer"
+    },
+    "followUpdatedAt": {
+      "type": "datetime"
+    },
+    "ratingVotesByViewer": {
+      "type": "json"
+    },
+    "ratingVotes": {
+      "type": "json"
+    },
+    "ratingBaseCount": {
+      "type": "integer"
+    },
+    "voteCountBase": {
+      "type": "integer"
+    },
+    "ratingBaseAverage": {
+      "type": "decimal"
+    },
+    "ratingAverageBase": {
+      "type": "decimal"
+    },
+    "ratingUpdatedAt": {
+      "type": "datetime"
+    },
+    "updatedAtClient": {
+      "type": "datetime"
+    }
+  }
+}

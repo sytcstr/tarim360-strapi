@@ -1,0 +1,36 @@
+{
+  "kind": "collectionType",
+  "collectionName": "messages",
+  "info": {
+    "singularName": "message",
+    "pluralName": "messages",
+    "displayName": "Message"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "threadId": {
+      "type": "string"
+    },
+    "message": {
+      "type": "text"
+    },
+    "text": {
+      "type": "text"
+    },
+    "direction": {
+      "type": "string"
+    },
+    "senderEmail": {
+      "type": "string"
+    },
+    "senderName": {
+      "type": "string"
+    },
+    "sentAt": {
+      "type": "datetime"
+    }
+  }
+}
