@@ -1,46 +1,83 @@
-type CodeRecord = {
-  code: string;
-  expiresAt: number;
-};
-
-const signupCodes = new Map<string, CodeRecord>();
-const resetCodes = new Map<string, CodeRecord>();
-
-const CODE_TTL_MS = 10 * 60 * 1000;
-
 const normalizeEmail = (v: unknown) => String(v ?? '').trim().toLowerCase();
-const normalizeCode = (v: unknown) => String(v ?? '').trim();
+
+const isEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 
 const generateCode = () =>
   (100000 + Math.floor(Math.random() * 900000)).toString();
 
-const isEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+const generateTemporaryPassword = () => `T360-${generateCode()}-Aa!`;
 
-const codeExpired = (entry?: CodeRecord) =>
-  !entry || !entry.code || entry.expiresAt < Date.now();
-
-async function sendCodeEmail({
+async function sendEmail({
   to,
   subject,
-  code,
-  purpose,
+  text,
+  html,
 }: {
   to: string;
   subject: string;
-  code: string;
-  purpose: string;
+  text: string;
+  html: string;
 }) {
   const emailPlugin = strapi.plugin('email');
   const emailService = emailPlugin?.service('email');
   if (!emailService?.send) {
-    throw new Error('E-posta servisi yapılandırılmamış.');
+    throw new Error('E-posta servisi yapilandirilmamis.');
   }
 
   await emailService.send({
     to,
     subject,
-    text: `Tarım360 ${purpose} kodunuz: ${code}\nKod 10 dakika geçerlidir.`,
-    html: `<p>Tarım360 ${purpose} kodunuz: <strong>${code}</strong></p><p>Kod 10 dakika geçerlidir.</p>`,
+    text,
+    html,
+  });
+}
+
+async function sendSignupWelcomeEmail({
+  to,
+  name,
+}: {
+  to: string;
+  name?: string;
+}) {
+  const safeName = String(name ?? '').trim();
+  const greeting = safeName.length == 0 ? 'Merhaba' : `Merhaba ${safeName}`;
+
+  await sendEmail({
+    to,
+    subject: 'Tarim360 Uyelik Bilgilendirmesi',
+    text:
+      `${greeting},\n\n` +
+      'Tarim360 hesabiniz basariyla olusturuldu.\n' +
+      'Uygulamaya giris yaparak ilan, teklif ve pazar ozelliklerini kullanabilirsiniz.\n\n' +
+      'Tarim360',
+    html:
+      `<p>${greeting},</p>` +
+      '<p>Tarim360 hesabiniz basariyla olusturuldu.</p>' +
+      '<p>Uygulamaya giris yaparak ilan, teklif ve pazar ozelliklerini kullanabilirsiniz.</p>' +
+      '<p>Tarim360</p>',
+  });
+}
+
+async function sendTemporaryPasswordEmail({
+  to,
+  tempPassword,
+}: {
+  to: string;
+  tempPassword: string;
+}) {
+  await sendEmail({
+    to,
+    subject: 'Tarim360 Gecici Sifre',
+    text:
+      'Tarim360 icin sifre yenileme talebiniz alindi.\n\n' +
+      `Gecici sifreniz: ${tempPassword}\n\n` +
+      'Guvenlik icin giris sonrasinda sifrenizi degistirin.\n\n' +
+      'Tarim360',
+    html:
+      '<p>Tarim360 icin sifre yenileme talebiniz alindi.</p>' +
+      `<p><strong>Gecici sifreniz: ${tempPassword}</strong></p>` +
+      '<p>Guvenlik icin giris sonrasinda sifrenizi degistirin.</p>' +
+      '<p>Tarim360</p>',
   });
 }
 
@@ -49,61 +86,56 @@ export default {
     const body = (ctx.request?.body ?? {}) as Record<string, unknown>;
     const email = normalizeEmail(body.email);
     const phone = String(body.phone ?? '').trim();
+
     if (!isEmail(email)) {
       return ctx.badRequest('Gecerli e-posta zorunlu.');
     }
 
-    const code = generateCode();
-    signupCodes.set(email, { code, expiresAt: Date.now() + CODE_TTL_MS });
-
-    try {
-      await sendCodeEmail({
-        to: email,
-        subject: 'Tarım360 Kayıt Doğrulama Kodu',
-        code,
-        purpose: 'kayıt doğrulama',
-      });
-    } catch (e) {
-      return ctx.badRequest(
-        `Dogrulama e-postasi gonderilemedi: ${String(e).replace('Error: ', '')}`,
-      );
-    }
-
+    // Registration code flow is intentionally disabled.
     ctx.body = {
       ok: true,
       email,
       phone,
-      message: 'Dogrulama kodu e-posta adresinize gonderildi.',
+      message: 'Kayitta dogrulama kodu adimi kapatildi.',
     };
   },
 
   async verifySignup(ctx) {
     const body = (ctx.request?.body ?? {}) as Record<string, unknown>;
     const email = normalizeEmail(body.email);
-    const emailCode = normalizeCode(body.emailCode);
+
     if (!isEmail(email)) {
       return ctx.badRequest('Gecerli e-posta zorunlu.');
     }
-    if (!emailCode) {
-      return ctx.badRequest('E-posta dogrulama kodu zorunlu.');
+
+    // Backward-compatible success response.
+    ctx.body = { ok: true, email, verified: true, skipped: true };
+  },
+
+  async sendSignupWelcome(ctx) {
+    const body = (ctx.request?.body ?? {}) as Record<string, unknown>;
+    const email = normalizeEmail(body.email);
+    const name = String(body.name ?? '').trim();
+
+    if (!isEmail(email)) {
+      return ctx.badRequest('Gecerli e-posta zorunlu.');
     }
 
-    const entry = signupCodes.get(email);
-    if (codeExpired(entry)) {
-      signupCodes.delete(email);
-      return ctx.badRequest('Dogrulama kodu suresi dolmus. Kodu yenileyin.');
-    }
-    if (entry.code !== emailCode) {
-      return ctx.badRequest('E-posta dogrulama kodu hatali.');
+    try {
+      await sendSignupWelcomeEmail({ to: email, name });
+    } catch (e) {
+      return ctx.badRequest(
+        `Uyelik e-postasi gonderilemedi: ${String(e).replace('Error: ', '')}`,
+      );
     }
 
-    signupCodes.delete(email);
-    ctx.body = { ok: true, email, verified: true };
+    ctx.body = { ok: true, email };
   },
 
   async requestPasswordReset(ctx) {
     const body = (ctx.request?.body ?? {}) as Record<string, unknown>;
     const identifier = normalizeEmail(body.identifier);
+
     if (!isEmail(identifier)) {
       return ctx.badRequest('Gecerli e-posta zorunlu.');
     }
@@ -117,24 +149,27 @@ export default {
     );
     const user = Array.isArray(users) ? users[0] : null;
     if (!user?.id) {
-      // User enumeration onlenir: yine basarili don.
+      // Prevent user enumeration.
       ctx.body = { ok: true, identifier };
       return;
     }
 
-    const code = generateCode();
-    resetCodes.set(identifier, { code, expiresAt: Date.now() + CODE_TTL_MS });
+    const tempPassword = generateTemporaryPassword();
+
+    await strapi.entityService.update(
+      'plugin::users-permissions.user',
+      user.id,
+      { data: { password: tempPassword } },
+    );
 
     try {
-      await sendCodeEmail({
+      await sendTemporaryPasswordEmail({
         to: identifier,
-        subject: 'Tarım360 Sifre Sifirlama Kodu',
-        code,
-        purpose: 'sifre sifirlama',
+        tempPassword,
       });
     } catch (e) {
       return ctx.badRequest(
-        `Sifirlama e-postasi gonderilemedi: ${String(e).replace('Error: ', '')}`,
+        `Sifre e-postasi gonderilemedi: ${String(e).replace('Error: ', '')}`,
       );
     }
 
@@ -142,49 +177,12 @@ export default {
   },
 
   async resetPassword(ctx) {
-    const body = (ctx.request?.body ?? {}) as Record<string, unknown>;
-    const identifier = normalizeEmail(body.identifier);
-    const code = normalizeCode(body.code);
-    const newPassword = String(body.newPassword ?? '');
-
-    if (!isEmail(identifier)) {
-      return ctx.badRequest('Gecerli e-posta zorunlu.');
-    }
-    if (!code) {
-      return ctx.badRequest('code zorunlu.');
-    }
-    if (newPassword.length < 6) {
-      return ctx.badRequest('newPassword en az 6 karakter olmali.');
-    }
-
-    const entry = resetCodes.get(identifier);
-    if (codeExpired(entry)) {
-      resetCodes.delete(identifier);
-      return ctx.badRequest('Sifirlama kodu suresi dolmus. Kodu yenileyin.');
-    }
-    if (entry.code !== code) {
-      return ctx.badRequest('Sifirlama kodu hatali.');
-    }
-
-    const users = await strapi.entityService.findMany(
-      'plugin::users-permissions.user',
-      {
-        filters: { email: identifier },
-        limit: 1,
-      },
-    );
-    const user = Array.isArray(users) ? users[0] : null;
-    if (!user?.id) {
-      return ctx.badRequest('Kullanici bulunamadi.');
-    }
-
-    await strapi.entityService.update(
-      'plugin::users-permissions.user',
-      user.id,
-      { data: { password: newPassword } },
-    );
-    resetCodes.delete(identifier);
-
-    ctx.body = { ok: true, identifier };
+    // This endpoint is kept for backward compatibility.
+    // Current flow: request-password-reset sends a temporary password by email.
+    ctx.body = {
+      ok: false,
+      message:
+        'Bu akista sifre e-posta ile gecici sifre olarak gonderilir. Lutfen "sifremi unuttum" adimini tekrar kullanin.',
+    };
   },
 };

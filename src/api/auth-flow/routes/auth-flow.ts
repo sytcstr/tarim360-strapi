@@ -14,6 +14,12 @@ export default {
     },
     {
       method: 'POST',
+      path: '/auth/signup-welcome',
+      handler: 'auth-flow.sendSignupWelcome',
+      config: { auth: false },
+    },
+    {
+      method: 'POST',
       path: '/auth/request-password-reset',
       handler: 'auth-flow.requestPasswordReset',
       config: { auth: false },
