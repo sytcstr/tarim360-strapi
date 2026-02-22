@@ -537,7 +537,7 @@ export interface ApiListingListing extends Struct.CollectionTypeSchema {
     singularName: 'listing';
   };
   options: {
-    draftAndPublish: false;
+    draftAndPublish: true;
   };
   attributes: {
     analysisNote: Schema.Attribute.Text;
