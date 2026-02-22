@@ -59,6 +59,12 @@ const authenticatedActions: string[] = [
   'plugin::users-permissions.auth.logout',
   'plugin::users-permissions.auth.changePassword',
 
+  // Upload (listing/ad image uploads)
+  'plugin::upload.content-api.upload',
+  'plugin::upload.content-api.find',
+  'plugin::upload.content-api.findOne',
+  'plugin::upload.content-api.destroy',
+
   // Listing
   'api::listing.listing.create',
   'api::listing.listing.find',
