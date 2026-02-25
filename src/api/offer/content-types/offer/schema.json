@@ -53,7 +53,25 @@
     "requesterEmail": {
       "type": "string"
     },
+    "requesterName": {
+      "type": "string"
+    },
+    "requesterCity": {
+      "type": "string"
+    },
     "requesterProfileId": {
+      "type": "string"
+    },
+    "receiverEmail": {
+      "type": "string"
+    },
+    "receiverName": {
+      "type": "string"
+    },
+    "receiverCity": {
+      "type": "string"
+    },
+    "receiverProfileId": {
       "type": "string"
     },
     "approved": {
