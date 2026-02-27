@@ -21,6 +21,9 @@
     "personCity": {
       "type": "string"
     },
+    "listingId": {
+      "type": "string"
+    },
     "listingTitle": {
       "type": "string"
     },
@@ -33,10 +36,28 @@
     "personAvatarUrl": {
       "type": "string"
     },
+    "requesterEmail": {
+      "type": "string"
+    },
+    "requesterProfileId": {
+      "type": "string"
+    },
+    "receiverEmail": {
+      "type": "string"
+    },
+    "receiverProfileId": {
+      "type": "string"
+    },
     "lastMessage": {
       "type": "text"
     },
     "lastTimeText": {
+      "type": "string"
+    },
+    "lastSenderEmail": {
+      "type": "string"
+    },
+    "lastSenderProfileId": {
       "type": "string"
     },
     "unreadCount": {

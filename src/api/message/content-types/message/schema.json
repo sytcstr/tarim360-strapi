@@ -26,7 +26,22 @@
     "senderEmail": {
       "type": "string"
     },
+    "senderProfileId": {
+      "type": "string"
+    },
     "senderName": {
+      "type": "string"
+    },
+    "requesterEmail": {
+      "type": "string"
+    },
+    "requesterProfileId": {
+      "type": "string"
+    },
+    "receiverEmail": {
+      "type": "string"
+    },
+    "receiverProfileId": {
       "type": "string"
     },
     "sentAt": {
