@@ -160,11 +160,88 @@ const syncUsersPermissionsRoleConfig = async (strapi: Core.Strapi) => {
   });
 };
 
+const normalizeText = (v: unknown) => (v ?? '').toString().trim().toLowerCase();
+
+const deleteMalformedOfferMessageThreadData = async (strapi: Core.Strapi) => {
+  const isEmpty = (v: unknown) => (v ?? '').toString().trim() === '';
+
+  // Offer: hem requester hem receiver bilgisi bos ise sil.
+  try {
+    const offers = await strapi.db.query('api::offer.offer').findMany();
+    const all = Array.isArray(offers) ? offers : [];
+    for (const row of all as any[]) {
+      const reqEmail = normalizeText(row.requesterEmail);
+      const reqProfile = normalizeText(row.requesterProfileId);
+      const recvEmail = normalizeText(row.receiverEmail);
+      const recvProfile = normalizeText(row.receiverProfileId);
+      const malformed =
+        isEmpty(reqEmail) &&
+        isEmpty(reqProfile) &&
+        isEmpty(recvEmail) &&
+        isEmpty(recvProfile);
+      if (!malformed) continue;
+      if (!row.id) continue;
+      try {
+        await strapi.db.query('api::offer.offer').delete({ where: { id: row.id } });
+      } catch (_) {}
+    }
+  } catch (_) {}
+
+  // Message: threadId yoksa veya iki taraf kimliği tamamen boşsa sil.
+  try {
+    const messages = await strapi.db.query('api::message.message').findMany();
+    const all = Array.isArray(messages) ? messages : [];
+    for (const row of all as any[]) {
+      const threadId = normalizeText(row.threadId);
+      const reqEmail = normalizeText(row.requesterEmail);
+      const reqProfile = normalizeText(row.requesterProfileId);
+      const recvEmail = normalizeText(row.receiverEmail);
+      const recvProfile = normalizeText(row.receiverProfileId);
+      const malformed =
+        isEmpty(threadId) ||
+        (isEmpty(reqEmail) &&
+            isEmpty(reqProfile) &&
+            isEmpty(recvEmail) &&
+            isEmpty(recvProfile));
+      if (!malformed) continue;
+      if (!row.id) continue;
+      try {
+        await strapi.db.query('api::message.message').delete({ where: { id: row.id } });
+      } catch (_) {}
+    }
+  } catch (_) {}
+
+  // Thread: threadId yoksa veya iki taraf kimliği tamamen boşsa sil.
+  try {
+    const threads = await strapi.db.query('api::thread.thread').findMany();
+    const all = Array.isArray(threads) ? threads : [];
+    for (const row of all as any[]) {
+      const threadId = normalizeText(row.threadId);
+      const reqEmail = normalizeText(row.requesterEmail);
+      const reqProfile = normalizeText(row.requesterProfileId);
+      const recvEmail = normalizeText(row.receiverEmail);
+      const recvProfile = normalizeText(row.receiverProfileId);
+      const malformed =
+        isEmpty(threadId) ||
+        (isEmpty(reqEmail) &&
+            isEmpty(reqProfile) &&
+            isEmpty(recvEmail) &&
+            isEmpty(recvProfile));
+      if (!malformed) continue;
+      if (!row.id) continue;
+      try {
+        await strapi.db.query('api::thread.thread').delete({ where: { id: row.id } });
+      } catch (_) {}
+    }
+  } catch (_) {}
+};
+
 export default {
   register() {},
 
   async bootstrap({ strapi }: { strapi: Core.Strapi }) {
     await syncUsersPermissionsRoleConfig(strapi);
+    await deleteMalformedOfferMessageThreadData(strapi);
     strapi.log.info('Users & Permissions roles synced from bootstrap.');
   },
 };
