@@ -241,7 +241,18 @@ export default {
 
   async bootstrap({ strapi }: { strapi: Core.Strapi }) {
     await syncUsersPermissionsRoleConfig(strapi);
-    await deleteMalformedOfferMessageThreadData(strapi);
+    const cleanupEnabled =
+      (process.env.CLEANUP_MALFORMED_TEST_DATA ?? '').toLowerCase() === 'true';
+    if (cleanupEnabled) {
+      await deleteMalformedOfferMessageThreadData(strapi);
+      strapi.log.info(
+        'Malformed offer/message/thread cleanup executed (CLEANUP_MALFORMED_TEST_DATA=true).',
+      );
+    } else {
+      strapi.log.info(
+        'Malformed data cleanup skipped (set CLEANUP_MALFORMED_TEST_DATA=true to run once).',
+      );
+    }
     strapi.log.info('Users & Permissions roles synced from bootstrap.');
   },
 };
