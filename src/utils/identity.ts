@@ -194,13 +194,13 @@ export const denyNoIdentity = (ctx: any): false => {
 export const mergeScopeOrFilter = (ctx: any, orClauses: object[]) => {
   const query = (ctx.query ?? {}) as Record<string, unknown>;
   const filters = (query.filters ?? {}) as Record<string, unknown>;
-  const nextOr = Array.isArray(filters.$or) ? [...filters.$or, ...orClauses] : [...orClauses];
+  const hasExistingFilters = Object.keys(filters).length > 0;
+  const nextFilter = hasExistingFilters
+    ? { $and: [filters, { $or: [...orClauses] }] }
+    : { $or: [...orClauses] };
   ctx.query = {
     ...query,
-    filters: {
-      ...filters,
-      $or: nextOr,
-    },
+    filters: nextFilter,
   };
 };
 
