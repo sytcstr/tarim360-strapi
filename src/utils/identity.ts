@@ -187,7 +187,26 @@ export const readIdentity = (ctx: any): SessionIdentity | null => {
 };
 
 export const denyNoIdentity = (ctx: any): false => {
-  ctx.unauthorized('Kimlik dogrulanamadi.');
+  if (typeof ctx?.unauthorized === 'function') {
+    ctx.unauthorized('Kimlik dogrulanamadi.');
+  } else if (typeof ctx?.throw === 'function') {
+    ctx.throw(401, 'Kimlik dogrulanamadi.');
+  } else {
+    ctx.status = 401;
+    ctx.body = { error: { message: 'Kimlik dogrulanamadi.' } };
+  }
+  return false;
+};
+
+export const denyForbidden = (ctx: any, message: string): false => {
+  if (typeof ctx?.forbidden === 'function') {
+    ctx.forbidden(message);
+  } else if (typeof ctx?.throw === 'function') {
+    ctx.throw(403, message);
+  } else {
+    ctx.status = 403;
+    ctx.body = { error: { message } };
+  }
   return false;
 };
 
@@ -244,6 +263,19 @@ export const loadEntityByRouteId = async (
     } catch (_) {
       // continue
     }
+  }
+
+  // Strapi v5 route params often use documentId.
+  try {
+    const viaDocumentId = await strapi.db.query(uid as any).findOne({
+      where: { documentId: id },
+      select: fields,
+    } as any);
+    if (viaDocumentId && typeof viaDocumentId === 'object') {
+      return viaDocumentId as Record<string, unknown>;
+    }
+  } catch (_) {
+    // continue
   }
 
   return null;

@@ -1,4 +1,9 @@
-import { denyNoIdentity, loadEntityByRouteId, readIdentity } from '../utils/identity';
+import {
+  denyForbidden,
+  denyNoIdentity,
+  loadEntityByRouteId,
+  readIdentity,
+} from '../utils/identity';
 
 const UID = 'api::profile-setting.profile-setting';
 
@@ -27,8 +32,7 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
     const data = (body.data ?? {}) as Record<string, unknown>;
     const providedProfileId = String(data.profileId ?? '').trim();
     if (providedProfileId && providedProfileId !== identity.ownerId) {
-      ctx.forbidden('Baska profile ait ayari degistiremezsin.');
-      return false;
+      return denyForbidden(ctx, 'Baska profile ait ayari degistiremezsin.');
     }
     data.profileId = identity.ownerId;
     body.data = data;
@@ -39,11 +43,9 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
     const entity = await loadEntityByRouteId(strapi, UID, id, ['profileId']);
     const profileId = String(entity?.profileId ?? '').trim();
     if (profileId != identity.ownerId) {
-      ctx.forbidden('Bu profil ayarina erisim yetkin yok.');
-      return false;
+      return denyForbidden(ctx, 'Bu profil ayarina erisim yetkin yok.');
     }
   }
 
   return true;
 };
-
