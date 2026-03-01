@@ -1,4 +1,14 @@
-import { denyNoIdentity, loadEntityByRouteId, matchesIdentity, mergeScopeOrFilter, normalizeEmail, readIdentity } from '../utils/identity';
+import {
+  denyNoIdentity,
+  loadEntityByRouteId,
+  matchesIdentity,
+  mergeScopeOrFilter,
+  normalizeEmail,
+  ownerIdFromEmail,
+  readIdentity,
+  resolveListingOwnerByAnyId,
+  resolveThreadParticipantsByThreadId,
+} from '../utils/identity';
 
 const UID = 'api::message.message';
 const EMAIL_FIELDS = ['senderEmail', 'requesterEmail', 'receiverEmail'];
@@ -27,10 +37,59 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
     const body = (ctx.request?.body ?? {}) as Record<string, unknown>;
     const data = (body.data ?? {}) as Record<string, unknown>;
 
-    const requesterEmail = normalizeEmail(data.requesterEmail);
-    const receiverEmail = normalizeEmail(data.receiverEmail);
-    const requesterProfileId = String(data.requesterProfileId ?? '').trim();
-    const receiverProfileId = String(data.receiverProfileId ?? '').trim();
+    const threadId = String(data.threadId ?? '').trim();
+    let requesterEmail = normalizeEmail(data.requesterEmail);
+    let receiverEmail = normalizeEmail(data.receiverEmail);
+    let requesterProfileId = String(data.requesterProfileId ?? '').trim();
+    let receiverProfileId = String(data.receiverProfileId ?? '').trim();
+
+    if (threadId) {
+      const fromThread = await resolveThreadParticipantsByThreadId(
+        strapi,
+        threadId,
+      );
+      if (fromThread) {
+        if (!requesterEmail && fromThread.requesterEmail) {
+          requesterEmail = fromThread.requesterEmail;
+        }
+        if (!requesterProfileId && fromThread.requesterProfileId) {
+          requesterProfileId = fromThread.requesterProfileId;
+        }
+        if (!receiverEmail && fromThread.receiverEmail) {
+          receiverEmail = fromThread.receiverEmail;
+        }
+        if (!receiverProfileId && fromThread.receiverProfileId) {
+          receiverProfileId = fromThread.receiverProfileId;
+        }
+      }
+    }
+
+    if (!requesterEmail) requesterEmail = identity.email;
+    if (!requesterProfileId) requesterProfileId = identity.ownerId;
+
+    if (!receiverEmail || !receiverProfileId) {
+      const owner = await resolveListingOwnerByAnyId(
+        strapi,
+        data.listingId ?? data.listingNo,
+      );
+      if (!receiverEmail && owner?.email && owner.email !== identity.email) {
+        receiverEmail = owner.email;
+      }
+      if (
+        !receiverProfileId &&
+        owner?.ownerId &&
+        owner.ownerId !== identity.ownerId
+      ) {
+        receiverProfileId = owner.ownerId;
+      }
+    }
+
+    if (!receiverProfileId && receiverEmail) {
+      receiverProfileId = ownerIdFromEmail(receiverEmail);
+    }
+    if (!requesterProfileId && requesterEmail) {
+      requesterProfileId = ownerIdFromEmail(requesterEmail);
+    }
 
     const emailParticipantSet = requesterEmail || receiverEmail;
     const profileParticipantSet = requesterProfileId || receiverProfileId;
@@ -38,11 +97,20 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
     const profileContainsMe =
       requesterProfileId === identity.ownerId || receiverProfileId === identity.ownerId;
 
+    if (!receiverEmail && !receiverProfileId) {
+      ctx.forbidden('Mesaj alicisi bulunamadi.');
+      return false;
+    }
+
     if ((emailParticipantSet || profileParticipantSet) && !(emailContainsMe || profileContainsMe)) {
       ctx.forbidden('Mesaj katilimci bilgileri aktif oturumla uyusmuyor.');
       return false;
     }
 
+    data.requesterEmail = requesterEmail;
+    data.requesterProfileId = requesterProfileId;
+    data.receiverEmail = receiverEmail;
+    data.receiverProfileId = receiverProfileId;
     data.senderEmail = identity.email;
     data.senderProfileId = identity.ownerId;
     body.data = data;
@@ -61,4 +129,3 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
 
   return true;
 };
-

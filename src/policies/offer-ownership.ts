@@ -1,4 +1,12 @@
-import { denyNoIdentity, loadEntityByRouteId, matchesIdentity, mergeScopeOrFilter, readIdentity } from '../utils/identity';
+import {
+  denyNoIdentity,
+  loadEntityByRouteId,
+  matchesIdentity,
+  mergeScopeOrFilter,
+  ownerIdFromEmail,
+  readIdentity,
+  resolveListingOwnerByAnyId,
+} from '../utils/identity';
 
 const UID = 'api::offer.offer';
 const EMAIL_FIELDS = ['requesterEmail', 'receiverEmail'];
@@ -38,6 +46,40 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
 
     data.requesterEmail = identity.email;
     data.requesterProfileId = identity.ownerId;
+
+    let receiverEmail = String(data.receiverEmail ?? '').trim().toLowerCase();
+    let receiverProfileId = String(data.receiverProfileId ?? '').trim();
+
+    if (!receiverEmail || !receiverProfileId) {
+      const owner = await resolveListingOwnerByAnyId(
+        strapi,
+        data.listingId ?? data.listingNo,
+      );
+      if (!receiverEmail && owner?.email) receiverEmail = owner.email;
+      if (!receiverProfileId && owner?.ownerId) {
+        receiverProfileId = owner.ownerId;
+      }
+    }
+
+    if (!receiverProfileId && receiverEmail) {
+      receiverProfileId = ownerIdFromEmail(receiverEmail);
+    }
+
+    if (!receiverEmail && !receiverProfileId) {
+      ctx.forbidden('Teklif alicisi bulunamadi. Ilan sahibi bilgisi eksik.');
+      return false;
+    }
+
+    if (
+      receiverEmail === identity.email ||
+      receiverProfileId === identity.ownerId
+    ) {
+      ctx.forbidden('Kendi ilaniniza teklif veremezsiniz.');
+      return false;
+    }
+
+    data.receiverEmail = receiverEmail;
+    data.receiverProfileId = receiverProfileId;
     body.data = data;
     ctx.request.body = body;
     return true;
@@ -54,4 +96,3 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
 
   return true;
 };
-
