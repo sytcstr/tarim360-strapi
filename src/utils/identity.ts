@@ -75,6 +75,24 @@ export const resolveListingOwnerByAnyId = async (
     const numeric = Number(candidate);
     if (Number.isInteger(numeric) && numeric > 0) {
       try {
+        const row = await strapi.db.query('api::listing.listing').findOne({
+          where: { id: numeric },
+          select: ['ownerEmail', 'ownerProfileId', 'ownerId'],
+        } as any);
+        if (row && typeof row === 'object') {
+          const map = row as Record<string, unknown>;
+          const email = normalizeEmail(map.ownerEmail);
+          const ownerId =
+            normalizeOwnerId(map.ownerProfileId) ||
+            normalizeOwnerId(map.ownerId) ||
+            ownerIdFromEmail(email);
+          if (email || ownerId) return { email, ownerId };
+        }
+      } catch (_) {
+        // continue
+      }
+
+      try {
         const rows = await strapi.db.query('api::listing.listing').findMany({
           where: { listingNo: numeric },
           select: ['ownerEmail', 'ownerProfileId', 'ownerId'],
@@ -93,6 +111,24 @@ export const resolveListingOwnerByAnyId = async (
       } catch (_) {
         // continue
       }
+    }
+
+    try {
+      const row = await strapi.db.query('api::listing.listing').findOne({
+        where: { documentId: candidate },
+        select: ['ownerEmail', 'ownerProfileId', 'ownerId'],
+      } as any);
+      if (row && typeof row === 'object') {
+        const map = row as Record<string, unknown>;
+        const email = normalizeEmail(map.ownerEmail);
+        const ownerId =
+          normalizeOwnerId(map.ownerProfileId) ||
+          normalizeOwnerId(map.ownerId) ||
+          ownerIdFromEmail(email);
+        if (email || ownerId) return { email, ownerId };
+      }
+    } catch (_) {
+      // continue
     }
   }
 
