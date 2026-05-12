@@ -1,0 +1,40 @@
+﻿{
+  "kind": "collectionType",
+  "collectionName": "seller_payouts",
+  "info": {
+    "singularName": "seller-payout",
+    "pluralName": "seller-payouts",
+    "displayName": "Seller Payout"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "attributes": {
+    "orderId": {
+      "type": "string"
+    },
+    "sellerId": {
+      "type": "string"
+    },
+    "totalAmount": {
+      "type": "decimal"
+    },
+    "commissionAmount": {
+      "type": "decimal"
+    },
+    "sellerEarning": {
+      "type": "decimal"
+    },
+    "status": {
+      "type": "enumeration",
+      "enum": ["pending", "ready", "paid", "blocked"],
+      "default": "pending"
+    },
+    "note": {
+      "type": "text"
+    },
+    "paidAt": {
+      "type": "datetime"
+    }
+  }
+}

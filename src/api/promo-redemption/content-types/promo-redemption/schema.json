@@ -1,0 +1,68 @@
+{
+  "kind": "collectionType",
+  "collectionName": "promo_redemptions",
+  "info": {
+    "singularName": "promo-redemption",
+    "pluralName": "promo-redemptions",
+    "displayName": "Promo Redemption"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "promoCode": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::promo-code.promo-code"
+    },
+    "user": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user"
+    },
+    "userEmail": {
+      "type": "string",
+      "required": true
+    },
+    "ownerProfileId": {
+      "type": "string",
+      "required": true
+    },
+    "redeemedCode": {
+      "type": "string",
+      "required": true
+    },
+    "grantedPlanTitle": {
+      "type": "string",
+      "required": true
+    },
+    "grantedProductId": {
+      "type": "string",
+      "required": true
+    },
+    "grantedDurationDays": {
+      "type": "integer",
+      "required": true
+    },
+    "status": {
+      "type": "enumeration",
+      "enum": [
+        "redeemed"
+      ],
+      "default": "redeemed"
+    },
+    "transactionId": {
+      "type": "string",
+      "required": true,
+      "unique": true
+    },
+    "redeemedAt": {
+      "type": "datetime",
+      "required": true
+    },
+    "grantSnapshot": {
+      "type": "json"
+    }
+  }
+}

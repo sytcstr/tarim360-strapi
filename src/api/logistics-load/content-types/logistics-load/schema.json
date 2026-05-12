@@ -1,0 +1,40 @@
+{
+  "kind": "collectionType",
+  "collectionName": "logistics_loads",
+  "info": {
+    "singularName": "logistics-load",
+    "pluralName": "logistics-loads",
+    "displayName": "Logistics Load",
+    "description": "Nakliye & Lojistik yük ilanları"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "attributes": {
+    "title": { "type": "string", "required": true },
+    "loadType": { "type": "string", "required": true },
+    "fromCity": { "type": "string", "required": true },
+    "toCity": { "type": "string", "required": true },
+    "weight": { "type": "decimal", "required": true },
+    "vehicleType": { "type": "string", "required": true },
+    "loadingDate": { "type": "datetime", "required": true },
+    "latitude": { "type": "decimal", "required": true },
+    "longitude": { "type": "decimal", "required": true },
+    "fromLatitude": { "type": "decimal", "required": true },
+    "fromLongitude": { "type": "decimal", "required": true },
+    "toLatitude": { "type": "decimal", "required": true },
+    "toLongitude": { "type": "decimal", "required": true },
+    "description": { "type": "text" },
+    "status": {
+      "type": "enumeration",
+      "enum": ["open", "offer_pending", "meeting_opened", "closed"],
+      "default": "open"
+    },
+    "ownerName": { "type": "string", "required": true },
+    "ownerKey": { "type": "string", "required": true },
+    "ownerPhone": { "type": "string" },
+    "ownerWhatsapp": { "type": "string" },
+    "estimatedDuration": { "type": "string" },
+    "loadNo": { "type": "string" }
+  }
+}

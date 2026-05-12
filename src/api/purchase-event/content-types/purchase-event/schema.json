@@ -1,0 +1,77 @@
+{
+  "kind": "collectionType",
+  "collectionName": "purchase_events",
+  "info": {
+    "singularName": "purchase-event",
+    "pluralName": "purchase-events",
+    "displayName": "PurchaseEvent"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "transactionId": {
+      "type": "string",
+      "required": true,
+      "unique": true
+    },
+    "originalTransactionId": {
+      "type": "string"
+    },
+    "ownerEmail": {
+      "type": "string"
+    },
+    "ownerProfileId": {
+      "type": "string",
+      "required": true
+    },
+    "provider": {
+      "type": "string",
+      "required": true
+    },
+    "productId": {
+      "type": "string",
+      "required": true
+    },
+    "purchaseToken": {
+      "type": "string"
+    },
+    "categoryTitle": {
+      "type": "string"
+    },
+    "planTitle": {
+      "type": "string"
+    },
+    "priceTl": {
+      "type": "integer"
+    },
+    "isSubscription": {
+      "type": "boolean"
+    },
+    "status": {
+      "type": "enumeration",
+      "enum": [
+        "verified",
+        "pending",
+        "canceled",
+        "refunded",
+        "expired",
+        "rejected"
+      ],
+      "default": "pending"
+    },
+    "verifiedAt": {
+      "type": "datetime"
+    },
+    "expiresAt": {
+      "type": "datetime"
+    },
+    "source": {
+      "type": "string"
+    },
+    "payload": {
+      "type": "json"
+    }
+  }
+}

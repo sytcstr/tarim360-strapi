@@ -1,0 +1,65 @@
+﻿{
+  "kind": "collectionType",
+  "collectionName": "store_documents",
+  "info": {
+    "singularName": "store-document",
+    "pluralName": "store-documents",
+    "displayName": "Store Document"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "store": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::seller-store.seller-store",
+      "inversedBy": "documents",
+      "required": true
+    },
+    "ownerId": {
+      "type": "string",
+      "required": true
+    },
+    "ownerEmail": {
+      "type": "email"
+    },
+    "localDocumentId": {
+      "type": "string",
+      "required": true,
+      "unique": true
+    },
+    "documentType": {
+      "type": "enumeration",
+      "enum": [
+        "tax_certificate",
+        "business_license",
+        "production_certificate",
+        "identity_document",
+        "other"
+      ],
+      "required": true
+    },
+    "title": {
+      "type": "string",
+      "required": true
+    },
+    "filePath": {
+      "type": "string"
+    },
+    "file": {
+      "type": "media",
+      "multiple": false,
+      "allowedTypes": ["images", "files"]
+    },
+    "verificationStatus": {
+      "type": "enumeration",
+      "enum": ["pending", "approved", "rejected"],
+      "default": "pending"
+    },
+    "reviewNote": {
+      "type": "text"
+    }
+  }
+}

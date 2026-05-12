@@ -19,8 +19,17 @@
     "displayName": {
       "type": "string"
     },
+    "publicUsername": {
+      "type": "string"
+    },
+    "brandName": {
+      "type": "string"
+    },
     "city": {
       "type": "string"
+    },
+    "birthDate": {
+      "type": "date"
     },
     "roleText": {
       "type": "string"
@@ -154,6 +163,9 @@
     },
     "ratingUpdatedAt": {
       "type": "datetime"
+    },
+    "fcmTokens": {
+      "type": "json"
     },
     "updatedAtClient": {
       "type": "datetime"

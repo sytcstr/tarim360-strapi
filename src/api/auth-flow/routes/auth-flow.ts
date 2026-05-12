@@ -1,6 +1,37 @@
 export default {
   routes: [
     {
+      method: 'GET',
+      path: '/auth/premium-owners',
+      handler: 'auth-flow.premiumOwners',
+      config: { auth: false },
+    },
+    {
+      method: 'POST',
+      path: '/auth/check-registration',
+      handler: 'auth-flow.checkRegistration',
+      config: { auth: false },
+    },
+    {
+      method: 'POST',
+      path: '/auth/update-username',
+      handler: 'auth-flow.updateUsername',
+      config: { auth: { scope: [] } },
+    },
+        {
+      method: 'POST',
+      path: '/auth/register-push-token',
+      handler: 'auth-flow.registerPushToken',
+      config: { auth: { scope: [] } },
+    },
+
+    {
+      method: 'POST',
+      path: '/auth/unregister-push-token',
+      handler: 'auth-flow.unregisterPushToken',
+      config: { auth: { scope: [] } },
+    },
+    {
       method: 'POST',
       path: '/auth/request-signup-verification',
       handler: 'auth-flow.requestSignupVerification',
@@ -32,3 +63,7 @@ export default {
     },
   ],
 };
+
+
+
+

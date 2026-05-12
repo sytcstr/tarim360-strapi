@@ -1,0 +1,49 @@
+﻿import { factories } from '@strapi/strapi';
+
+const LOAD_UID = 'api::logistics-load.logistics-load';
+
+const toNumber = (value: unknown, fallback = 0): number => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+};
+
+const toLimit = (value: unknown, fallback = 300): number => {
+  const raw = Number(value);
+  if (!Number.isFinite(raw)) return fallback;
+  return Math.max(1, Math.min(500, Math.trunc(raw)));
+};
+
+const distanceKm = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
+  const radiusKm = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+  return 2 * radiusKm * Math.asin(Math.sqrt(a));
+};
+
+export default factories.createCoreController(LOAD_UID as any, ({ strapi }) => ({
+  async nearby(ctx) {
+    const lat = toNumber(ctx.query?.latitude);
+    const lng = toNumber(ctx.query?.longitude);
+    const km = toNumber(ctx.query?.km, 300);
+    const limit = toLimit(ctx.query?.limit, 300);
+
+    const rows = await strapi.entityService.findMany(LOAD_UID as any, {
+      sort: { createdAt: 'desc' },
+      pagination: { limit },
+    } as any);
+
+    const data = (Array.isArray(rows) ? rows : []).filter((row: any) => {
+      const rowLat = toNumber(row?.fromLatitude ?? row?.latitude);
+      const rowLng = toNumber(row?.fromLongitude ?? row?.longitude);
+      return distanceKm(lat, lng, rowLat, rowLng) <= km;
+    });
+
+    ctx.body = { data };
+  },
+}));
+

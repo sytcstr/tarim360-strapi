@@ -1,0 +1,27 @@
+{
+  "kind": "collectionType",
+  "collectionName": "logistics_vehicles",
+  "info": {
+    "singularName": "logistics-vehicle",
+    "pluralName": "logistics-vehicles",
+    "displayName": "Logistics Vehicle",
+    "description": "Nakliyeci araç profilleri"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "attributes": {
+    "transporterName": { "type": "string", "required": true },
+    "transporterKey": { "type": "string", "required": true },
+    "vehicleType": { "type": "string", "required": true },
+    "capacity": { "type": "decimal", "required": true },
+    "currentCity": { "type": "string", "required": true },
+    "latitude": { "type": "decimal", "required": true },
+    "longitude": { "type": "decimal", "required": true },
+    "available": { "type": "boolean", "default": true },
+    "phone": { "type": "string" },
+    "whatsapp": { "type": "string" },
+    "rating": { "type": "decimal", "default": 4.5 },
+    "tripCount": { "type": "integer", "default": 0 }
+  }
+}

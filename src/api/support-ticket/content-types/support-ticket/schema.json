@@ -1,0 +1,57 @@
+{
+  "kind": "collectionType",
+  "collectionName": "support_tickets",
+  "info": {
+    "singularName": "support-ticket",
+    "pluralName": "support-tickets",
+    "displayName": "Support Ticket"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "ticketNo": {
+      "type": "string"
+    },
+    "subject": {
+      "type": "string"
+    },
+    "category": {
+      "type": "string"
+    },
+    "priority": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "ownerEmail": {
+      "type": "string"
+    },
+    "ownerName": {
+      "type": "string"
+    },
+    "ownerProfileId": {
+      "type": "string"
+    },
+    "lastMessagePreview": {
+      "type": "text"
+    },
+    "lastMessageAt": {
+      "type": "datetime"
+    },
+    "createdAtClient": {
+      "type": "datetime"
+    },
+    "conversation": {
+      "type": "text"
+    },
+    "messages": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::support-ticket-message.support-ticket-message",
+      "mappedBy": "supportTicket"
+    }
+  }
+}

@@ -1,0 +1,82 @@
+{
+  "kind": "collectionType",
+  "collectionName": "promo_codes",
+  "info": {
+    "singularName": "promo-code",
+    "pluralName": "promo-codes",
+    "displayName": "Promo Code"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "code": {
+      "type": "string",
+      "required": true,
+      "unique": true
+    },
+    "codeNormalized": {
+      "type": "string",
+      "required": true,
+      "unique": true
+    },
+    "title": {
+      "type": "string",
+      "required": true
+    },
+    "description": {
+      "type": "text"
+    },
+    "premiumProductId": {
+      "type": "enumeration",
+      "required": true,
+      "enum": [
+        "premium_easy_yearly_1199",
+        "premium_eco_yearly_3399",
+        "premium_pro_yearly_4499"
+      ],
+      "default": "premium_easy_yearly_1199"
+    },
+    "isActive": {
+      "type": "boolean",
+      "default": true
+    },
+    "startsAt": {
+      "type": "datetime"
+    },
+    "endsAt": {
+      "type": "datetime"
+    },
+    "usageLimit": {
+      "type": "integer",
+      "default": 1
+    },
+    "perUserLimit": {
+      "type": "integer",
+      "default": 1
+    },
+    "allowWhenPremiumActive": {
+      "type": "boolean",
+      "default": false
+    },
+    "targetUser": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "plugin::users-permissions.user"
+    },
+    "grantMessage": {
+      "type": "text"
+    },
+    "adminNote": {
+      "type": "text"
+    },
+    "redemptionCount": {
+      "type": "integer",
+      "default": 0
+    },
+    "lastRedeemedAt": {
+      "type": "datetime"
+    }
+  }
+}

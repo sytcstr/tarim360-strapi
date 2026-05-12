@@ -1,0 +1,35 @@
+﻿{
+  "kind": "collectionType",
+  "collectionName": "processed_product_categories",
+  "info": {
+    "singularName": "processed-product-category",
+    "pluralName": "processed-product-categories",
+    "displayName": "Processed Product Category"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "name": {
+      "type": "string",
+      "required": true,
+      "unique": true
+    },
+    "slug": {
+      "type": "uid",
+      "targetField": "name"
+    },
+    "description": {
+      "type": "text"
+    },
+    "sortOrder": {
+      "type": "integer",
+      "default": 0
+    },
+    "isActive": {
+      "type": "boolean",
+      "default": true
+    }
+  }
+}

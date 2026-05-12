@@ -1,0 +1,73 @@
+﻿{
+  "kind": "collectionType",
+  "collectionName": "seller_stores",
+  "info": {
+    "singularName": "seller-store",
+    "pluralName": "seller-stores",
+    "displayName": "Seller Store"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "ownerId": {
+      "type": "string",
+      "required": true,
+      "unique": true
+    },
+    "ownerEmail": {
+      "type": "email"
+    },
+    "storeName": {
+      "type": "string",
+      "required": true
+    },
+    "storeSlug": {
+      "type": "uid",
+      "targetField": "storeName",
+      "required": true
+    },
+    "city": {
+      "type": "string",
+      "required": true
+    },
+    "contactName": {
+      "type": "string",
+      "required": true
+    },
+    "shortDescription": {
+      "type": "text",
+      "required": true
+    },
+    "aboutText": {
+      "type": "richtext"
+    },
+    "logoPath": {
+      "type": "string"
+    },
+    "coverPath": {
+      "type": "string"
+    },
+    "verificationStatus": {
+      "type": "enumeration",
+      "enum": ["not_submitted", "pending", "approved", "rejected"],
+      "default": "not_submitted"
+    },
+    "verificationNote": {
+      "type": "text"
+    },
+    "products": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::processed-product.processed-product",
+      "mappedBy": "store"
+    },
+    "documents": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::store-document.store-document",
+      "mappedBy": "store"
+    }
+  }
+}

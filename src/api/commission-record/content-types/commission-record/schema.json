@@ -1,0 +1,38 @@
+﻿{
+  "kind": "collectionType",
+  "collectionName": "commission_records",
+  "info": {
+    "singularName": "commission-record",
+    "pluralName": "commission-records",
+    "displayName": "Commission Record"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "orderId": {
+      "type": "string",
+      "required": true
+    },
+    "sellerId": {
+      "type": "string",
+      "required": true
+    },
+    "totalAmount": {
+      "type": "decimal",
+      "required": true,
+      "default": 0
+    },
+    "commissionAmount": {
+      "type": "decimal",
+      "required": true,
+      "default": 0
+    },
+    "sellerEarning": {
+      "type": "decimal",
+      "required": true,
+      "default": 0
+    }
+  }
+}

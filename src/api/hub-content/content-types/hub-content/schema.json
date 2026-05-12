@@ -38,11 +38,37 @@
     "location": {
       "type": "string"
     },
+    "imageUrl": {
+      "type": "string"
+    },
+    "image": {
+      "type": "media",
+      "multiple": false,
+      "required": false,
+      "allowedTypes": [
+        "images"
+      ]
+    },
     "likes": {
       "type": "integer"
     },
     "comments": {
       "type": "integer"
+    },
+    "commentCount": {
+      "type": "integer"
+    },
+    "commentList": {
+      "type": "json"
+    },
+    "lastCommentText": {
+      "type": "text"
+    },
+    "lastCommentAuthor": {
+      "type": "string"
+    },
+    "lastCommentAt": {
+      "type": "datetime"
     },
     "createdAtClient": {
       "type": "datetime"

@@ -1,0 +1,66 @@
+{
+  "kind": "collectionType",
+  "collectionName": "support_ticket_messages",
+  "info": {
+    "singularName": "support-ticket-message",
+    "pluralName": "support-ticket-messages",
+    "displayName": "Support Ticket Message"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "ticketId": {
+      "type": "string"
+    },
+    "ticketNo": {
+      "type": "string"
+    },
+    "supportTicketId": {
+      "type": "string"
+    },
+    "senderType": {
+      "type": "string"
+    },
+    "senderName": {
+      "type": "string"
+    },
+    "senderEmail": {
+      "type": "string"
+    },
+    "senderProfileId": {
+      "type": "string"
+    },
+    "requesterEmail": {
+      "type": "string"
+    },
+    "requesterProfileId": {
+      "type": "string"
+    },
+    "receiverEmail": {
+      "type": "string"
+    },
+    "receiverProfileId": {
+      "type": "string"
+    },
+    "message": {
+      "type": "text"
+    },
+    "text": {
+      "type": "text"
+    },
+    "sentAt": {
+      "type": "datetime"
+    },
+    "createdAtClient": {
+      "type": "datetime"
+    },
+    "supportTicket": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::support-ticket.support-ticket",
+      "inversedBy": "messages"
+    }
+  }
+}

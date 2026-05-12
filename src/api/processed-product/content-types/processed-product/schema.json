@@ -1,0 +1,81 @@
+﻿{
+  "kind": "collectionType",
+  "collectionName": "processed_products",
+  "info": {
+    "singularName": "processed-product",
+    "pluralName": "processed-products",
+    "displayName": "Processed Product"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "localProductId": {
+      "type": "string",
+      "required": true,
+      "unique": true
+    },
+    "ownerId": {
+      "type": "string",
+      "required": true
+    },
+    "ownerEmail": {
+      "type": "email"
+    },
+    "store": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::seller-store.seller-store",
+      "inversedBy": "products",
+      "required": true
+    },
+    "storeSlug": {
+      "type": "string"
+    },
+    "storeName": {
+      "type": "string"
+    },
+    "city": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string",
+      "required": true
+    },
+    "category": {
+      "type": "string",
+      "required": true
+    },
+    "packageText": {
+      "type": "string"
+    },
+    "unitText": {
+      "type": "string"
+    },
+    "priceText": {
+      "type": "string"
+    },
+    "stockText": {
+      "type": "string"
+    },
+    "shortDescription": {
+      "type": "text"
+    },
+    "coverPath": {
+      "type": "string"
+    },
+    "isActive": {
+      "type": "boolean",
+      "default": true
+    },
+    "moderationStatus": {
+      "type": "enumeration",
+      "enum": ["approved", "pending", "rejected"],
+      "default": "approved"
+    },
+    "moderationNote": {
+      "type": "text"
+    }
+  }
+}

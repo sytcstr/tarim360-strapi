@@ -1,0 +1,52 @@
+﻿{
+  "kind": "collectionType",
+  "collectionName": "orders",
+  "info": {
+    "singularName": "order",
+    "pluralName": "orders",
+    "displayName": "Order"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "user": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "plugin::users-permissions.user"
+    },
+    "totalAmount": {
+      "type": "decimal",
+      "required": true,
+      "default": 0
+    },
+    "status": {
+      "type": "enumeration",
+      "enum": ["pending", "shipping", "delivered"],
+      "required": true,
+      "default": "pending"
+    },
+    "address": {
+      "type": "text",
+      "required": true
+    },
+    "localOrderId": {
+      "type": "string"
+    },
+    "issueStatus": {
+      "type": "enumeration",
+      "enum": ["none", "flagged", "resolved"],
+      "default": "none"
+    },
+    "adminNote": {
+      "type": "text"
+    },
+    "items": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::order-item.order-item",
+      "mappedBy": "order"
+    }
+  }
+}

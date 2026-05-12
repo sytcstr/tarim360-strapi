@@ -1,0 +1,45 @@
+{
+  "kind": "collectionType",
+  "collectionName": "registration_blocks",
+  "info": {
+    "singularName": "registration-block",
+    "pluralName": "registration-blocks",
+    "displayName": "Registration Block"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "email": {
+      "type": "string"
+    },
+    "phone": {
+      "type": "string"
+    },
+    "emailDomain": {
+      "type": "string"
+    },
+    "reasonCode": {
+      "type": "enumeration",
+      "enum": [
+        "fraud-risk",
+        "abuse",
+        "duplicate",
+        "policy",
+        "other"
+      ],
+      "default": "other"
+    },
+    "userMessage": {
+      "type": "text"
+    },
+    "adminNote": {
+      "type": "text"
+    },
+    "isActive": {
+      "type": "boolean",
+      "default": true
+    }
+  }
+}

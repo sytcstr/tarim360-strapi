@@ -1,0 +1,54 @@
+{
+  "kind": "collectionType",
+  "collectionName": "ai_logs",
+  "info": {
+    "singularName": "ai-log",
+    "pluralName": "ai-logs",
+    "displayName": "AI Konusma Logu"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "attributes": {
+    "rawPrompt": {
+      "type": "text"
+    },
+    "answer": {
+      "type": "richtext"
+    },
+    "conversation": {
+      "type": "richtext"
+    },
+    "recommendations": {
+      "type": "json"
+    },
+    "suspectedIssue": {
+      "type": "string"
+    },
+    "confidenceLabel": {
+      "type": "string"
+    },
+    "scope": {
+      "type": "string"
+    },
+    "provider": {
+      "type": "string"
+    },
+    "model": {
+      "type": "string"
+    },
+    "hasImage": {
+      "type": "boolean",
+      "default": false
+    },
+    "ownerEmail": {
+      "type": "email"
+    },
+    "ownerProfileId": {
+      "type": "string"
+    },
+    "prompt": {
+      "type": "text"
+    }
+  }
+}
