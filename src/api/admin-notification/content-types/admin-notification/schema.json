@@ -1,4 +1,4 @@
-{
+﻿{
   "kind": "collectionType",
   "collectionName": "admin_notifications",
   "info": {
@@ -11,30 +11,17 @@
   },
   "pluginOptions": {},
   "attributes": {
-    "title": {
-      "type": "string",
-      "required": true
-    },
-    "message": {
-      "type": "text",
-      "required": true
-    },
+    "title": { "type": "string", "required": true },
+    "message": { "type": "text", "required": true },
     "audience": {
       "type": "enumeration",
-      "enum": [
-        "single",
-        "all"
-      ],
+      "enum": ["single", "selected", "all"],
       "default": "single",
       "required": true
     },
     "category": {
       "type": "enumeration",
-      "enum": [
-        "campaign",
-        "announcement",
-        "system"
-      ],
+      "enum": ["campaign", "announcement", "system"],
       "default": "announcement"
     },
     "targetUser": {
@@ -42,24 +29,15 @@
       "relation": "oneToOne",
       "target": "plugin::users-permissions.user"
     },
+    "targetEmails": { "type": "json" },
+    "targetProfileIds": { "type": "json" },
     "deliveryStatus": {
       "type": "enumeration",
-      "enum": [
-        "queued",
-        "sent",
-        "failed"
-      ],
+      "enum": ["queued", "sent", "failed"],
       "default": "queued"
     },
-    "sentAt": {
-      "type": "datetime"
-    },
-    "sentCount": {
-      "type": "integer",
-      "default": 0
-    },
-    "lastError": {
-      "type": "text"
-    }
+    "sentAt": { "type": "datetime" },
+    "sentCount": { "type": "integer", "default": 0 },
+    "lastError": { "type": "text" }
   }
 }

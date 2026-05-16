@@ -1,4 +1,4 @@
-import { normalizeEmail, ownerIdFromEmail } from '../../../../utils/identity';
+﻿import { normalizeEmail, ownerIdFromEmail } from '../../../../utils/identity';
 
 const ADMIN_NOTIFICATION_UID = 'api::admin-notification.admin-notification';
 const NOTIFICATION_UID = 'api::notification.notification';
@@ -17,6 +17,25 @@ const stableToken = (value: string): string => {
   return raw.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'unknown';
 };
 
+const normalizeStringList = (value: unknown): string[] => {
+  const out = new Set<string>();
+  const visit = (item: unknown) => {
+    if (item == null) return;
+    if (Array.isArray(item)) {
+      for (const nested of item) visit(nested);
+      return;
+    }
+    if (typeof item === 'string' && item.includes(',')) {
+      for (const part of item.split(',')) visit(part);
+      return;
+    }
+    const text = normalizeText(item);
+    if (text) out.add(text);
+  };
+  visit(value);
+  return [...out];
+};
+
 const loadEntry = async (strapiRef: any, id: unknown) => {
   const numericId = Number(id);
   if (!Number.isInteger(numericId) || numericId <= 0) return null;
@@ -27,6 +46,8 @@ const loadEntry = async (strapiRef: any, id: unknown) => {
       'message',
       'audience',
       'category',
+      'targetEmails',
+      'targetProfileIds',
       'deliveryStatus',
       'sentAt',
       'sentCount',
@@ -60,6 +81,21 @@ const listAllRecipients = async (strapiRef: any): Promise<Recipient[]> => {
   return [...byEmail.values()];
 };
 
+const selectedRecipients = (entry: Record<string, unknown>): Recipient[] => {
+  const byKey = new Map<string, Recipient>();
+  for (const emailRaw of normalizeStringList(entry.targetEmails)) {
+    const email = normalizeEmail(emailRaw);
+    if (!email) continue;
+    byKey.set(email, { email, ownerId: ownerIdFromEmail(email) });
+  }
+  for (const profileIdRaw of normalizeStringList(entry.targetProfileIds)) {
+    const ownerId = normalizeText(profileIdRaw);
+    if (!ownerId) continue;
+    byKey.set(ownerId, { email: '', ownerId });
+  }
+  return [...byKey.values()];
+};
+
 const resolveRecipients = async (
   strapiRef: any,
   entry: Record<string, unknown>,
@@ -67,6 +103,14 @@ const resolveRecipients = async (
   const audience = normalizeText(entry.audience).toLowerCase();
   if (audience === 'all') {
     return listAllRecipients(strapiRef);
+  }
+
+  if (audience === 'selected') {
+    const selected = selectedRecipients(entry);
+    if (selected.length === 0) {
+      throw new Error('Secili kullanici gonderiminde targetEmails veya targetProfileIds zorunludur.');
+    }
+    return selected;
   }
 
   const targetUser = (entry.targetUser ?? null) as Record<string, unknown> | null;
@@ -91,11 +135,14 @@ const notificationPayloadFor = (
 ) => ({
   notificationId: `admin_${entryId}_${stableToken(recipient.ownerId || recipient.email)}`,
   kind: 'broadcast',
+  type: 'broadcast',
   title,
   message,
   isRead: false,
   targetEmail: recipient.email,
   targetProfileId: recipient.ownerId,
+  receiverEmail: recipient.email,
+  receiverProfileId: recipient.ownerId,
   createdAtClient: new Date().toISOString(),
 });
 
@@ -114,6 +161,9 @@ const validateBeforeCreate = (data: Record<string, unknown>) => {
   const audience = normalizeText(data.audience).toLowerCase();
   if (audience === 'single' && !data.targetUser) {
     throw new Error('Tek kullaniciya gonderimde hedef kullanici secmelisin.');
+  }
+  if (audience === 'selected' && selectedRecipients(data).length === 0) {
+    throw new Error('Secili kullanici gonderiminde targetEmails veya targetProfileIds girmelisin.');
   }
 };
 

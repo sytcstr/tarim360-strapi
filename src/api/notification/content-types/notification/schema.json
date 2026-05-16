@@ -1,4 +1,4 @@
-{
+﻿{
   "kind": "collectionType",
   "collectionName": "notifications",
   "info": {
@@ -11,32 +11,40 @@
   },
   "pluginOptions": {},
   "attributes": {
-    "notificationId": {
-      "type": "string"
-    },
-    "kind": {
-      "type": "string"
-    },
-    "title": {
-      "type": "string"
-    },
-    "message": {
-      "type": "text"
-    },
-    "isRead": {
-      "type": "boolean"
-    },
-    "targetEmail": {
-      "type": "string"
-    },
-    "targetProfileId": {
-      "type": "string"
-    },
-    "createdAtClient": {
-      "type": "datetime"
-    },
-    "updatedAtClient": {
-      "type": "datetime"
-    }
+    "notificationId": { "type": "string" },
+    "kind": { "type": "string" },
+    "type": { "type": "string" },
+    "title": { "type": "string" },
+    "message": { "type": "text" },
+    "isRead": { "type": "boolean", "default": false },
+    "targetEmail": { "type": "string" },
+    "targetProfileId": { "type": "string" },
+    "ownerProfileId": { "type": "string" },
+    "receiverEmail": { "type": "string" },
+    "receiverProfileId": { "type": "string" },
+    "recipientEmail": { "type": "string" },
+    "recipientProfileId": { "type": "string" },
+    "senderEmail": { "type": "string" },
+    "senderProfileId": { "type": "string" },
+    "requesterEmail": { "type": "string" },
+    "requesterProfileId": { "type": "string" },
+    "listingId": { "type": "string" },
+    "offerId": { "type": "string" },
+    "threadId": { "type": "string" },
+    "questionId": { "type": "string" },
+    "answerId": { "type": "string" },
+    "source": { "type": "string" },
+    "event": { "type": "string" },
+    "broadcast": { "type": "boolean", "default": false },
+    "isBroadcast": { "type": "boolean", "default": false },
+    "targetAll": { "type": "boolean", "default": false },
+    "skipPush": { "type": "boolean", "default": false },
+    "audience": { "type": "string" },
+    "targetAudience": { "type": "string" },
+    "pushStatus": { "type": "string" },
+    "pushError": { "type": "text" },
+    "sentAt": { "type": "datetime" },
+    "createdAtClient": { "type": "datetime" },
+    "updatedAtClient": { "type": "datetime" }
   }
 }

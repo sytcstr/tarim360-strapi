@@ -1,10 +1,42 @@
-import { denyNoIdentity, loadEntityByRouteId, mergeScopeOrFilter, normalizeEmail, readIdentity } from '../utils/identity';
+﻿import { denyNoIdentity, loadEntityByRouteId, mergeScopeOrFilter, normalizeEmail, readIdentity } from '../utils/identity';
 
 const UID = 'api::notification.notification';
 
+const normalizeText = (value: unknown): string => String(value ?? '').trim();
+
+const truthy = (value: unknown): boolean =>
+  value === true ||
+  value === 1 ||
+  ['true', '1', 'yes', 'evet'].includes(normalizeText(value).toLowerCase());
+
+const isBroadcast = (entity: Record<string, unknown>) => {
+  const kind = normalizeText(entity.kind || entity.type).toLowerCase();
+  const audience = normalizeText(entity.audience || entity.targetAudience).toLowerCase();
+  return (
+    truthy(entity.broadcast) ||
+    truthy(entity.isBroadcast) ||
+    truthy(entity.targetAll) ||
+    kind === 'broadcast' ||
+    kind === 'campaign' ||
+    kind === 'announcement' ||
+    kind === 'duyuru' ||
+    kind === 'kampanya' ||
+    audience === 'all' ||
+    audience === 'all_users' ||
+    audience === 'everyone' ||
+    audience === 'global'
+  );
+};
+
+const targetEmailOf = (entity: Record<string, unknown>) =>
+  normalizeEmail(entity.targetEmail || entity.receiverEmail || entity.recipientEmail || entity.ownerEmail || entity.email);
+
+const targetProfileIdOf = (entity: Record<string, unknown>) =>
+  normalizeText(entity.targetProfileId || entity.receiverProfileId || entity.recipientProfileId || entity.ownerProfileId || entity.profileId);
+
 const isMine = (entity: Record<string, unknown>, email: string, ownerId: string) => {
-  const targetEmail = normalizeEmail(entity.targetEmail);
-  const targetProfileId = String(entity.targetProfileId ?? '').trim();
+  const targetEmail = targetEmailOf(entity);
+  const targetProfileId = targetProfileIdOf(entity);
   return targetEmail === email || targetProfileId === ownerId;
 };
 
@@ -18,8 +50,20 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
   if (method === 'GET' && !id) {
     mergeScopeOrFilter(ctx, [
       { kind: { $eq: 'broadcast' } },
+      { kind: { $eq: 'campaign' } },
+      { kind: { $eq: 'announcement' } },
+      { broadcast: { $eq: true } },
+      { isBroadcast: { $eq: true } },
+      { targetAll: { $eq: true } },
+      { audience: { $eq: 'all' } },
+      { targetAudience: { $eq: 'all_users' } },
       { targetEmail: { $eq: identity.email } },
+      { receiverEmail: { $eq: identity.email } },
+      { recipientEmail: { $eq: identity.email } },
       { targetProfileId: { $eq: identity.ownerId } },
+      { receiverProfileId: { $eq: identity.ownerId } },
+      { recipientProfileId: { $eq: identity.ownerId } },
+      { ownerProfileId: { $eq: identity.ownerId } },
     ]);
     return true;
   }
@@ -28,46 +72,60 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
     const body = (ctx.request?.body ?? {}) as Record<string, unknown>;
     const data = (body.data ?? {}) as Record<string, unknown>;
 
-    const kind = String(data.kind ?? '').trim().toLowerCase();
-    if (kind === 'broadcast') {
-      ctx.forbidden('Broadcast bildirimi sadece yonetim tarafi gonderebilir.');
+    if (isBroadcast(data)) {
+      ctx.forbidden('Toplu bildirim sadece yonetim tarafi gonderebilir.');
       return false;
     }
 
-    const targetEmail = normalizeEmail(data.targetEmail);
-    const targetProfileId = String(data.targetProfileId ?? '').trim();
-    if (targetEmail && targetEmail !== identity.email) {
-      ctx.forbidden('Baska kullaniciya bildirim olusturamazsin.');
-      return false;
-    }
-    if (targetProfileId && targetProfileId !== identity.ownerId) {
-      ctx.forbidden('Baska profile bildirim olusturamazsin.');
-      return false;
+    let targetEmail = targetEmailOf(data);
+    let targetProfileId = targetProfileIdOf(data);
+
+    if (!targetEmail && !targetProfileId) {
+      targetEmail = identity.email;
+      targetProfileId = identity.ownerId;
     }
 
-    data.targetEmail = identity.email;
-    data.targetProfileId = identity.ownerId;
+    data.targetEmail = targetEmail;
+    data.targetProfileId = targetProfileId;
+    if (targetEmail && !normalizeEmail(data.receiverEmail)) data.receiverEmail = targetEmail;
+    if (targetProfileId && !normalizeText(data.receiverProfileId)) data.receiverProfileId = targetProfileId;
+    data.senderEmail = identity.email;
+    data.senderProfileId = identity.ownerId;
     body.data = data;
     ctx.request.body = body;
     return true;
   }
 
   if (id) {
-    const entity = await loadEntityByRouteId(strapi, UID, id, ['kind', 'targetEmail', 'targetProfileId']);
+    const entity = await loadEntityByRouteId(strapi, UID, id, [
+      'kind',
+      'type',
+      'targetEmail',
+      'targetProfileId',
+      'receiverEmail',
+      'receiverProfileId',
+      'recipientEmail',
+      'recipientProfileId',
+      'ownerProfileId',
+      'broadcast',
+      'isBroadcast',
+      'targetAll',
+      'audience',
+      'targetAudience',
+    ]);
     if (!entity) {
       ctx.forbidden('Bu bildirim kaydina erisim yetkin yok.');
       return false;
     }
-    const kind = String(entity.kind ?? '').trim().toLowerCase();
     const mine = isMine(entity, identity.email, identity.ownerId);
 
     if (method === 'GET') {
-      if (kind === 'broadcast' || mine) return true;
+      if (isBroadcast(entity) || mine) return true;
       ctx.forbidden('Bu bildirim kaydina erisim yetkin yok.');
       return false;
     }
 
-    if (!mine || kind === 'broadcast') {
+    if (!mine || isBroadcast(entity)) {
       ctx.forbidden('Bu bildirim kaydini degistirme yetkin yok.');
       return false;
     }
@@ -75,4 +133,3 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
 
   return true;
 };
-
