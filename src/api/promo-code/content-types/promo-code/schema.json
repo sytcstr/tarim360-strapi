@@ -32,11 +32,11 @@
       "type": "enumeration",
       "required": true,
       "enum": [
-        "premium_easy_yearly_1199",
-        "premium_eco_yearly_3399",
-        "premium_pro_yearly_4499"
+        "premium_easy_yearly_999",
+        "premium_eco_yearly_1599",
+        "premium_pro_yearly_3599"
       ],
-      "default": "premium_easy_yearly_1199"
+      "default": "premium_easy_yearly_999"
     },
     "isActive": {
       "type": "boolean",
@@ -59,6 +59,13 @@
     "allowWhenPremiumActive": {
       "type": "boolean",
       "default": false
+    },
+    "requiresModuleSelection": {
+      "type": "boolean",
+      "default": false
+    },
+    "allowedModules": {
+      "type": "json"
     },
     "targetUser": {
       "type": "relation",

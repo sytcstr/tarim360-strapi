@@ -74,6 +74,15 @@
     "purchaseUpdatedAt": {
       "type": "datetime"
     },
+    "activeModules": {
+      "type": "json"
+    },
+    "businessModules": {
+      "type": "json"
+    },
+    "businessModulesUpdatedAt": {
+      "type": "datetime"
+    },
     "incomingProfileComments": {
       "type": "json"
     },

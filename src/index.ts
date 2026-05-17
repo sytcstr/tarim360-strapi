@@ -1,6 +1,7 @@
 ﻿import type { Core } from '@strapi/strapi';
 import { syncOwnerPremiumFlags } from './utils/premium-sync';
 import { deliverPush as deliverNotificationPush } from './api/notification/content-types/notification/lifecycles';
+import { normalizePromoCode } from './utils/promo';
 
 type PermissionLeaf = {
   enabled: boolean;
@@ -602,6 +603,54 @@ const runPremiumFlagsBackfill = async (strapi: Core.Strapi) => {
   }
 };
 
+const ensureAlucraPromoCode = async (strapi: Core.Strapi) => {
+  const code = 'ALUCRA28.5';
+  const codeNormalized = normalizePromoCode(code);
+  const legacyNormalized = 'ALUCRA285';
+  const data = {
+    code,
+    codeNormalized,
+    title: 'Alucra28.5 Eco Premium',
+    description: 'Alucra28.5 promosyon kodu ile 12 ay Eco Premium hak tanimi.',
+    premiumProductId: 'premium_eco_yearly_1599',
+    isActive: true,
+    usageLimit: 0,
+    perUserLimit: 1,
+    allowWhenPremiumActive: true,
+    requiresModuleSelection: true,
+    allowedModules: ['islenmis_urunler', 'lojistik'],
+    grantMessage:
+      'Eco Premium hesabina tanimlandi. Premium haklarin ve sectigin modul aktiflestirildi.',
+    adminNote:
+      'Hazir promosyon kodu. Akilli reklam haklari uygulamada pasif oldugu icin premium katalogda 0 tutulur.',
+  };
+
+  try {
+    const existing = (await strapi.db
+      .query('api::promo-code.promo-code')
+      .findOne({
+        where: {
+          $or: [{ codeNormalized }, { codeNormalized: legacyNormalized }, { code }],
+        },
+      } as any)) as Record<string, unknown> | null;
+
+    if (existing?.id) {
+      await strapi.entityService.update(
+        'api::promo-code.promo-code' as any,
+        existing.id as any,
+        { data },
+      );
+    } else {
+      await strapi.entityService.create('api::promo-code.promo-code' as any, {
+        data,
+      });
+    }
+    strapi.log.info('Alucra28.5 promo code ensured.');
+  } catch (e) {
+    strapi.log.error(`Alucra28.5 promo code ensure failed: ${e}`);
+  }
+};
+
 export default {
   register() {},
 
@@ -641,6 +690,7 @@ export default {
     }
 
     await runPremiumFlagsBackfill(strapi);
+    await ensureAlucraPromoCode(strapi);
 
     strapi.log.info('Users & Permissions roles synced from bootstrap.');
   },

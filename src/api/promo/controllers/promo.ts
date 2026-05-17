@@ -6,6 +6,7 @@ const PROMO_CODE_UID = 'api::promo-code.promo-code';
 const PROMO_REDEMPTION_UID = 'api::promo-redemption.promo-redemption';
 const PROFILE_SETTING_UID = 'api::profile-setting.profile-setting';
 const MAX_HISTORY = 250;
+const ALLOWED_BUSINESS_MODULES = ['islenmis_urunler', 'lojistik'];
 
 const asInt = (value: unknown, fallback = 0): number => {
   const parsed = Number(value);
@@ -23,6 +24,81 @@ const asBool = (value: unknown, fallback = false): boolean => {
     return false;
   }
   return fallback;
+};
+
+const asList = (value: unknown): unknown[] => {
+  if (Array.isArray(value)) return value;
+  if (value && typeof value === 'object') {
+    const out: unknown[] = [];
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+      if (item === true || item === 'true' || item === 1) out.push(key);
+      else if (Array.isArray(item)) out.push(...item);
+      else if (asString(item)) out.push(item);
+    }
+    return out;
+  }
+  const raw = asString(value);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed !== raw) return asList(parsed);
+  } catch (_) {}
+  return raw.split(',');
+};
+
+const uniqueStrings = (items: unknown[]): string[] => {
+  const out: string[] = [];
+  for (const item of items) {
+    const value = asString(item);
+    if (value && !out.includes(value)) out.push(value);
+  }
+  return out;
+};
+
+const normalizeModule = (value: unknown): string => {
+  const raw = asString(value).toLowerCase();
+  if (!raw) return '';
+  if (
+    [
+      'processed',
+      'processed_products',
+      'processed_products_store',
+      'islenmis',
+      'islenmis_urunler',
+      'islenmis-urunler',
+    ].includes(raw)
+  ) {
+    return 'islenmis_urunler';
+  }
+  if (['logistics', 'lojistik', 'nakliye', 'nakliyat'].includes(raw)) {
+    return 'lojistik';
+  }
+  return raw;
+};
+
+const allowedModulesForPromo = (promo: Record<string, unknown>): string[] => {
+  const raw = uniqueStrings(asList(promo.allowedModules).map(normalizeModule));
+  if (raw.length === 0 || raw.includes('all') || raw.includes('hepsi')) {
+    return ALLOWED_BUSINESS_MODULES;
+  }
+  return raw.filter((x) => ALLOWED_BUSINESS_MODULES.includes(x));
+};
+
+const selectedModulesFromBody = (
+  body: Record<string, unknown>,
+  promo: Record<string, unknown>,
+): string[] => {
+  const allowed = allowedModulesForPromo(promo);
+  const raw = [
+    ...asList(body.selectedModule),
+    ...asList(body.selectedModules),
+    ...asList(body.module),
+    ...asList(body.moduleKey),
+    ...asList(body.businessModule),
+  ];
+  return uniqueStrings(raw.map(normalizeModule)).filter((x) =>
+    allowed.includes(x),
+  );
 };
 
 const pushUniqueHistoryRecord = (
@@ -137,6 +213,8 @@ const findPromoByCode = async (codeNormalized: string) => {
       'usageLimit',
       'perUserLimit',
       'allowWhenPremiumActive',
+      'requiresModuleSelection',
+      'allowedModules',
       'grantMessage',
       'redemptionCount',
       'lastRedeemedAt',
@@ -233,6 +311,16 @@ export default {
     const existingProfile = (await strapi.db.query(PROFILE_SETTING_UID).findOne({
       where: { profileId: identity.ownerId },
     } as any)) as Record<string, unknown> | null;
+    const previousModules = uniqueStrings([
+      ...asList(existingProfile?.activeModules).map(normalizeModule),
+      ...asList(existingProfile?.businessModules).map(normalizeModule),
+    ]).filter((x) => ALLOWED_BUSINESS_MODULES.includes(x));
+    const selectedModules = selectedModulesFromBody(body, promo);
+    const requiresModuleSelection = asBool(promo.requiresModuleSelection, false);
+    if (requiresModuleSelection && previousModules.length === 0 && selectedModules.length === 0) {
+      return ctx.badRequest('Promosyon kodu icin modul secimi gerekli.');
+    }
+    const nextModules = uniqueStrings([...previousModules, ...selectedModules]);
 
     const nextPremium = buildSubscriptionPayload({
       productId,
@@ -259,7 +347,7 @@ export default {
       record,
     );
 
-    const profilePayload = {
+    const profilePayload: Record<string, unknown> = {
       profileId: identity.ownerId,
       purchaseHistory: history,
       purchaseRecords: history,
@@ -267,6 +355,11 @@ export default {
       activePremiumSubscription: nextPremium,
       purchaseUpdatedAt: now.toISOString(),
     };
+    if (nextModules.length > 0) {
+      profilePayload.activeModules = nextModules;
+      profilePayload.businessModules = nextModules;
+      profilePayload.businessModulesUpdatedAt = now.toISOString();
+    }
 
     if (existingProfile?.id) {
       await strapi.entityService.update(
@@ -297,7 +390,10 @@ export default {
           status: 'redeemed',
           transactionId,
           redeemedAt: now.toISOString(),
-          grantSnapshot: nextPremium,
+          grantSnapshot: {
+            activePremium: nextPremium,
+            activeModules: nextModules,
+          },
         },
       },
     );

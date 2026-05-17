@@ -3,4 +3,4 @@ export const normalizePromoCode = (value: unknown): string =>
     .trim()
     .toUpperCase()
     .replace(/\s+/g, '')
-    .replace(/[^A-Z0-9_-]/g, '');
+    .replace(/[^A-Z0-9_.-]/g, '');
