@@ -43,6 +43,9 @@
     "featuredListingIds": {
       "type": "json"
     },
+    "profileMediaSettings": {
+      "type": "json"
+    },
     "coverImage": {
       "type": "media",
       "multiple": false,
