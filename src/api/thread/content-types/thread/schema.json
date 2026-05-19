@@ -1,73 +1,109 @@
-{
-  "kind": "collectionType",
-  "collectionName": "threads",
-  "info": {
-    "singularName": "thread",
-    "pluralName": "threads",
-    "displayName": "Thread"
-  },
-  "options": {
-    "draftAndPublish": false
-  },
-  "pluginOptions": {},
-  "attributes": {
-    "threadId": {
-      "type": "string",
-      "unique": true
-    },
-    "personName": {
-      "type": "string"
-    },
-    "personCity": {
-      "type": "string"
-    },
-    "listingId": {
-      "type": "string"
-    },
-    "listingTitle": {
-      "type": "string"
-    },
-    "listingQtyText": {
-      "type": "string"
-    },
-    "imageUrl": {
-      "type": "string"
-    },
-    "personAvatarUrl": {
-      "type": "string"
-    },
-    "requesterEmail": {
-      "type": "string"
-    },
-    "requesterProfileId": {
-      "type": "string"
-    },
-    "receiverEmail": {
-      "type": "string"
-    },
-    "receiverProfileId": {
-      "type": "string"
-    },
-    "lastMessage": {
-      "type": "text"
-    },
-    "lastTimeText": {
-      "type": "string"
-    },
-    "lastSenderEmail": {
-      "type": "string"
-    },
-    "lastSenderProfileId": {
-      "type": "string"
-    },
-    "unreadCount": {
-      "type": "integer"
-    },
-    "lastMessageMe": {
-      "type": "boolean"
-    },
-    "updatedAtClient": {
-      "type": "datetime"
-    }
-  }
+﻿{
+    "kind":  "collectionType",
+    "collectionName":  "threads",
+    "info":  {
+                 "singularName":  "thread",
+                 "pluralName":  "threads",
+                 "displayName":  "Thread"
+             },
+    "options":  {
+                    "draftAndPublish":  false
+                },
+    "pluginOptions":  {
+
+                      },
+    "attributes":  {
+                       "threadId":  {
+                                        "type":  "string",
+                                        "unique":  true
+                                    },
+                       "personName":  {
+                                          "type":  "string"
+                                      },
+                       "personCity":  {
+                                          "type":  "string"
+                                      },
+                       "listingId":  {
+                                         "type":  "string"
+                                     },
+                       "listingTitle":  {
+                                            "type":  "string"
+                                        },
+                       "listingQtyText":  {
+                                              "type":  "string"
+                                          },
+                       "imageUrl":  {
+                                        "type":  "string"
+                                    },
+                       "personAvatarUrl":  {
+                                               "type":  "string"
+                                           },
+                       "requesterEmail":  {
+                                              "type":  "string"
+                                          },
+                       "requesterProfileId":  {
+                                                  "type":  "string"
+                                              },
+                       "receiverEmail":  {
+                                             "type":  "string"
+                                         },
+                       "receiverProfileId":  {
+                                                 "type":  "string"
+                                             },
+                       "lastMessage":  {
+                                           "type":  "text"
+                                       },
+                       "lastTimeText":  {
+                                            "type":  "string"
+                                        },
+                       "lastSenderEmail":  {
+                                               "type":  "string"
+                                           },
+                       "lastSenderProfileId":  {
+                                                   "type":  "string"
+                                               },
+                       "unreadCount":  {
+                                           "type":  "integer"
+                                       },
+                       "lastMessageMe":  {
+                                             "type":  "boolean"
+                                         },
+                       "updatedAtClient":  {
+                                               "type":  "datetime"
+                                           },
+                       "conversationKey":  {
+                                               "type":  "string",
+                                               "required":  true,
+                                               "unique":  true
+                                           },
+                       "contextType":  {
+                                           "type":  "enumeration",
+                                           "enum":  [
+                                                        "general",
+                                                        "listing",
+                                                        "processed_product",
+                                                        "logistics_load",
+                                                        "support"
+                                                    ],
+                                           "default":  "general"
+                                       },
+                       "contextId":  {
+                                         "type":  "string"
+                                     },
+                       "requesterName":  {
+                                             "type":  "string"
+                                         },
+                       "receiverName":  {
+                                            "type":  "string"
+                                        },
+                       "lastMessagePreview":  {
+                                                  "type":  "text"
+                                              },
+                       "lastMessageAt":  {
+                                             "type":  "datetime"
+                                         },
+                       "metadata":  {
+                                        "type":  "json"
+                                    }
+                   }
 }

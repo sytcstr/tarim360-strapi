@@ -1,33 +1,87 @@
-{
-  "kind": "collectionType",
-  "collectionName": "logistics_offers",
-  "info": {
-    "singularName": "logistics-offer",
-    "pluralName": "logistics-offers",
-    "displayName": "Logistics Offer",
-    "description": "Yükler için verilen nakliye teklifleri"
-  },
-  "options": {
-    "draftAndPublish": false
-  },
-  "attributes": {
-    "loadId": { "type": "string", "required": true },
-    "transporterName": { "type": "string", "required": true },
-    "transporterKey": { "type": "string", "required": true },
-    "price": { "type": "decimal", "required": true },
-    "estimatedTime": { "type": "string", "required": true },
-    "note": { "type": "text" },
-    "vehicleType": { "type": "string", "required": true },
-    "capacityLabel": { "type": "string" },
-    "phone": { "type": "string" },
-    "whatsapp": { "type": "string" },
-    "rating": { "type": "decimal", "default": 4.5 },
-    "tripCount": { "type": "integer", "default": 0 },
-    "status": {
-      "type": "enumeration",
-      "enum": ["pending", "accepted", "rejected"],
-      "default": "pending"
-    },
-    "meetingStatus": { "type": "string", "default": "" }
-  }
+﻿{
+    "kind":  "collectionType",
+    "collectionName":  "logistics_offers",
+    "info":  {
+                 "singularName":  "logistics-offer",
+                 "pluralName":  "logistics-offers",
+                 "displayName":  "Logistics Offer",
+                 "description":  "YÃ¼kler iÃ§in verilen nakliye teklifleri"
+             },
+    "options":  {
+                    "draftAndPublish":  false
+                },
+    "attributes":  {
+                       "loadId":  {
+                                      "type":  "string",
+                                      "required":  true
+                                  },
+                       "transporterName":  {
+                                               "type":  "string",
+                                               "required":  true
+                                           },
+                       "transporterKey":  {
+                                              "type":  "string",
+                                              "required":  true
+                                          },
+                       "price":  {
+                                     "type":  "decimal",
+                                     "required":  true
+                                 },
+                       "estimatedTime":  {
+                                             "type":  "string",
+                                             "required":  true
+                                         },
+                       "note":  {
+                                    "type":  "text"
+                                },
+                       "vehicleType":  {
+                                           "type":  "string",
+                                           "required":  true
+                                       },
+                       "capacityLabel":  {
+                                             "type":  "string"
+                                         },
+                       "phone":  {
+                                     "type":  "string"
+                                 },
+                       "whatsapp":  {
+                                        "type":  "string"
+                                    },
+                       "rating":  {
+                                      "type":  "decimal",
+                                      "default":  4.5
+                                  },
+                       "tripCount":  {
+                                         "type":  "integer",
+                                         "default":  0
+                                     },
+                       "status":  {
+                                      "type":  "enumeration",
+                                      "enum":  [
+                                                   "pending",
+                                                   "accepted",
+                                                   "rejected"
+                                               ],
+                                      "default":  "pending"
+                                  },
+                       "meetingStatus":  {
+                                             "type":  "string",
+                                             "default":  ""
+                                         },
+                       "issueStatus":  {
+                                           "type":  "enumeration",
+                                           "enum":  [
+                                                        "none",
+                                                        "flagged",
+                                                        "resolved"
+                                                    ],
+                                           "default":  "none"
+                                       },
+                       "adminIssueStatus":  {
+                                                "type":  "string"
+                                            },
+                       "adminNote":  {
+                                         "type":  "text"
+                                     }
+                   }
 }

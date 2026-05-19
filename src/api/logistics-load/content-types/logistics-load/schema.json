@@ -1,40 +1,140 @@
-{
-  "kind": "collectionType",
-  "collectionName": "logistics_loads",
-  "info": {
-    "singularName": "logistics-load",
-    "pluralName": "logistics-loads",
-    "displayName": "Logistics Load",
-    "description": "Nakliye & Lojistik yük ilanları"
-  },
-  "options": {
-    "draftAndPublish": false
-  },
-  "attributes": {
-    "title": { "type": "string", "required": true },
-    "loadType": { "type": "string", "required": true },
-    "fromCity": { "type": "string", "required": true },
-    "toCity": { "type": "string", "required": true },
-    "weight": { "type": "decimal", "required": true },
-    "vehicleType": { "type": "string", "required": true },
-    "loadingDate": { "type": "datetime", "required": true },
-    "latitude": { "type": "decimal", "required": true },
-    "longitude": { "type": "decimal", "required": true },
-    "fromLatitude": { "type": "decimal", "required": true },
-    "fromLongitude": { "type": "decimal", "required": true },
-    "toLatitude": { "type": "decimal", "required": true },
-    "toLongitude": { "type": "decimal", "required": true },
-    "description": { "type": "text" },
-    "status": {
-      "type": "enumeration",
-      "enum": ["open", "offer_pending", "meeting_opened", "closed"],
-      "default": "open"
-    },
-    "ownerName": { "type": "string", "required": true },
-    "ownerKey": { "type": "string", "required": true },
-    "ownerPhone": { "type": "string" },
-    "ownerWhatsapp": { "type": "string" },
-    "estimatedDuration": { "type": "string" },
-    "loadNo": { "type": "string" }
-  }
+﻿{
+    "kind":  "collectionType",
+    "collectionName":  "logistics_loads",
+    "info":  {
+                 "singularName":  "logistics-load",
+                 "pluralName":  "logistics-loads",
+                 "displayName":  "Logistics Load",
+                 "description":  "Nakliye \u0026 Lojistik yÃ¼k ilanlarÄ±"
+             },
+    "options":  {
+                    "draftAndPublish":  false
+                },
+    "attributes":  {
+                       "title":  {
+                                     "type":  "string",
+                                     "required":  true
+                                 },
+                       "loadType":  {
+                                        "type":  "string",
+                                        "required":  true
+                                    },
+                       "fromCity":  {
+                                        "type":  "string",
+                                        "required":  true
+                                    },
+                       "toCity":  {
+                                      "type":  "string",
+                                      "required":  true
+                                  },
+                       "weight":  {
+                                      "type":  "decimal",
+                                      "required":  true
+                                  },
+                       "vehicleType":  {
+                                           "type":  "string",
+                                           "required":  true
+                                       },
+                       "loadingDate":  {
+                                           "type":  "datetime",
+                                           "required":  true
+                                       },
+                       "latitude":  {
+                                        "type":  "decimal",
+                                        "required":  true
+                                    },
+                       "longitude":  {
+                                         "type":  "decimal",
+                                         "required":  true
+                                     },
+                       "fromLatitude":  {
+                                            "type":  "decimal",
+                                            "required":  true
+                                        },
+                       "fromLongitude":  {
+                                             "type":  "decimal",
+                                             "required":  true
+                                         },
+                       "toLatitude":  {
+                                          "type":  "decimal",
+                                          "required":  true
+                                      },
+                       "toLongitude":  {
+                                           "type":  "decimal",
+                                           "required":  true
+                                       },
+                       "description":  {
+                                           "type":  "text"
+                                       },
+                       "status":  {
+                                      "type":  "enumeration",
+                                      "enum":  [
+                                                   "open",
+                                                   "offer_pending",
+                                                   "meeting_opened",
+                                                   "closed"
+                                               ],
+                                      "default":  "open"
+                                  },
+                       "ownerName":  {
+                                         "type":  "string",
+                                         "required":  true
+                                     },
+                       "ownerKey":  {
+                                        "type":  "string",
+                                        "required":  true
+                                    },
+                       "ownerPhone":  {
+                                          "type":  "string"
+                                      },
+                       "ownerWhatsapp":  {
+                                             "type":  "string"
+                                         },
+                       "estimatedDuration":  {
+                                                 "type":  "string"
+                                             },
+                       "loadNo":  {
+                                      "type":  "string"
+                                  },
+                       "ownerVerified":  {
+                                             "type":  "boolean",
+                                             "default":  false
+                                         },
+                       "viewCount":  {
+                                         "type":  "integer",
+                                         "default":  0
+                                     },
+                       "likeCount":  {
+                                         "type":  "integer",
+                                         "default":  0
+                                     },
+                       "favoriteCount":  {
+                                             "type":  "integer",
+                                             "default":  0
+                                         },
+                       "likedActorKeys":  {
+                                              "type":  "json"
+                                          },
+                       "favoriteActorKeys":  {
+                                                 "type":  "json"
+                                             },
+                       "moderationStatus":  {
+                                                "type":  "enumeration",
+                                                "enum":  [
+                                                             "approved",
+                                                             "pending",
+                                                             "rejected"
+                                                         ],
+                                                "default":  "pending"
+                                            },
+                       "moderationNote":  {
+                                              "type":  "text"
+                                          },
+                       "adminStatus":  {
+                                           "type":  "string"
+                                       },
+                       "adminNote":  {
+                                         "type":  "text"
+                                     }
+                   }
 }

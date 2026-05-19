@@ -1,51 +1,97 @@
-{
-  "kind": "collectionType",
-  "collectionName": "messages",
-  "info": {
-    "singularName": "message",
-    "pluralName": "messages",
-    "displayName": "Message"
-  },
-  "options": {
-    "draftAndPublish": false
-  },
-  "pluginOptions": {},
-  "attributes": {
-    "threadId": {
-      "type": "string"
-    },
-    "message": {
-      "type": "text"
-    },
-    "text": {
-      "type": "text"
-    },
-    "direction": {
-      "type": "string"
-    },
-    "senderEmail": {
-      "type": "string"
-    },
-    "senderProfileId": {
-      "type": "string"
-    },
-    "senderName": {
-      "type": "string"
-    },
-    "requesterEmail": {
-      "type": "string"
-    },
-    "requesterProfileId": {
-      "type": "string"
-    },
-    "receiverEmail": {
-      "type": "string"
-    },
-    "receiverProfileId": {
-      "type": "string"
-    },
-    "sentAt": {
-      "type": "datetime"
-    }
-  }
+﻿{
+    "kind":  "collectionType",
+    "collectionName":  "messages",
+    "info":  {
+                 "singularName":  "message",
+                 "pluralName":  "messages",
+                 "displayName":  "Message"
+             },
+    "options":  {
+                    "draftAndPublish":  false
+                },
+    "pluginOptions":  {
+
+                      },
+    "attributes":  {
+                       "threadId":  {
+                                        "type":  "string"
+                                    },
+                       "message":  {
+                                       "type":  "text"
+                                   },
+                       "text":  {
+                                    "type":  "text"
+                                },
+                       "direction":  {
+                                         "type":  "string"
+                                     },
+                       "senderEmail":  {
+                                           "type":  "string"
+                                       },
+                       "senderProfileId":  {
+                                               "type":  "string"
+                                           },
+                       "senderName":  {
+                                          "type":  "string"
+                                      },
+                       "requesterEmail":  {
+                                              "type":  "string"
+                                          },
+                       "requesterProfileId":  {
+                                                  "type":  "string"
+                                              },
+                       "receiverEmail":  {
+                                             "type":  "string"
+                                         },
+                       "receiverProfileId":  {
+                                                 "type":  "string"
+                                             },
+                       "sentAt":  {
+                                      "type":  "datetime"
+                                  },
+                       "conversationKey":  {
+                                               "type":  "string"
+                                           },
+                       "contextType":  {
+                                           "type":  "enumeration",
+                                           "enum":  [
+                                                        "general",
+                                                        "listing",
+                                                        "processed_product",
+                                                        "logistics_load",
+                                                        "support"
+                                                    ],
+                                           "default":  "general"
+                                       },
+                       "contextId":  {
+                                         "type":  "string"
+                                     },
+                       "listingId":  {
+                                         "type":  "string"
+                                     },
+                       "listingTitle":  {
+                                            "type":  "string"
+                                        },
+                       "requesterName":  {
+                                             "type":  "string"
+                                         },
+                       "receiverName":  {
+                                            "type":  "string"
+                                        },
+                       "targetEmail":  {
+                                           "type":  "email"
+                                       },
+                       "targetProfileId":  {
+                                               "type":  "string"
+                                           },
+                       "messageReceiverEmail":  {
+                                                    "type":  "email"
+                                                },
+                       "messageReceiverProfileId":  {
+                                                        "type":  "string"
+                                                    },
+                       "metadata":  {
+                                        "type":  "json"
+                                    }
+                   }
 }

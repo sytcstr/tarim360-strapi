@@ -1,186 +1,229 @@
-{
-  "kind": "collectionType",
-  "collectionName": "profile_settings",
-  "info": {
-    "singularName": "profile-setting",
-    "pluralName": "profile-settings",
-    "displayName": "ProfileSetting"
-  },
-  "options": {
-    "draftAndPublish": false
-  },
-  "pluginOptions": {},
-  "attributes": {
-    "profileId": {
-      "type": "string",
-      "required": true,
-      "unique": true
-    },
-    "displayName": {
-      "type": "string"
-    },
-    "publicUsername": {
-      "type": "string"
-    },
-    "brandName": {
-      "type": "string"
-    },
-    "city": {
-      "type": "string"
-    },
-    "birthDate": {
-      "type": "date"
-    },
-    "roleText": {
-      "type": "string"
-    },
-    "bio": {
-      "type": "text"
-    },
-    "aboutText": {
-      "type": "text"
-    },
-    "featuredListingIds": {
-      "type": "json"
-    },
-    "profileMediaSettings": {
-      "type": "json"
-    },
-    "coverImage": {
-      "type": "media",
-      "multiple": false,
-      "allowedTypes": [
-        "images",
-        "files"
-      ]
-    },
-    "avatarImage": {
-      "type": "media",
-      "multiple": false,
-      "allowedTypes": [
-        "images",
-        "files"
-      ]
-    },
-    "purchaseHistory": {
-      "type": "json"
-    },
-    "purchaseRecords": {
-      "type": "json"
-    },
-    "activePremium": {
-      "type": "json"
-    },
-    "activePremiumSubscription": {
-      "type": "json"
-    },
-    "purchaseUpdatedAt": {
-      "type": "datetime"
-    },
-    "activeModules": {
-      "type": "json"
-    },
-    "businessModules": {
-      "type": "json"
-    },
-    "businessModulesUpdatedAt": {
-      "type": "datetime"
-    },
-    "incomingProfileComments": {
-      "type": "json"
-    },
-    "incomingComments": {
-      "type": "json"
-    },
-    "incomingCommentsUpdatedAt": {
-      "type": "datetime"
-    },
-    "myComments": {
-      "type": "json"
-    },
-    "myCommentItems": {
-      "type": "json"
-    },
-    "myCommentsUpdatedAt": {
-      "type": "datetime"
-    },
-    "favoriteListingIds": {
-      "type": "json"
-    },
-    "favoritesListingIds": {
-      "type": "json"
-    },
-    "favoritesUpdatedAt": {
-      "type": "datetime"
-    },
-    "favoriteProfilesMap": {
-      "type": "json"
-    },
-    "favoriteProfiles": {
-      "type": "json"
-    },
-    "favoriteProfilesUpdatedAt": {
-      "type": "datetime"
-    },
-    "followerIds": {
-      "type": "json"
-    },
-    "followersIds": {
-      "type": "json"
-    },
-    "followers": {
-      "type": "json"
-    },
-    "followingIds": {
-      "type": "json"
-    },
-    "followsIds": {
-      "type": "json"
-    },
-    "following": {
-      "type": "json"
-    },
-    "followersFallback": {
-      "type": "integer"
-    },
-    "followingFallback": {
-      "type": "integer"
-    },
-    "followersCountBase": {
-      "type": "integer"
-    },
-    "followingCountBase": {
-      "type": "integer"
-    },
-    "followUpdatedAt": {
-      "type": "datetime"
-    },
-    "ratingVotesByViewer": {
-      "type": "json"
-    },
-    "ratingVotes": {
-      "type": "json"
-    },
-    "ratingBaseCount": {
-      "type": "integer"
-    },
-    "voteCountBase": {
-      "type": "integer"
-    },
-    "ratingBaseAverage": {
-      "type": "decimal"
-    },
-    "ratingAverageBase": {
-      "type": "decimal"
-    },
-    "ratingUpdatedAt": {
-      "type": "datetime"
-    },
-    "fcmTokens": {
-      "type": "json"
-    },
-    "updatedAtClient": {
-      "type": "datetime"
-    }
-  }
+﻿{
+    "kind":  "collectionType",
+    "collectionName":  "profile_settings",
+    "info":  {
+                 "singularName":  "profile-setting",
+                 "pluralName":  "profile-settings",
+                 "displayName":  "ProfileSetting"
+             },
+    "options":  {
+                    "draftAndPublish":  false
+                },
+    "pluginOptions":  {
+
+                      },
+    "attributes":  {
+                       "profileId":  {
+                                         "type":  "string",
+                                         "required":  true,
+                                         "unique":  true
+                                     },
+                       "displayName":  {
+                                           "type":  "string"
+                                       },
+                       "publicUsername":  {
+                                              "type":  "string"
+                                          },
+                       "brandName":  {
+                                         "type":  "string"
+                                     },
+                       "city":  {
+                                    "type":  "string"
+                                },
+                       "birthDate":  {
+                                         "type":  "date"
+                                     },
+                       "roleText":  {
+                                        "type":  "string"
+                                    },
+                       "bio":  {
+                                   "type":  "text"
+                               },
+                       "aboutText":  {
+                                         "type":  "text"
+                                     },
+                       "featuredListingIds":  {
+                                                  "type":  "json"
+                                              },
+                       "profileMediaSettings":  {
+                                                    "type":  "json"
+                                                },
+                       "coverImage":  {
+                                          "type":  "media",
+                                          "multiple":  false,
+                                          "allowedTypes":  [
+                                                               "images",
+                                                               "files"
+                                                           ]
+                                      },
+                       "avatarImage":  {
+                                           "type":  "media",
+                                           "multiple":  false,
+                                           "allowedTypes":  [
+                                                                "images",
+                                                                "files"
+                                                            ]
+                                       },
+                       "purchaseHistory":  {
+                                               "type":  "json"
+                                           },
+                       "purchaseRecords":  {
+                                               "type":  "json"
+                                           },
+                       "activePremium":  {
+                                             "type":  "json"
+                                         },
+                       "activePremiumSubscription":  {
+                                                         "type":  "json"
+                                                     },
+                       "purchaseUpdatedAt":  {
+                                                 "type":  "datetime"
+                                             },
+                       "activeModules":  {
+                                             "type":  "json"
+                                         },
+                       "businessModules":  {
+                                               "type":  "json"
+                                           },
+                       "businessModulesUpdatedAt":  {
+                                                        "type":  "datetime"
+                                                    },
+                       "incomingProfileComments":  {
+                                                       "type":  "json"
+                                                   },
+                       "incomingComments":  {
+                                                "type":  "json"
+                                            },
+                       "incomingCommentsUpdatedAt":  {
+                                                         "type":  "datetime"
+                                                     },
+                       "myComments":  {
+                                          "type":  "json"
+                                      },
+                       "myCommentItems":  {
+                                              "type":  "json"
+                                          },
+                       "myCommentsUpdatedAt":  {
+                                                   "type":  "datetime"
+                                               },
+                       "favoriteListingIds":  {
+                                                  "type":  "json"
+                                              },
+                       "favoritesListingIds":  {
+                                                   "type":  "json"
+                                               },
+                       "favoritesUpdatedAt":  {
+                                                  "type":  "datetime"
+                                              },
+                       "favoriteProfilesMap":  {
+                                                   "type":  "json"
+                                               },
+                       "favoriteProfiles":  {
+                                                "type":  "json"
+                                            },
+                       "favoriteProfilesUpdatedAt":  {
+                                                         "type":  "datetime"
+                                                     },
+                       "followerIds":  {
+                                           "type":  "json"
+                                       },
+                       "followersIds":  {
+                                            "type":  "json"
+                                        },
+                       "followers":  {
+                                         "type":  "json"
+                                     },
+                       "followingIds":  {
+                                            "type":  "json"
+                                        },
+                       "followsIds":  {
+                                          "type":  "json"
+                                      },
+                       "following":  {
+                                         "type":  "json"
+                                     },
+                       "followersFallback":  {
+                                                 "type":  "integer"
+                                             },
+                       "followingFallback":  {
+                                                 "type":  "integer"
+                                             },
+                       "followersCountBase":  {
+                                                  "type":  "integer"
+                                              },
+                       "followingCountBase":  {
+                                                  "type":  "integer"
+                                              },
+                       "followUpdatedAt":  {
+                                               "type":  "datetime"
+                                           },
+                       "ratingVotesByViewer":  {
+                                                   "type":  "json"
+                                               },
+                       "ratingVotes":  {
+                                           "type":  "json"
+                                       },
+                       "ratingBaseCount":  {
+                                               "type":  "integer"
+                                           },
+                       "voteCountBase":  {
+                                             "type":  "integer"
+                                         },
+                       "ratingBaseAverage":  {
+                                                 "type":  "decimal"
+                                             },
+                       "ratingAverageBase":  {
+                                                 "type":  "decimal"
+                                             },
+                       "ratingUpdatedAt":  {
+                                               "type":  "datetime"
+                                           },
+                       "fcmTokens":  {
+                                         "type":  "json"
+                                     },
+                       "updatedAtClient":  {
+                                               "type":  "datetime"
+                                           },
+                       "user":  {
+                                    "type":  "relation",
+                                    "relation":  "oneToOne",
+                                    "target":  "plugin::users-permissions.user"
+                                },
+                       "ownerEmail":  {
+                                          "type":  "email"
+                                      },
+                       "phone":  {
+                                     "type":  "string"
+                                 },
+                       "whatsapp":  {
+                                        "type":  "string"
+                                    },
+                       "district":  {
+                                        "type":  "string"
+                                    },
+                       "avatarUrl":  {
+                                         "type":  "string"
+                                     },
+                       "coverUrl":  {
+                                        "type":  "string"
+                                    },
+                       "logisticsAboutText":  {
+                                                  "type":  "text"
+                                              },
+                       "accountType":  {
+                                           "type":  "enumeration",
+                                           "enum":  [
+                                                        "standard",
+                                                        "premium",
+                                                        "business"
+                                                    ],
+                                           "default":  "standard"
+                                       },
+                       "settings":  {
+                                        "type":  "json"
+                                    },
+                       "lastSeenAt":  {
+                                          "type":  "datetime"
+                                      }
+                   }
 }
