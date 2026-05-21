@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 
 const crypto = require('crypto');
 
@@ -242,12 +242,12 @@ const userFilter = (user) => {
   return ors.length ? { $or: ors } : { id: -1 };
 };
 
-module.exports = {
+export default {
   async mine(ctx) {
     const limit = Math.min(Number(ctx.query?.pagination?.limit || ctx.query?.limit || 220), 300);
     const rows = await strapi.entityService.findMany(THREAD_UID, {
       filters: userFilter(ctx.state.user),
-      sort: { lastMessageAt: 'desc' },
+      sort: { lastMessageAt: 'desc' } as any,
       limit,
     });
     ctx.body = { data: rows };
@@ -364,3 +364,5 @@ module.exports = {
     ctx.body = { data: message, thread };
   },
 };
+
+

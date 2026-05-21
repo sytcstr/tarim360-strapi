@@ -1,6 +1,6 @@
 ﻿'use strict';
 
-module.exports = {
+export default {
   routes: [
     {
       method: 'GET',
@@ -34,4 +34,5 @@ module.exports = {
     },
   ],
 };
+
 

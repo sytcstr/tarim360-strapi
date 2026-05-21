@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 
 const LOAD_UID = 'api::logistics-load.logistics-load';
 const VEHICLE_UID = 'api::logistics-vehicle.logistics-vehicle';
@@ -85,7 +85,7 @@ const listLatest = async (uid) =>
     limit: 300,
   });
 
-module.exports = {
+export default {
   async access(ctx) {
     if (!assertAdmin(ctx)) return;
     ctx.body = { isAdmin: true };
@@ -107,7 +107,7 @@ module.exports = {
       load.moderationStatus || 'pending',
     );
     const status = oneOf(data.status, ['open', 'offer_pending', 'meeting_opened', 'closed'], load.status || 'open');
-    const updated = await strapi.entityService.update(LOAD_UID, load.id, {
+    const updated = await strapi.entityService.update(LOAD_UID as any, load.id, {
       data: {
         moderationStatus,
         moderationNote: cleanId(data.note),
@@ -139,7 +139,7 @@ module.exports = {
       ['approved', 'pending', 'rejected'],
       vehicle.moderationStatus || 'pending',
     );
-    const updated = await strapi.entityService.update(VEHICLE_UID, vehicle.id, {
+    const updated = await strapi.entityService.update(VEHICLE_UID as any, vehicle.id, {
       data: {
         moderationStatus,
         moderationNote: cleanId(data.note),
@@ -163,7 +163,7 @@ module.exports = {
     if (!offer) return ctx.notFound('Lojistik teklif bulunamadi.');
     const issueStatus = oneOf(data.issueStatus, ['none', 'flagged', 'resolved'], offer.issueStatus || 'none');
     const status = oneOf(data.status, ['pending', 'accepted', 'rejected'], offer.status || 'pending');
-    const updated = await strapi.entityService.update(OFFER_UID, offer.id, {
+    const updated = await strapi.entityService.update(OFFER_UID as any, offer.id, {
       data: {
         issueStatus,
         adminIssueStatus: issueStatus,
@@ -174,3 +174,5 @@ module.exports = {
     ctx.body = { offer: updated };
   },
 };
+
+
