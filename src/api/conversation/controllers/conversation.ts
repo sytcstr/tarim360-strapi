@@ -25,9 +25,22 @@ const cleanId = (value) => String(value || '').trim();
 
 const actorForUser = (user) => ({
   email: cleanEmail(user && user.email),
-  profileId: cleanId(user && (user.profileId || user.ownerProfileId || user.id)),
+  profileId: cleanId(
+    user &&
+      (user.profileId ||
+        user.ownerProfileId ||
+        ownerIdFromEmail(user.email) ||
+        user.id),
+  ),
   name: cleanId(user && (user.username || user.email || user.id)),
 });
+
+const ownerIdFromEmail = (email) => {
+  const value = cleanEmail(email);
+  if (!value) return '';
+  const safe = value.replace(/[^a-z0-9]/g, '_');
+  return safe ? `u_${safe}` : '';
+};
 
 const actorKey = (profileId, email, name) => {
   const pid = cleanId(profileId);
@@ -153,6 +166,15 @@ const threadIdFor = (data, conversationKey) => {
   const supplied = pick(data, ['threadId', 'conversationId']);
   if (supplied && !supplied.toLowerCase().startsWith('support_')) return supplied;
   return `conv_${crypto.createHash('sha1').update(conversationKey).digest('hex').slice(0, 24)}`;
+};
+
+const messageMetadataFor = (data) => {
+  const base = data.metadata && typeof data.metadata === 'object' ? { ...data.metadata } : {};
+  for (const key of ['messageType', 'offerEvent', 'offerId', 'offerStatus']) {
+    const value = pick(data, [key]);
+    if (value) base[key] = value;
+  }
+  return base;
 };
 
 const findThread = async (strapi, data, conversationKey, threadId) => {
@@ -340,7 +362,6 @@ export default {
     const sentAt = pick(data, ['sentAt']) || new Date().toISOString();
     const message = await strapi.entityService.create(MESSAGE_UID, {
       data: {
-        ...data,
         threadId: thread.threadId,
         conversationKey: thread.conversationKey,
         contextType: thread.contextType,
@@ -349,6 +370,7 @@ export default {
         listingTitle: thread.listingTitle,
         message: text,
         text,
+        direction: pick(data, ['direction']),
         senderEmail: p.senderEmail,
         senderProfileId: p.senderProfileId,
         senderName: p.senderName,
@@ -358,7 +380,18 @@ export default {
         receiverEmail: p.receiverEmail,
         receiverProfileId: p.receiverProfileId,
         receiverName: p.receiverName,
+        targetEmail: cleanEmail(pick(data, ['targetEmail', 'messageReceiverEmail'])),
+        targetProfileId: cleanId(
+          pick(data, ['targetProfileId', 'messageReceiverProfileId']),
+        ),
+        messageReceiverEmail: cleanEmail(
+          pick(data, ['messageReceiverEmail', 'targetEmail']),
+        ),
+        messageReceiverProfileId: cleanId(
+          pick(data, ['messageReceiverProfileId', 'targetProfileId']),
+        ),
         sentAt,
+        metadata: messageMetadataFor(data),
       },
     });
     ctx.body = { data: message, thread };

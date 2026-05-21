@@ -6,6 +6,7 @@ import {
   PREMIUM_PRODUCTS,
   Provider,
   PurchaseStatus,
+  resolveCanonicalProductId,
 } from './catalog';
 
 const PURCHASE_EVENT_UID = 'api::purchase-event.purchase-event';
@@ -81,7 +82,7 @@ const premiumPayloadForProduct = (input: {
   priceTl: number;
   premiumEndsAt?: string;
 }) => {
-  const spec = PREMIUM_PRODUCTS[input.productId];
+  const spec = PREMIUM_PRODUCTS[resolveCanonicalProductId(input.productId)];
   if (!spec) return null;
   const startsAt = new Date();
   const parsedEnds = parseIso(input.premiumEndsAt);

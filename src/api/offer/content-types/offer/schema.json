@@ -79,6 +79,9 @@
     },
     "createdAtClient": {
       "type": "datetime"
+    },
+    "updatedAtClient": {
+      "type": "datetime"
     }
   }
 }

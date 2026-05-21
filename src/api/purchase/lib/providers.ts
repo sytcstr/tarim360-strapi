@@ -185,14 +185,17 @@ const callAppleVerifyReceipt = async (
   const endpoint = sandbox
     ? 'https://sandbox.itunes.apple.com/verifyReceipt'
     : 'https://buy.itunes.apple.com/verifyReceipt';
+  const body: Record<string, unknown> = {
+    'receipt-data': receipt,
+    'exclude-old-transactions': true,
+  };
+  if (APPLE_SHARED_SECRET) {
+    body.password = APPLE_SHARED_SECRET;
+  }
   const res = await fetch(endpoint, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      'receipt-data': receipt,
-      password: APPLE_SHARED_SECRET,
-      'exclude-old-transactions': true,
-    }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`Apple verifyReceipt HTTP ${res.status}`);
   return (await res.json().catch(() => ({}))) as Record<string, unknown>;
@@ -203,7 +206,7 @@ const verifyApple = async (input: {
   receipt: string;
   isSubscription: boolean;
 }): Promise<VerifyOutcome> => {
-  if (!APPLE_SHARED_SECRET) {
+  if (input.isSubscription && !APPLE_SHARED_SECRET) {
     throw new Error('APPLE_SHARED_SECRET tanımlı değil.');
   }
   const receipt = asString(input.receipt);

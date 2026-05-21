@@ -85,6 +85,9 @@
                        "businessModules":  {
                                                "type":  "json"
                                            },
+                       "disabledBusinessModules":  {
+                                                          "type":  "json"
+                                                      },
                        "businessModulesUpdatedAt":  {
                                                         "type":  "datetime"
                                                     },

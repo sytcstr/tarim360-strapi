@@ -57,8 +57,19 @@ export const PREMIUM_PRODUCTS: Record<
   },
 };
 
+export const IOS_PREMIUM_PRODUCT_ALIASES: Record<string, string> = {
+  easy_premium_12ay: 'premium_easy_yearly_999',
+  eco_premium_12ay: 'premium_eco_yearly_1599',
+  pro_premium_12ay: 'premium_pro_yearly_3599',
+};
+
+export const ADDITIONAL_BUSINESS_MODULE_PRODUCT_ID =
+  'business_module_extra_yearly_500';
+
 export const ALL_PRODUCTS = new Set<string>([
   ...Object.keys(PREMIUM_PRODUCTS),
+  ...Object.keys(IOS_PREMIUM_PRODUCT_ALIASES),
+  ADDITIONAL_BUSINESS_MODULE_PRODUCT_ID,
   'normal_listing_5_399',
   'doping_7_189',
   'doping_14_249',
@@ -71,6 +82,11 @@ export const ALL_PRODUCTS = new Set<string>([
 
 export const asString = (v: unknown): string => String(v ?? '').trim();
 export const lower = (v: unknown): string => asString(v).toLowerCase();
+
+export const resolveCanonicalProductId = (productId: string): string => {
+  const id = asString(productId);
+  return IOS_PREMIUM_PRODUCT_ALIASES[id] || id;
+};
 
 export const normalizeProvider = (platform: string): Provider | null => {
   const p = lower(platform);

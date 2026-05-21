@@ -30,6 +30,11 @@ const hasLogisticsModule = (profile: any): boolean => {
   return modules.some((item) => LOGISTICS_MODULES.has(normalizeModule(item)));
 };
 
+const isLogisticsModuleDisabled = (profile: any): boolean => {
+  const disabledModules = toList(profile?.disabledBusinessModules);
+  return disabledModules.some((item) => LOGISTICS_MODULES.has(normalizeModule(item)));
+};
+
 const premiumEndsAt = (premium: any): Date | null => {
   if (!premium || typeof premium !== 'object') return null;
   const raw = premium.endsAt || premium.endDate || premium.expiresAt;
@@ -72,6 +77,10 @@ export default async (policyContext: any, _config: any, { strapi }: any) => {
   const profile = await findProfileForUser(strapi, user);
   if (!profile || !hasActivePremium(profile) || !hasLogisticsModule(profile)) {
     return policyContext.forbidden('Nakliye ilani acmak icin aktif Premium Lojistik modulu gerekir.');
+  }
+
+  if (isLogisticsModuleDisabled(profile)) {
+    return policyContext.forbidden('Nakliye ve Lojistik modulu hesabinda kapali. Modul Yonetimi sayfasindan tekrar acabilirsin.');
   }
 
   const body = policyContext.request.body || {};
