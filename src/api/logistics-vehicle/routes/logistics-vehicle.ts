@@ -2,8 +2,9 @@
 
 export default factories.createCoreRouter('api::logistics-vehicle.logistics-vehicle' as any, {
   config: {
-    create: { auth: true },
-    update: { auth: true },
-    delete: { auth: true },
+    create: { auth: { scope: [] } },
+    update: { auth: { scope: [] } },
+    delete: { auth: { scope: [] } },
   },
 } as any);
+

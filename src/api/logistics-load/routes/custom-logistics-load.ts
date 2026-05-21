@@ -16,13 +16,14 @@
       method: 'POST',
       path: '/logistics-loads/:id/metrics/like',
       handler: 'logistics-load.metricLike',
-      config: { auth: true },
+      config: { auth: { scope: [] } },
     },
     {
       method: 'POST',
       path: '/logistics-loads/:id/metrics/favorite',
       handler: 'logistics-load.metricFavorite',
-      config: { auth: true },
+      config: { auth: { scope: [] } },
     },
   ],
 };
+
