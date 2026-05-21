@@ -134,6 +134,13 @@ const authenticatedActions: string[] = [
   'api::thread.thread.update',
   'api::thread.thread.delete',
 
+  // Conversation custom endpoints
+  'api::conversation.conversation.mine',
+  'api::conversation.conversation.myMessages',
+  'api::conversation.conversation.messagesByThread',
+  'api::conversation.conversation.upsert',
+  'api::conversation.conversation.sendMessage',
+
   // Notification
   'api::notification.notification.create',
   'api::notification.notification.find',
