@@ -45,6 +45,10 @@
                        "featuredListingIds":  {
                                                   "type":  "json"
                                               },
+                       "showcasePinnedIds":  {
+                                                 "type":  "json",
+                                                 "description":  "Category vitrin showcase pinned listing IDs synced from ListingPinStore"
+                                             },
                        "profileMediaSettings":  {
                                                     "type":  "json"
                                                 },
@@ -184,6 +188,34 @@
                        "fcmTokens":  {
                                          "type":  "json"
                                      },
+                       "likedListingIds":  {
+                                               "type":  "json",
+                                               "description":  "Listing IDs this profile has liked synced from ListingEngagementStore"
+                                           },
+                       "likedListingIdsUpdatedAt":  {
+                                                        "type":  "datetime"
+                                                    },
+                       "likedProductIds":  {
+                                               "type":  "json",
+                                               "description":  "Processed product IDs this profile has liked synced from ProcessedProductInsightsStore"
+                                           },
+                       "likedProductIdsUpdatedAt":  {
+                                                        "type":  "datetime"
+                                                    },
+                       "processedProductRockets":  {
+                                                     "type":  "json",
+                                                     "description":  "Map of productId to rocket expiry ISO string synced from ProcessedProductPromotionStore"
+                                                 },
+                       "processedProductRocketsUpdatedAt":  {
+                                                                "type":  "datetime"
+                                                            },
+                       "logisticsVehicleRockets":  {
+                                                     "type":  "json",
+                                                     "description":  "Map of vehicleId to rocket expiry ISO string synced from LogisticsVehiclePromotionStore"
+                                                 },
+                       "logisticsVehicleRocketsUpdatedAt":  {
+                                                                "type":  "datetime"
+                                                            },
                        "updatedAtClient":  {
                                                "type":  "datetime"
                                            },
