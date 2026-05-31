@@ -74,6 +74,19 @@
                                        },
                        "adminNote":  {
                                          "type":  "text"
-                                     }
+                                     },
+                       "sortOrder":  {
+                                         "type":  "integer",
+                                         "default":  0
+                                     },
+                       "serviceArea":  {
+                                           "type":  "text"
+                                       },
+                       "description":  {
+                                           "type":  "text"
+                                       },
+                       "destinationCities":  {
+                                                 "type":  "text"
+                                             }
                    }
 }

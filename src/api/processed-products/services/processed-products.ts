@@ -87,15 +87,10 @@ const mapProduct = (entity: any) => {
     shortDescription: asString(entity.shortDescription),
     coverPath: asString(entity.coverPath),
     isActive: Boolean(entity.isActive),
+    sortOrder: typeof entity.sortOrder === 'number' ? entity.sortOrder : 0,
     createdAtIso: asString(entity.createdAt),
     updatedAtIso: asString(entity.updatedAt),
   };
-};
-
-const parseStock = (stockText: string): number => {
-  const digits = stockText.match(/\d+/)?.[0] ?? '';
-  const value = Number.parseInt(digits, 10);
-  return Number.isInteger(value) ? value : 0;
 };
 
 const sortByUpdatedDesc = (list: any[]) =>
@@ -146,6 +141,7 @@ const findOwnedProduct = async (
       'shortDescription',
       'coverPath',
       'isActive',
+      'sortOrder',
       'createdAt',
       'updatedAt',
     ],
@@ -257,8 +253,6 @@ export default ({ strapi }: { strapi: any }) => ({
       throw httpError(400, 'Once magaza profili olusturulmalidir.');
     }
 
-    const stockValue = parseStock(payload.stockText);
-    const effectiveActive = payload.isActive && stockValue > 0;
     const existing = await findOwnedProduct(strapi, identity, payload.localProductId);
 
     const data = {
@@ -277,7 +271,8 @@ export default ({ strapi }: { strapi: any }) => ({
       stockText: payload.stockText || null,
       shortDescription: payload.shortDescription || null,
       coverPath: payload.coverPath || null,
-      isActive: effectiveActive,
+      isActive: payload.isActive,
+      sortOrder: typeof (payload as any).sortOrder === 'number' ? (payload as any).sortOrder : 0,
     };
 
     const entity = existing

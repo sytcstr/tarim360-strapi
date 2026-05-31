@@ -49,6 +49,10 @@
                                                  "type":  "json",
                                                  "description":  "Category vitrin showcase pinned listing IDs synced from ListingPinStore"
                                              },
+                       "showcasePinnedOrder":  {
+                                                   "type":  "text",
+                                                   "description":  "JSON encoded Map<typeKey, List<id>> for category vitrin custom sort order"
+                                               },
                        "profileMediaSettings":  {
                                                     "type":  "json"
                                                 },
