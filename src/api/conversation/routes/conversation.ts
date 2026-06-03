@@ -32,6 +32,12 @@ export default {
       handler: 'conversation.sendMessage',
       config: { auth: { scope: [] } },
     },
+    {
+      method: 'DELETE',
+      path: '/conversations/:threadId',
+      handler: 'conversation.deleteByThreadId',
+      config: { auth: { scope: [] } },
+    },
   ],
 };
 

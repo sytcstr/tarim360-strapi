@@ -396,6 +396,41 @@ export default {
     });
     ctx.body = { data: message, thread };
   },
+
+  async deleteByThreadId(ctx) {
+    const user = ctx.state.user;
+    if (!user) return ctx.unauthorized('Giris gerekli.');
+    const threadId = String(ctx.params.threadId || '').trim();
+    if (!threadId) return ctx.badRequest('threadId gerekli.');
+
+    const actor = actorForUser(user);
+    const threadRows = await strapi.entityService.findMany(THREAD_UID, {
+      filters: {
+        $and: [
+          { threadId },
+          {
+            $or: [
+              ...(actor.email ? [{ requesterEmail: actor.email }, { receiverEmail: actor.email }] : []),
+              ...(actor.profileId ? [{ requesterProfileId: actor.profileId }, { receiverProfileId: actor.profileId }] : []),
+            ],
+          },
+        ],
+      },
+      limit: 1,
+    });
+    const thread = Array.isArray(threadRows) ? threadRows[0] : threadRows;
+    if (!thread) return ctx.notFound('Konusma bulunamadi veya erisim yok.');
+
+    const messages = await strapi.entityService.findMany(MESSAGE_UID, {
+      filters: { threadId },
+      limit: 500,
+    });
+    const msgList = Array.isArray(messages) ? messages : [];
+    await Promise.all(msgList.map((m: any) => strapi.entityService.delete(MESSAGE_UID, m.id)));
+    await strapi.entityService.delete(THREAD_UID, thread.id);
+
+    ctx.body = { data: { deleted: true, threadId } };
+  },
 };
 
 
