@@ -403,19 +403,13 @@ export default {
     const threadId = String(ctx.params.threadId || '').trim();
     if (!threadId) return ctx.badRequest('threadId gerekli.');
 
-    const actor = actorForUser(user);
     const threadRows = await strapi.entityService.findMany(THREAD_UID, {
       filters: {
         $and: [
           { threadId },
-          {
-            $or: [
-              ...(actor.email ? [{ requesterEmail: actor.email }, { receiverEmail: actor.email }] : []),
-              ...(actor.profileId ? [{ requesterProfileId: actor.profileId }, { receiverProfileId: actor.profileId }] : []),
-            ],
-          },
+          userFilter(user),
         ],
-      },
+      } as any,
       limit: 1,
     });
     const thread = Array.isArray(threadRows) ? threadRows[0] : threadRows;
@@ -432,5 +426,4 @@ export default {
     ctx.body = { data: { deleted: true, threadId } };
   },
 };
-
 
