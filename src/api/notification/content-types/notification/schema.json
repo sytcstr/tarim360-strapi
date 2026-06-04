@@ -17,6 +17,7 @@
     "title": { "type": "string" },
     "message": { "type": "text" },
     "isRead": { "type": "boolean", "default": false },
+    "readAt": { "type": "datetime" },
     "targetEmail": { "type": "string" },
     "targetProfileId": { "type": "string" },
     "ownerProfileId": { "type": "string" },

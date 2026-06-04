@@ -1,0 +1,22 @@
+{
+  "kind": "collectionType",
+  "collectionName": "listing_views",
+  "info": {
+    "singularName": "listing-view",
+    "pluralName": "listing-views",
+    "displayName": "ListingView"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "listingId": { "type": "string", "required": true },
+    "ownerId": { "type": "string" },
+    "email": { "type": "email" },
+    "viewerProfileId": { "type": "string" },
+    "viewerEmail": { "type": "email" },
+    "viewedAt": { "type": "datetime" },
+    "metadata": { "type": "json" }
+  }
+}

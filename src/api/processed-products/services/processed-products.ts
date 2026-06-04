@@ -8,6 +8,7 @@ type Identity = {
 
 type ProductPayload = {
   localProductId: string;
+  productNo: string;
   title: string;
   category: string;
   packageText: string;
@@ -34,6 +35,18 @@ const asBool = (value: unknown, fallback = false): boolean => {
 const httpError = (statusCode: number, message: string) =>
   Object.assign(new Error(message), { statusCode });
 
+const generateProductNo = async (strapi: any): Promise<string> => {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const value = `IU${String((Date.now() + attempt) % 100000000).padStart(8, '0')}`;
+    const existing = await strapi.db.query(PRODUCT_UID).findOne({
+      where: { productNo: value },
+      select: ['id'],
+    } as any);
+    if (!existing) return value;
+  }
+  return `IU${String(Date.now()).slice(-8)}`;
+};
+
 const getProductPayload = (body: unknown): ProductPayload => {
   const root = isRecord(body) ? body : {};
   const nested = isRecord(root.product)
@@ -54,6 +67,7 @@ const getProductPayload = (body: unknown): ProductPayload => {
 
   return {
     localProductId,
+    productNo: asString(nested.productNo ?? nested.listingNo),
     title,
     category,
     packageText: asString(nested.packageText),
@@ -71,6 +85,7 @@ const mapProduct = (entity: any) => {
   return {
     id: asString(entity.localProductId),
     localProductId: asString(entity.localProductId),
+    productNo: asString(entity.productNo),
     remoteId: String(entity.id ?? ''),
     documentId: asString(entity.documentId),
     ownerId: asString(entity.ownerId),
@@ -127,6 +142,7 @@ const findOwnedProduct = async (
       'id',
       'documentId',
       'localProductId',
+      'productNo',
       'ownerId',
       'ownerEmail',
       'storeSlug',
@@ -159,6 +175,7 @@ const findProductByRemoteId = async (strapi: any, remoteId: unknown) => {
         'id',
         'documentId',
         'localProductId',
+        'productNo',
         'ownerId',
         'ownerEmail',
         'storeSlug',
@@ -191,6 +208,7 @@ export default ({ strapi }: { strapi: any }) => ({
         'id',
         'documentId',
         'localProductId',
+        'productNo',
         'ownerId',
         'ownerEmail',
         'storeSlug',
@@ -222,6 +240,7 @@ export default ({ strapi }: { strapi: any }) => ({
         'id',
         'documentId',
         'localProductId',
+        'productNo',
         'ownerId',
         'ownerEmail',
         'storeSlug',
@@ -254,9 +273,14 @@ export default ({ strapi }: { strapi: any }) => ({
     }
 
     const existing = await findOwnedProduct(strapi, identity, payload.localProductId);
+    const productNo =
+      payload.productNo ||
+      asString((existing as any)?.productNo) ||
+      (await generateProductNo(strapi));
 
     const data = {
       localProductId: payload.localProductId,
+      productNo,
       ownerId: identity.ownerId,
       ownerEmail: identity.email,
       store: Number((store as any).id),

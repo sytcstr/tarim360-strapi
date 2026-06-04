@@ -1,0 +1,21 @@
+{
+  "kind": "collectionType",
+  "collectionName": "ad_clicks",
+  "info": {
+    "singularName": "ad-click",
+    "pluralName": "ad-clicks",
+    "displayName": "AdClick"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "adId": { "type": "string", "required": true },
+    "eventType": { "type": "string", "default": "click" },
+    "ownerId": { "type": "string" },
+    "email": { "type": "email" },
+    "createdAtClient": { "type": "datetime" },
+    "metadata": { "type": "json" }
+  }
+}

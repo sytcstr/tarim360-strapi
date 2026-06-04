@@ -1,0 +1,21 @@
+{
+  "kind": "collectionType",
+  "collectionName": "ad_events",
+  "info": {
+    "singularName": "ad-event",
+    "pluralName": "ad-events",
+    "displayName": "AdEvent"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "adId": { "type": "string", "required": true },
+    "eventType": { "type": "string", "required": true },
+    "ownerId": { "type": "string" },
+    "email": { "type": "email" },
+    "createdAtClient": { "type": "datetime" },
+    "metadata": { "type": "json" }
+  }
+}

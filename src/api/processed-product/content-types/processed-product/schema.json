@@ -16,6 +16,10 @@
       "required": true,
       "unique": true
     },
+    "productNo": {
+      "type": "string",
+      "unique": true
+    },
     "ownerId": {
       "type": "string",
       "required": true

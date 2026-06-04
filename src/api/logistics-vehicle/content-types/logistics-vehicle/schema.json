@@ -19,6 +19,10 @@
                                               "type":  "string",
                                               "required":  true
                                           },
+                       "vehicleNo":  {
+                                         "type":  "string",
+                                         "unique":  true
+                                     },
                        "vehicleType":  {
                                            "type":  "string",
                                            "required":  true

@@ -206,6 +206,20 @@
                        "likedProductIdsUpdatedAt":  {
                                                         "type":  "datetime"
                                                     },
+                       "likedLogisticsLoadIds":  {
+                                                     "type":  "json",
+                                                     "description":  "Logistics load IDs this profile has liked"
+                                                 },
+                       "likedLogisticsLoadIdsUpdatedAt":  {
+                                                            "type":  "datetime"
+                                                        },
+                       "likedFarmerQuestionIds":  {
+                                                     "type":  "json",
+                                                     "description":  "Farmer question IDs this profile has liked"
+                                                 },
+                       "likedFarmerQuestionIdsUpdatedAt":  {
+                                                            "type":  "datetime"
+                                                        },
                        "processedProductRockets":  {
                                                      "type":  "json",
                                                      "description":  "Map of productId to rocket expiry ISO string synced from ProcessedProductPromotionStore"

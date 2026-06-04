@@ -65,6 +65,12 @@
                        "unreadCount":  {
                                            "type":  "integer"
                                        },
+                       "readReceipts":  {
+                                           "type":  "json"
+                                       },
+                       "lastReadAt":  {
+                                          "type":  "datetime"
+                                      },
                        "lastMessageMe":  {
                                              "type":  "boolean"
                                          },

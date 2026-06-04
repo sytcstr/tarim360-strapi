@@ -3,7 +3,14 @@
  */
 
 import { factories } from '@strapi/strapi';
-import { normalizeEmail, ownerIdFromEmail, readIdentity, resolveListingOwnerByAnyId } from '../../../utils/identity';
+import {
+  loadEntityByRouteId,
+  matchesIdentity,
+  normalizeEmail,
+  ownerIdFromEmail,
+  readIdentity,
+  resolveListingOwnerByAnyId,
+} from '../../../utils/identity';
 
 const UID = 'api::offer.offer';
 
@@ -84,5 +91,64 @@ export default factories.createCoreController(UID, ({ strapi }) => ({
 
     const sanitizedOutput = await this.sanitizeOutput(entity, ctx);
     return this.transformResponse(sanitizedOutput);
+  },
+
+  async markSeen(ctx) {
+    const identity = readIdentity(ctx);
+    if (!identity) return ctx.unauthorized('Kimlik dogrulanamadi.');
+
+    const rawId = String(ctx.params.offerId || '').trim();
+    if (!rawId) return ctx.badRequest('offerId zorunlu.');
+
+    let entity = await loadEntityByRouteId(strapi, UID, rawId, [
+      'id',
+      'documentId',
+      'offerId',
+      'requesterEmail',
+      'requesterProfileId',
+      'receiverEmail',
+      'receiverProfileId',
+      'seenBy',
+    ]);
+    if (!entity) {
+      entity = await strapi.db.query(UID).findOne({
+        where: { offerId: rawId },
+        select: [
+          'id',
+          'documentId',
+          'offerId',
+          'requesterEmail',
+          'requesterProfileId',
+          'receiverEmail',
+          'receiverProfileId',
+          'seenBy',
+        ],
+      } as any);
+    }
+    if (!entity) return ctx.notFound('Teklif bulunamadi.');
+
+    const isParticipant = matchesIdentity(
+      entity,
+      identity,
+      ['requesterEmail', 'receiverEmail'],
+      ['requesterProfileId', 'receiverProfileId'],
+    );
+    if (!isParticipant) return ctx.forbidden('Bu teklife erisim yok.');
+
+    const seenAt =
+      String((ctx.request?.body || {}).seenAt || '').trim() || new Date().toISOString();
+    const seenBy =
+      entity.seenBy && typeof entity.seenBy === 'object' ? { ...entity.seenBy } : {};
+    seenBy[identity.ownerId || identity.email] = seenAt;
+
+    const updated = await strapi.entityService.update(UID as any, entity.id as any, {
+      data: {
+        seenAt,
+        seenBy,
+        updatedAtClient: seenAt,
+      },
+    });
+
+    ctx.body = { data: { ok: true, offerId: rawId, seenAt, offer: updated } };
   },
 }));

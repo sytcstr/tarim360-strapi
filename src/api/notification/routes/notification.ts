@@ -22,4 +22,5 @@ export default factories.createCoreRouter('api::notification.notification', {
       policies: ['global::notification-ownership'],
     },
   },
+  only: ['find', 'findOne', 'create', 'update', 'delete'],
 });

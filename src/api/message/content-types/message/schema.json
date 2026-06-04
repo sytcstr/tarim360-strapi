@@ -49,6 +49,12 @@
                        "sentAt":  {
                                       "type":  "datetime"
                                   },
+                       "readAt":  {
+                                      "type":  "datetime"
+                                  },
+                       "readBy":  {
+                                      "type":  "json"
+                                  },
                        "conversationKey":  {
                                                "type":  "string"
                                            },

@@ -1,0 +1,20 @@
+{
+  "kind": "collectionType",
+  "collectionName": "profile_views",
+  "info": {
+    "singularName": "profile-view",
+    "pluralName": "profile-views",
+    "displayName": "ProfileView"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "profileId": { "type": "string", "required": true },
+    "viewerOwnerId": { "type": "string" },
+    "viewerEmail": { "type": "email" },
+    "viewedAt": { "type": "datetime" },
+    "metadata": { "type": "json" }
+  }
+}

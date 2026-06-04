@@ -21,6 +21,12 @@ export default {
       config: { auth: { scope: [] } },
     },
     {
+      method: 'PATCH',
+      path: '/conversations/:threadId/read',
+      handler: 'conversation.markRead',
+      config: { auth: { scope: [] } },
+    },
+    {
       method: 'POST',
       path: '/conversations/upsert',
       handler: 'conversation.upsert',
@@ -40,5 +46,4 @@ export default {
     },
   ],
 };
-
 

@@ -13,6 +13,29 @@ const toLimit = (value: unknown, fallback = 300): number => {
   return Math.max(1, Math.min(500, Math.trunc(raw)));
 };
 
+const generatePublicNo = async (
+  strapi: any,
+  uid: string,
+  field: string,
+  prefix: string,
+): Promise<string> => {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const base = Date.now() + attempt;
+    const value = `${prefix}${String(base % 100000000).padStart(8, '0')}`;
+    const existing = await strapi.db.query(uid).findOne({
+      where: { [field]: value },
+      select: ['id'],
+    } as any);
+    if (!existing) return value;
+  }
+  return `${prefix}${String(Date.now()).slice(-8)}`;
+};
+
+const asData = (ctx: any): Record<string, any> => {
+  const body = ctx.request.body || {};
+  return body.data && typeof body.data === 'object' ? body.data : body;
+};
+
 const distanceKm = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
   const radiusKm = 6371;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
@@ -26,6 +49,17 @@ const distanceKm = (lat1: number, lng1: number, lat2: number, lng2: number): num
 };
 
 export default factories.createCoreController(VEHICLE_UID as any, ({ strapi }) => ({
+  async create(ctx) {
+    const data = { ...asData(ctx) };
+    if (!String(data.vehicleNo || '').trim()) {
+      data.vehicleNo = await generatePublicNo(strapi, VEHICLE_UID, 'vehicleNo', 'AR');
+    }
+    const created = await strapi.entityService.create(VEHICLE_UID as any, {
+      data,
+    } as any);
+    ctx.body = { data: created };
+  },
+
   async nearby(ctx) {
     const lat = toNumber(ctx.query?.latitude);
     const lng = toNumber(ctx.query?.longitude);

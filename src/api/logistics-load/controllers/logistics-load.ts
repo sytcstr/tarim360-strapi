@@ -27,6 +27,24 @@ const asData = (ctx: any): Record<string, any> => {
   return body.data && typeof body.data === 'object' ? body.data : body;
 };
 
+const generatePublicNo = async (
+  strapi: any,
+  uid: string,
+  field: string,
+  prefix: string,
+): Promise<string> => {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const base = Date.now() + attempt;
+    const value = `${prefix}${String(base % 100000000).padStart(8, '0')}`;
+    const existing = await strapi.db.query(uid).findOne({
+      where: { [field]: value },
+      select: ['id'],
+    } as any);
+    if (!existing) return value;
+  }
+  return `${prefix}${String(Date.now()).slice(-8)}`;
+};
+
 const stripPrefixes = (raw: unknown): string[] => {
   const id = String(raw || '').trim();
   const out = new Set<string>([id]);
@@ -194,6 +212,9 @@ const distanceKm = (lat1: number, lng1: number, lat2: number, lng2: number): num
 export default factories.createCoreController(UID as any, ({ strapi }) => ({
   async create(ctx) {
     const data = sanitizeCreateData(asData(ctx));
+    if (!String(data.loadNo || '').trim()) {
+      data.loadNo = await generatePublicNo(strapi, UID, 'loadNo', 'YL');
+    }
     const created = await strapi.entityService.create(UID as any, { data } as any);
     ctx.body = { data: created };
   },

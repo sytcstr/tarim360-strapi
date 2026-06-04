@@ -304,6 +304,67 @@ export default {
     ctx.body = { data: rows };
   },
 
+  async markRead(ctx) {
+    const user = ctx.state.user;
+    if (!user) return ctx.unauthorized('Giris gerekli.');
+    const threadId = String(ctx.params.threadId || '').trim();
+    if (!threadId) return ctx.badRequest('threadId gerekli.');
+
+    const threadRows = await strapi.entityService.findMany(THREAD_UID, {
+      filters: {
+        $and: [
+          { threadId },
+          userFilter(user),
+        ],
+      } as any,
+      limit: 1,
+    });
+    const thread = Array.isArray(threadRows) ? threadRows[0] : threadRows;
+    if (!thread) return ctx.forbidden('Bu sohbete erisim yok.');
+
+    const actor = actorForUser(user);
+    const readAt =
+      String((ctx.request?.body || {}).readAt || '').trim() || new Date().toISOString();
+    const threadMap = thread as any;
+    const currentReceipts =
+      threadMap.readReceipts && typeof threadMap.readReceipts === 'object'
+        ? { ...threadMap.readReceipts }
+        : {};
+    currentReceipts[actor.profileId || actor.email || actor.name] = readAt;
+
+    const updatedThread = await strapi.entityService.update(THREAD_UID, thread.id, {
+      data: {
+        unreadCount: 0,
+        lastReadAt: readAt,
+        readReceipts: currentReceipts,
+      } as any,
+    });
+
+    try {
+      const messages = await strapi.entityService.findMany(MESSAGE_UID, {
+        filters: { threadId },
+        limit: 300,
+      });
+      const list = Array.isArray(messages) ? messages : [];
+      await Promise.all(
+        list.map((message: any) => {
+          const readBy =
+            message.readBy && typeof message.readBy === 'object'
+              ? { ...message.readBy }
+              : {};
+          readBy[actor.profileId || actor.email || actor.name] = readAt;
+          return strapi.entityService.update(MESSAGE_UID, message.id, {
+            data: { readAt, readBy } as any,
+          });
+        }),
+      );
+    } catch (e) {
+      strapi.log.warn(`Conversation markRead message update failed: ${String(e)}`);
+    }
+
+    ctx.body = { data: { ok: true, threadId, readAt, thread: updatedThread } };
+  },
+
   async upsert(ctx) {
     const user = ctx.state.user;
     if (!user) return ctx.unauthorized('Giris gerekli.');
@@ -426,4 +487,3 @@ export default {
     ctx.body = { data: { deleted: true, threadId } };
   },
 };
-

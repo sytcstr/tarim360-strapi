@@ -107,6 +107,18 @@
     "listingNo": {
       "type": "integer"
     },
+    "viewCount": {
+      "type": "integer",
+      "default": 0
+    },
+    "favoriteCount": {
+      "type": "integer",
+      "default": 0
+    },
+    "likeCount": {
+      "type": "integer",
+      "default": 0
+    },
     "createdAtClient": {
       "type": "datetime"
     },

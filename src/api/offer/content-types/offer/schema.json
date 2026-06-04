@@ -77,6 +77,12 @@
     "approved": {
       "type": "boolean"
     },
+    "seenAt": {
+      "type": "datetime"
+    },
+    "seenBy": {
+      "type": "json"
+    },
     "createdAtClient": {
       "type": "datetime"
     },
