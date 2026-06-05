@@ -8,6 +8,11 @@ import { normalizeFcmTokenList } from '../../../utils/fcm';
 
 const normalizeEmail = (v: unknown) => String(v ?? '').trim().toLowerCase();
 const normalizeUsername = (v: unknown) => String(v ?? '').trim().toLowerCase();
+const normalizeComparableName = (v: unknown) =>
+  String(v ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
 
 const isEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 const isValidUsername = (value: string) => /^[a-z0-9._]{3,24}$/.test(value);
@@ -125,15 +130,85 @@ export default {
     const body = (ctx.request?.body ?? {}) as Record<string, unknown>;
     const email = normalizeEmail(body.email);
     const phone = normalizePhone(body.phone);
+    const username = normalizeUsername(body.username);
+    const brandName = normalizeComparableName(body.brandName);
+    const profileId = String(body.profileId ?? '').trim();
+    const mode = String(body.mode ?? '').trim().toLowerCase();
+    const isProfileUpdate = mode === 'profile-update';
 
-    if (!isEmail(email)) {
+    if (!isProfileUpdate && !isEmail(email)) {
       return ctx.badRequest('Gecerli e-posta zorunlu.');
     }
 
-    const match = await findActiveRegistrationBlock(strapi, {
-      email,
-      phone,
-    });
+    if (username) {
+      if (!isValidUsername(username)) {
+        return ctx.badRequest(
+          'Kullanici adi 3-24 karakter olmali; sadece kucuk harf, rakam, nokta ve alt cizgi kullanin.',
+        );
+      }
+      const users = await strapi.entityService.findMany(
+        'plugin::users-permissions.user',
+        {
+          filters: { username },
+          limit: 2,
+        },
+      );
+      const takenByOther = (Array.isArray(users) ? users : []).some((user: any) => {
+        const userEmail = normalizeEmail(user?.email);
+        const userProfileId = userEmail ? `u_${userEmail.replace(/[^a-z0-9]/g, '_')}` : '';
+        return profileId ? userProfileId !== profileId : true;
+      });
+      if (takenByOther) {
+        ctx.body = {
+          ok: true,
+          allowed: false,
+          reasonCode: 'username_taken',
+          matchedBy: 'username',
+          message: 'Bu kullanici adi baska bir hesapta kullaniliyor.',
+        };
+        return;
+      }
+    }
+
+    if (brandName) {
+      const profileRows = await strapi.db.query('api::profile-setting.profile-setting').findMany({
+        select: ['id', 'profileId', 'brandName'],
+        limit: 500,
+      } as any);
+      const profileTaken = (Array.isArray(profileRows) ? profileRows : []).some(
+        (row: any) =>
+          normalizeComparableName(row?.brandName) === brandName &&
+          String(row?.profileId ?? '').trim() !== profileId,
+      );
+
+      const storeRows = await strapi.db.query('api::seller-store.seller-store').findMany({
+        select: ['id', 'ownerId', 'storeName'],
+        limit: 500,
+      } as any);
+      const storeTaken = (Array.isArray(storeRows) ? storeRows : []).some(
+        (row: any) =>
+          normalizeComparableName(row?.storeName) === brandName &&
+          String(row?.ownerId ?? '').trim() !== profileId,
+      );
+
+      if (profileTaken || storeTaken) {
+        ctx.body = {
+          ok: true,
+          allowed: false,
+          reasonCode: 'brand_name_taken',
+          matchedBy: 'brandName',
+          message: 'Bu marka adı başka bir hesapta kullanılıyor.',
+        };
+        return;
+      }
+    }
+
+    const match = email || phone
+      ? await findActiveRegistrationBlock(strapi, {
+          email,
+          phone,
+        })
+      : null;
 
     if (!match) {
       ctx.body = { ok: true, allowed: true };

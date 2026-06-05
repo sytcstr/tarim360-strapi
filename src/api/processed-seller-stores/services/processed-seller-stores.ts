@@ -20,6 +20,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
 const asString = (value: unknown): string => String(value ?? '').trim();
+const normalizeComparableName = (value: unknown): string =>
+  asString(value).toLowerCase().replace(/\s+/g, ' ');
 
 const httpError = (statusCode: number, message: string) =>
   Object.assign(new Error(message), { statusCode });
@@ -139,6 +141,41 @@ const findStoreByOwner = async (strapi: any, identity: Identity) => {
   } as any);
 };
 
+const ensureStoreNameAvailable = async (
+  strapi: any,
+  identity: Identity,
+  storeName: string,
+) => {
+  const normalized = normalizeComparableName(storeName);
+  if (!normalized) return;
+
+  const storeRows = await strapi.db.query(STORE_UID).findMany({
+    select: ['id', 'ownerId', 'storeName'],
+    limit: 500,
+  } as any);
+  const storeTaken = (Array.isArray(storeRows) ? storeRows : []).some((row: any) => {
+    const ownerId = asString(row?.ownerId);
+    const name = normalizeComparableName(row?.storeName);
+    return name === normalized && ownerId !== identity.ownerId;
+  });
+  if (storeTaken) {
+    throw httpError(400, 'Bu marka adı başka bir hesapta kullanılıyor.');
+  }
+
+  const profileRows = await strapi.db.query('api::profile-setting.profile-setting').findMany({
+    select: ['id', 'profileId', 'brandName'],
+    limit: 500,
+  } as any);
+  const profileTaken = (Array.isArray(profileRows) ? profileRows : []).some((row: any) => {
+    const profileId = asString(row?.profileId);
+    const name = normalizeComparableName(row?.brandName);
+    return name === normalized && profileId !== identity.ownerId;
+  });
+  if (profileTaken) {
+    throw httpError(400, 'Bu marka adı başka bir hesapta kullanılıyor.');
+  }
+};
+
 export default ({ strapi }: { strapi: any }) => ({
   async getMine({ identity }: { identity: Identity }) {
     const found = await findStoreByOwner(strapi, identity);
@@ -175,6 +212,7 @@ export default ({ strapi }: { strapi: any }) => ({
   async upsert({ body, identity }: { body: unknown; identity: Identity }) {
     const payload = getStorePayload(body);
     const existing = await findStoreByOwner(strapi, identity);
+    await ensureStoreNameAvailable(strapi, identity, payload.storeName);
     const data = {
       ownerId: identity.ownerId,
       ownerEmail: identity.email,
