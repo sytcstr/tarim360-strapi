@@ -17,19 +17,24 @@ const generatePublicNo = async (
   strapi: any,
   uid: string,
   field: string,
-  prefix: string,
 ): Promise<string> => {
   for (let attempt = 0; attempt < 5; attempt++) {
     const base = Date.now() + attempt;
-    const value = `${prefix}${String(base % 100000000).padStart(8, '0')}`;
+    const value = String(base % 100000000).padStart(8, '0');
     const existing = await strapi.db.query(uid).findOne({
       where: { [field]: value },
       select: ['id'],
     } as any);
     if (!existing) return value;
   }
-  return `${prefix}${String(Date.now()).slice(-8)}`;
+  return String(Date.now()).slice(-8);
 };
+
+const normalizePublicNo = (value: unknown): string =>
+  String(value || '')
+    .trim()
+    .replace(/^#/, '')
+    .replace(/^(YL|AR)/i, '');
 
 const asData = (ctx: any): Record<string, any> => {
   const body = ctx.request.body || {};
@@ -51,8 +56,9 @@ const distanceKm = (lat1: number, lng1: number, lat2: number, lng2: number): num
 export default factories.createCoreController(VEHICLE_UID as any, ({ strapi }) => ({
   async create(ctx) {
     const data = { ...asData(ctx) };
-    if (!String(data.vehicleNo || '').trim()) {
-      data.vehicleNo = await generatePublicNo(strapi, VEHICLE_UID, 'vehicleNo', 'AR');
+    data.vehicleNo = normalizePublicNo(data.vehicleNo);
+    if (!data.vehicleNo) {
+      data.vehicleNo = await generatePublicNo(strapi, VEHICLE_UID, 'vehicleNo');
     }
     const created = await strapi.entityService.create(VEHICLE_UID as any, {
       data,
