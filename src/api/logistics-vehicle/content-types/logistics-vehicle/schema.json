@@ -1,4 +1,4 @@
-﻿{
+{
     "kind":  "collectionType",
     "collectionName":  "logistics_vehicles",
     "info":  {
@@ -23,6 +23,13 @@
                                          "type":  "string",
                                          "unique":  true
                                      },
+                       "photo":  {
+                                     "type":  "media",
+                                     "multiple":  false,
+                                     "allowedTypes":  [
+                                                          "images"
+                                                      ]
+                                 },
                        "vehicleType":  {
                                            "type":  "string",
                                            "required":  true

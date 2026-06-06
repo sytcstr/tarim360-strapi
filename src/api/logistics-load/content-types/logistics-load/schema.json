@@ -1,4 +1,4 @@
-﻿{
+{
     "kind":  "collectionType",
     "collectionName":  "logistics_loads",
     "info":  {
@@ -94,8 +94,16 @@
                                                  "type":  "string"
                                              },
                        "loadNo":  {
-                                      "type":  "string"
+                                      "type":  "string",
+                                      "unique":  true
                                   },
+                       "photo":  {
+                                     "type":  "media",
+                                     "multiple":  false,
+                                     "allowedTypes":  [
+                                                          "images"
+                                                      ]
+                                 },
                        "ownerVerified":  {
                                              "type":  "boolean",
                                              "default":  false

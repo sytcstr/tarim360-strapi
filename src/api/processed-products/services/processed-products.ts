@@ -17,6 +17,7 @@ type ProductPayload = {
   stockText: string;
   shortDescription: string;
   coverPath: string;
+  coverId: number | null;
   isActive: boolean;
 };
 
@@ -30,6 +31,29 @@ const asBool = (value: unknown, fallback = false): boolean => {
   const raw = asString(value).toLowerCase();
   if (!raw) return fallback;
   return raw == 'true' || raw == '1' || raw == 'yes';
+};
+
+const asPositiveInt = (value: unknown): number | null => {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+};
+
+const mediaUrl = (value: any): string => {
+  if (!value) return '';
+  if (typeof value === 'string') return value.trim();
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = mediaUrl(item);
+      if (found) return found;
+    }
+    return '';
+  }
+  if (typeof value === 'object') {
+    const direct = asString(value.url);
+    if (direct) return direct;
+    return mediaUrl(value.data ?? value.attributes);
+  }
+  return '';
 };
 
 const httpError = (statusCode: number, message: string) =>
@@ -76,6 +100,7 @@ const getProductPayload = (body: unknown): ProductPayload => {
     stockText: asString(nested.stockText),
     shortDescription: asString(nested.shortDescription),
     coverPath: asString(nested.coverPath),
+    coverId: asPositiveInt(nested.coverId ?? nested.cover),
     isActive: asBool(nested.isActive, true),
   };
 };
@@ -100,7 +125,7 @@ const mapProduct = (entity: any) => {
     priceText: asString(entity.priceText),
     stockText: asString(entity.stockText),
     shortDescription: asString(entity.shortDescription),
-    coverPath: asString(entity.coverPath),
+    coverPath: mediaUrl(entity.cover) || asString(entity.coverPath),
     isActive: Boolean(entity.isActive),
     sortOrder: typeof entity.sortOrder === 'number' ? entity.sortOrder : 0,
     createdAtIso: asString(entity.createdAt),
@@ -161,6 +186,7 @@ const findOwnedProduct = async (
       'createdAt',
       'updatedAt',
     ],
+    populate: ['cover'],
   } as any);
 };
 
@@ -193,7 +219,7 @@ const findProductByRemoteId = async (strapi: any, remoteId: unknown) => {
         'createdAt',
         'updatedAt',
       ],
-      populate: ['store'],
+      populate: ['store', 'cover'],
     });
   } catch (_) {
     return null;
@@ -227,6 +253,7 @@ export default ({ strapi }: { strapi: any }) => ({
         'updatedAt',
       ],
       orderBy: { updatedAt: 'desc' },
+      populate: ['cover'],
     } as any);
 
     const list = Array.isArray(rows) ? rows : [];
@@ -259,6 +286,7 @@ export default ({ strapi }: { strapi: any }) => ({
         'updatedAt',
       ],
       orderBy: { updatedAt: 'desc' },
+      populate: ['cover'],
     } as any);
 
     const list = Array.isArray(rows) ? rows : [];
@@ -295,13 +323,20 @@ export default ({ strapi }: { strapi: any }) => ({
       stockText: payload.stockText || null,
       shortDescription: payload.shortDescription || null,
       coverPath: payload.coverPath || null,
+      ...(payload.coverId ? { cover: payload.coverId } : {}),
       isActive: payload.isActive,
       sortOrder: typeof (payload as any).sortOrder === 'number' ? (payload as any).sortOrder : 0,
     };
 
-    const entity = existing
+    const savedEntity = existing
       ? await strapi.entityService.update(PRODUCT_UID as any, Number((existing as any).id), { data })
       : await strapi.entityService.create(PRODUCT_UID as any, { data });
+    const entity =
+      (await strapi.entityService.findOne(
+        PRODUCT_UID as any,
+        Number((savedEntity as any).id),
+        { populate: ['cover'] },
+      )) ?? savedEntity;
 
     return mapProduct(entity);
   },

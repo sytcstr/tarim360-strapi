@@ -1,6 +1,6 @@
 {
   "name": "tarim-360-strapi",
-  "version": "1.0.52",
+  "version": "1.0.53",
   "private": true,
   "description": "A Strapi application",
   "scripts": {

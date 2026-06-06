@@ -182,6 +182,7 @@ const sanitizeOwnerUpdateData = (data: Record<string, any>, admin: boolean): Rec
     'ownerWhatsapp',
     'estimatedDuration',
     'loadNo',
+    'photo',
   ]);
   if (admin) {
     allowed.add('ownerVerified');
@@ -264,6 +265,7 @@ export default factories.createCoreController(UID as any, ({ strapi }) => ({
       filters: { status: { $ne: 'closed' } },
       sort: { createdAt: 'desc' },
       pagination: { limit },
+      populate: { photo: true },
     } as any);
 
     const data = (Array.isArray(rows) ? rows : [])

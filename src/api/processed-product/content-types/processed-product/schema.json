@@ -69,6 +69,13 @@
     "coverPath": {
       "type": "string"
     },
+    "cover": {
+      "type": "media",
+      "multiple": false,
+      "allowedTypes": [
+        "images"
+      ]
+    },
     "isActive": {
       "type": "boolean",
       "default": true

@@ -70,6 +70,7 @@ export default factories.createCoreController(VEHICLE_UID as any, ({ strapi }) =
       filters: { available: true },
       sort: { createdAt: 'desc' },
       pagination: { limit },
+      populate: { photo: true },
     } as any);
 
     const data = (Array.isArray(rows) ? rows : []).filter((row: any) => {
