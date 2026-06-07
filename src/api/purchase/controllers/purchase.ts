@@ -64,7 +64,8 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
     const isSubscription = Boolean(body.isSubscription);
     const provider = normalizeProvider(asString(body.platform));
     const receipt = asString(body.receipt);
-    const purchaseToken = asString(body.purchaseToken) || receipt;
+    const purchaseToken =
+      provider === 'google_play' ? asString(body.purchaseToken) || receipt : '';
 
     if (!productId) return ctx.badRequest('productId zorunlu.');
     if (!provider) return ctx.badRequest('platform zorunlu/gecersiz.');
@@ -75,7 +76,13 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
       .update(`${provider}:${productId}:${receipt}`)
       .digest('hex')
       .slice(0, 24);
-    const requestedTx = asString(body.transactionId);
+    const rawRequestedTx = asString(body.transactionId);
+    const requestedTx =
+      rawRequestedTx &&
+      rawRequestedTx !== receipt &&
+      Buffer.byteLength(rawRequestedTx, 'utf8') <= 191
+        ? rawRequestedTx
+        : '';
     const transactionId = requestedTx || `${provider}_${productId}_${fallbackTx}`;
 
     const existing = await findPurchaseEvent(strapi, { transactionId });
