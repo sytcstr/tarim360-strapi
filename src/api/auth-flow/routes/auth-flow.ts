@@ -18,6 +18,12 @@ export default {
       handler: 'auth-flow.updateUsername',
       config: { auth: { scope: [] } },
     },
+    {
+      method: 'DELETE',
+      path: '/auth/account',
+      handler: 'auth-flow.deleteAccount',
+      config: { auth: { scope: [] } },
+    },
         {
       method: 'POST',
       path: '/auth/register-push-token',

@@ -60,13 +60,6 @@
       "type": "boolean",
       "default": false
     },
-    "requiresModuleSelection": {
-      "type": "boolean",
-      "default": false
-    },
-    "allowedModules": {
-      "type": "json"
-    },
     "targetUser": {
       "type": "relation",
       "relation": "oneToOne",

@@ -22,6 +22,14 @@ const generateCode = () =>
 
 const generateTemporaryPassword = () => `T360-${generateCode()}-Aa!`;
 
+const deleteByFilter = async (
+  uid: string,
+  where: Record<string, unknown>,
+): Promise<number> => {
+  const result = await strapi.db.query(uid).deleteMany({ where } as any);
+  return Number((result as any)?.count ?? 0);
+};
+
 async function sendEmail({
   to,
   subject,
@@ -262,6 +270,186 @@ export default {
       ok: true,
       username,
     };
+  },
+
+  async deleteAccount(ctx) {
+    const stateUser = ctx.state?.user as
+      | { id?: number | string; email?: string; username?: string }
+      | undefined;
+    const userId = Number(stateUser?.id ?? 0);
+    const email = normalizeEmail(stateUser?.email);
+    const username = String(stateUser?.username ?? '').trim();
+    const ownerId = email ? `u_${email.replace(/[^a-z0-9]/g, '_')}` : '';
+    if (!Number.isInteger(userId) || userId <= 0 || !email || !ownerId) {
+      return ctx.unauthorized('Oturum gerekli.');
+    }
+
+    const deleted: Record<string, number> = {};
+    try {
+      const profileBeforeDelete = (await strapi.db
+        .query('api::profile-setting.profile-setting')
+        .findOne({
+          where: {
+            $or: [
+              { profileId: ownerId },
+              { ownerEmail: email },
+              { user: { id: userId } },
+            ],
+          },
+          select: ['displayName'],
+        } as any)) as Record<string, unknown> | null;
+      const displayName = String(profileBeforeDelete?.displayName ?? '').trim();
+
+      deleted['ad-click'] = await deleteByFilter(
+        'api::ad-click.ad-click',
+        { ownerId },
+      );
+      deleted['ad-event'] = await deleteByFilter(
+        'api::ad-event.ad-event',
+        { ownerId },
+      );
+      deleted['listing-view'] = await deleteByFilter(
+        'api::listing-view.listing-view',
+        { ownerId },
+      );
+      deleted['profile-view'] = await deleteByFilter(
+        'api::profile-view.profile-view',
+        { profileId: ownerId },
+      );
+      deleted['ai-log'] = await deleteByFilter('api::ai-log.ai-log', {
+        $or: [{ ownerEmail: email }, { ownerProfileId: ownerId }],
+      });
+      deleted.notification = await deleteByFilter(
+        'api::notification.notification',
+        {
+          $or: [
+            { ownerProfileId: ownerId },
+            { receiverEmail: email },
+            { requesterEmail: email },
+          ],
+        },
+      );
+      deleted.message = await deleteByFilter('api::message.message', {
+        $or: [{ receiverEmail: email }, { requesterEmail: email }],
+      });
+      deleted.offer = await deleteByFilter('api::offer.offer', {
+        $or: [{ receiverEmail: email }, { requesterEmail: email }],
+      });
+      deleted.thread = await deleteByFilter('api::thread.thread', {
+        $or: [{ receiverEmail: email }, { requesterEmail: email }],
+      });
+      deleted['support-ticket-message'] = await deleteByFilter(
+        'api::support-ticket-message.support-ticket-message',
+        { $or: [{ receiverEmail: email }, { requesterEmail: email }] },
+      );
+      deleted['support-ticket'] = await deleteByFilter(
+        'api::support-ticket.support-ticket',
+        {
+          $or: [{ ownerEmail: email }, { ownerProfileId: ownerId }],
+        },
+      );
+      deleted['purchase-event'] = await deleteByFilter(
+        'api::purchase-event.purchase-event',
+        {
+          $or: [{ ownerEmail: email }, { ownerProfileId: ownerId }],
+        },
+      );
+      deleted['promo-redemption'] = await deleteByFilter(
+        'api::promo-redemption.promo-redemption',
+        { $or: [{ ownerProfileId: ownerId }, { user: { id: userId } }] },
+      );
+      deleted['logistics-offer'] = await deleteByFilter(
+        'api::logistics-offer.logistics-offer',
+        { transporterKey: ownerId },
+      );
+      deleted['logistics-load'] = await deleteByFilter(
+        'api::logistics-load.logistics-load',
+        { ownerKey: ownerId },
+      );
+      deleted['logistics-vehicle'] = await deleteByFilter(
+        'api::logistics-vehicle.logistics-vehicle',
+        { transporterKey: ownerId },
+      );
+      deleted['store-document'] = await deleteByFilter(
+        'api::store-document.store-document',
+        { $or: [{ ownerId }, { ownerEmail: email }] },
+      );
+      deleted['processed-product'] = await deleteByFilter(
+        'api::processed-product.processed-product',
+        { $or: [{ ownerId }, { ownerEmail: email }] },
+      );
+      deleted['seller-store'] = await deleteByFilter(
+        'api::seller-store.seller-store',
+        { $or: [{ ownerId }, { ownerEmail: email }] },
+      );
+      deleted.ad = await deleteByFilter('api::ad.ad', {
+        ownerProfileId: ownerId,
+      });
+      deleted.listing = await deleteByFilter('api::listing.listing', {
+        $or: [
+          { ownerProfileId: ownerId },
+          { ownerId },
+          { ownerEmail: email },
+        ],
+      });
+      deleted['profile-setting'] = await deleteByFilter(
+        'api::profile-setting.profile-setting',
+        {
+          $or: [
+            { profileId: ownerId },
+            { ownerEmail: email },
+            { user: { id: userId } },
+          ],
+        },
+      );
+      deleted.cart = await deleteByFilter('api::cart.cart', {
+        user: { id: userId },
+      });
+      deleted.order = await deleteByFilter('api::order.order', {
+        user: { id: userId },
+      });
+
+      const deletedAt = new Date();
+      const purgeAt = new Date(
+        deletedAt.getTime() + 15 * 24 * 60 * 60 * 1000,
+      );
+      await strapi.entityService.create(
+        'api::deleted-account-record.deleted-account-record' as any,
+        {
+          data: {
+            userId: String(userId),
+            ownerId,
+            email,
+            username,
+            displayName,
+            deletedAt: deletedAt.toISOString(),
+            purgeAt: purgeAt.toISOString(),
+            retentionDays: 15,
+            status: 'deleted',
+            deletionSummary: deleted,
+          },
+        },
+      );
+
+      await strapi.entityService.delete(
+        'plugin::users-permissions.user',
+        userId,
+      );
+
+      strapi.log.info(
+        `Account permanently deleted: user=${userId}, owner=${ownerId}`,
+      );
+      ctx.body = { ok: true, deleted };
+    } catch (error) {
+      strapi.log.error(
+        `Account deletion failed: user=${userId}, owner=${ownerId}, error=${String(error)}`,
+      );
+      ctx.status = 500;
+      ctx.body = {
+        ok: false,
+        message: 'Hesap ve veriler silinemedi. Lutfen tekrar deneyin.',
+      };
+    }
   },
 
 

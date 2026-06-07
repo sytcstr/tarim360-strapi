@@ -38,6 +38,11 @@ const asPositiveInt = (value: unknown): number | null => {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 };
 
+const normalizeProductNo = (value: unknown): string =>
+  asString(value)
+    .replace(/^#/, '')
+    .replace(/^IU/i, '');
+
 const mediaUrl = (value: any): string => {
   if (!value) return '';
   if (typeof value === 'string') return value.trim();
@@ -61,14 +66,14 @@ const httpError = (statusCode: number, message: string) =>
 
 const generateProductNo = async (strapi: any): Promise<string> => {
   for (let attempt = 0; attempt < 5; attempt++) {
-    const value = `IU${String((Date.now() + attempt) % 100000000).padStart(8, '0')}`;
+    const value = String((Date.now() + attempt) % 100000000).padStart(8, '0');
     const existing = await strapi.db.query(PRODUCT_UID).findOne({
       where: { productNo: value },
       select: ['id'],
     } as any);
     if (!existing) return value;
   }
-  return `IU${String(Date.now()).slice(-8)}`;
+  return String(Date.now()).slice(-8);
 };
 
 const getProductPayload = (body: unknown): ProductPayload => {
@@ -91,7 +96,7 @@ const getProductPayload = (body: unknown): ProductPayload => {
 
   return {
     localProductId,
-    productNo: asString(nested.productNo ?? nested.listingNo),
+    productNo: normalizeProductNo(nested.productNo ?? nested.listingNo),
     title,
     category,
     packageText: asString(nested.packageText),
@@ -110,7 +115,7 @@ const mapProduct = (entity: any) => {
   return {
     id: asString(entity.localProductId),
     localProductId: asString(entity.localProductId),
-    productNo: asString(entity.productNo),
+    productNo: normalizeProductNo(entity.productNo),
     remoteId: String(entity.id ?? ''),
     documentId: asString(entity.documentId),
     ownerId: asString(entity.ownerId),
@@ -303,7 +308,7 @@ export default ({ strapi }: { strapi: any }) => ({
     const existing = await findOwnedProduct(strapi, identity, payload.localProductId);
     const productNo =
       payload.productNo ||
-      asString((existing as any)?.productNo) ||
+      normalizeProductNo((existing as any)?.productNo) ||
       (await generateProductNo(strapi));
 
     const data = {

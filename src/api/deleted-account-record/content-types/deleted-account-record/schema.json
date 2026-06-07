@@ -1,0 +1,56 @@
+{
+  "kind": "collectionType",
+  "collectionName": "deleted_account_records",
+  "info": {
+    "singularName": "deleted-account-record",
+    "pluralName": "deleted-account-records",
+    "displayName": "Silinen Hesaplar",
+    "description": "Kalici olarak silinen hesaplarin 15 gunluk yonetim kaydi"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "userId": {
+      "type": "string"
+    },
+    "ownerId": {
+      "type": "string",
+      "required": true
+    },
+    "email": {
+      "type": "email",
+      "required": true
+    },
+    "username": {
+      "type": "string"
+    },
+    "displayName": {
+      "type": "string"
+    },
+    "deletedAt": {
+      "type": "datetime",
+      "required": true
+    },
+    "purgeAt": {
+      "type": "datetime",
+      "required": true
+    },
+    "retentionDays": {
+      "type": "integer",
+      "default": 15
+    },
+    "status": {
+      "type": "enumeration",
+      "enum": [
+        "deleted",
+        "purged"
+      ],
+      "default": "deleted"
+    },
+    "deletionSummary": {
+      "type": "json"
+    }
+  }
+}

@@ -63,13 +63,9 @@ export const IOS_PREMIUM_PRODUCT_ALIASES: Record<string, string> = {
   pro_premium_12ay: 'premium_pro_yearly_3599',
 };
 
-export const ADDITIONAL_BUSINESS_MODULE_PRODUCT_ID =
-  'business_module_extra_yearly_500';
-
 export const ALL_PRODUCTS = new Set<string>([
   ...Object.keys(PREMIUM_PRODUCTS),
   ...Object.keys(IOS_PREMIUM_PRODUCT_ALIASES),
-  ADDITIONAL_BUSINESS_MODULE_PRODUCT_ID,
   'normal_listing_5_399',
   'doping_7_189',
   'doping_14_249',
