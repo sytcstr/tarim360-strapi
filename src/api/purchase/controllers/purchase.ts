@@ -51,6 +51,10 @@ const eventDataForVerify = (input: {
   source: 'verify_api',
 });
 
+const SMART_ADS_ENABLED = ['1', 'true', 'yes', 'on'].includes(
+  asString(process.env.ENABLE_SMART_ADS).toLowerCase(),
+);
+
 export default ({ strapi }: { strapi: Core.Strapi }) => ({
   async verify(ctx: any) {
     const identity = readIdentity(ctx);
@@ -70,6 +74,9 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
     if (!productId) return ctx.badRequest('productId zorunlu.');
     if (!provider) return ctx.badRequest('platform zorunlu/gecersiz.');
     if (!ALL_PRODUCTS.has(productId)) return ctx.badRequest('Bilinmeyen urun id.');
+    if (productId.startsWith('smart_ads_') && !SMART_ADS_ENABLED) {
+      return ctx.badRequest('Akilli reklam satin alimlari su anda kapali.');
+    }
 
     const fallbackTx = crypto
       .createHash('sha256')
