@@ -402,13 +402,6 @@ export default {
           ],
         },
       );
-      deleted.cart = await deleteByFilter('api::cart.cart', {
-        user: { id: userId },
-      });
-      deleted.order = await deleteByFilter('api::order.order', {
-        user: { id: userId },
-      });
-
       const deletedAt = new Date();
       const purgeAt = new Date(
         deletedAt.getTime() + 15 * 24 * 60 * 60 * 1000,

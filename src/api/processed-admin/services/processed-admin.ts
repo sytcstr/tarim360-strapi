@@ -2,12 +2,9 @@
 const STORE_UID = 'api::seller-store.seller-store';
 const DOCUMENT_UID = 'api::store-document.store-document';
 const PRODUCT_UID = 'api::processed-product.processed-product';
-const COMMISSION_UID = 'api::commission-record.commission-record';
-const ORDER_UID = 'api::order.order';
 
 const ALLOWED_STORE_STATUSES = new Set(['pending', 'approved', 'rejected']);
 const ALLOWED_PRODUCT_STATUSES = new Set(['pending', 'approved', 'rejected']);
-const ALLOWED_ISSUE_STATUSES = new Set(['none', 'flagged', 'resolved']);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -145,32 +142,6 @@ const mapProduct = (entity: any) => ({
   updatedAtIso: asString(entity?.updatedAt),
 });
 
-const mapCommission = (entity: any) => ({
-  remoteId: String(entity?.id ?? ''),
-  orderId: asString(entity?.orderId),
-  sellerId: asString(entity?.sellerId),
-  totalAmount: asNumber(entity?.totalAmount),
-  commissionAmount: asNumber(entity?.commissionAmount),
-  sellerEarning: asNumber(entity?.sellerEarning),
-  createdAtIso: asString(entity?.createdAt),
-});
-
-const mapOrder = (entity: any) => {
-  const items = Array.isArray(entity?.items) ? entity.items : [];
-  const sellerIds = [...new Set(items.map((item: any) => asString(item?.sellerId)).filter(Boolean))];
-  return {
-    remoteId: String(entity?.id ?? ''),
-    orderNo: asString(entity?.localOrderId) || `#${String(entity?.id ?? '')}`,
-    totalAmount: asNumber(entity?.totalAmount),
-    status: asString(entity?.status || 'pending'),
-    issueStatus: asString(entity?.issueStatus || 'none'),
-    adminNote: asString(entity?.adminNote),
-    address: asString(entity?.address),
-    createdAtIso: asString(entity?.createdAt),
-    sellerIds,
-  };
-};
-
 const loadStoreByAnyId = async (strapi: any, rawId: unknown) => {
   const id = asString(rawId);
   if (!id) throw httpError(400, 'storeId zorunlu.');
@@ -296,52 +267,6 @@ const loadProductByAnyId = async (strapi: any, rawId: unknown) => {
     ],
   } as any);
   if (!byDocumentId) throw httpError(404, 'Urun bulunamadi.');
-  return byDocumentId;
-};
-
-const loadOrderByAnyId = async (strapi: any, rawId: unknown) => {
-  const id = asString(rawId);
-  if (!id) throw httpError(400, 'orderId zorunlu.');
-  const numericId = Number(id);
-  if (Number.isInteger(numericId) && numericId > 0) {
-    const byNumeric = await strapi.entityService.findOne(ORDER_UID as any, numericId as any, {
-      fields: [
-        'id',
-        'localOrderId',
-        'totalAmount',
-        'status',
-        'issueStatus',
-        'adminNote',
-        'address',
-        'createdAt',
-      ],
-      populate: {
-        items: {
-          fields: ['id', 'sellerId', 'productLocalId', 'quantity', 'price', 'total'],
-        },
-      },
-    });
-    if (byNumeric) return byNumeric;
-  }
-  const byDocumentId = await strapi.db.query(ORDER_UID).findOne({
-    where: { documentId: id },
-    populate: {
-      items: {
-        select: ['id', 'sellerId', 'productLocalId', 'quantity', 'price', 'total'],
-      },
-    },
-    select: [
-      'id',
-      'localOrderId',
-      'totalAmount',
-      'status',
-      'issueStatus',
-      'adminNote',
-      'address',
-      'createdAt',
-    ],
-  } as any);
-  if (!byDocumentId) throw httpError(404, 'Siparis bulunamadi.');
   return byDocumentId;
 };
 
@@ -484,67 +409,4 @@ export default ({ strapi }: { strapi: any }) => ({
     return mapProduct(updated);
   },
 
-  async listCommissions({ authUserId }: { authUserId: number }) {
-    await loadAdminUser(strapi, authUserId);
-    const entities = await strapi.entityService.findMany(COMMISSION_UID as any, {
-      fields: [
-        'id',
-        'orderId',
-        'sellerId',
-        'totalAmount',
-        'commissionAmount',
-        'sellerEarning',
-        'createdAt',
-      ],
-      sort: ['createdAt:desc'],
-    });
-    const rows = Array.isArray(entities) ? entities : [];
-    return rows.map(mapCommission);
-  },
-
-  async listOrders({ authUserId }: { authUserId: number }) {
-    await loadAdminUser(strapi, authUserId);
-    const entities = await strapi.entityService.findMany(ORDER_UID as any, {
-      fields: [
-        'id',
-        'localOrderId',
-        'totalAmount',
-        'status',
-        'issueStatus',
-        'adminNote',
-        'address',
-        'createdAt',
-      ],
-      populate: {
-        items: {
-          fields: ['id', 'sellerId', 'productLocalId', 'quantity', 'price', 'total'],
-        },
-      },
-      sort: ['createdAt:desc'],
-    });
-    const rows = Array.isArray(entities) ? entities : [];
-    return rows.map(mapOrder);
-  },
-
-  async updateOrderIssue({ authUserId, body }: { authUserId: number; body: unknown }) {
-    await loadAdminUser(strapi, authUserId);
-    const root = isRecord(body) ? body : {};
-    const issueStatus = normalizeStatus(root.issueStatus, ALLOWED_ISSUE_STATUSES);
-    const note = asString(root.note);
-    if (!issueStatus) throw httpError(400, 'issueStatus gecersiz.');
-
-    const order = await loadOrderByAnyId(strapi, root.orderId ?? root.remoteId ?? root.id);
-    const orderId = Number((order as any)?.id ?? 0);
-    if (!orderId) throw httpError(500, 'Siparis id bilgisi okunamadi.');
-
-    await strapi.entityService.update(ORDER_UID as any, orderId, {
-      data: {
-        issueStatus,
-        adminNote: note || null,
-      },
-    });
-
-    const updated = await loadOrderByAnyId(strapi, orderId);
-    return mapOrder(updated);
-  },
 });
