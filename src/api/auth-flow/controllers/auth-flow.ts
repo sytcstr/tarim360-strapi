@@ -5,6 +5,7 @@ import {
 } from '../../../utils/registration-block';
 import { isPremiumActiveFromProfile } from '../../../utils/premium-sync';
 import { normalizeFcmTokenList } from '../../../utils/fcm';
+import { cleanupOwnerEmbeddedHubContent } from '../../../utils/account-cleanup';
 
 const normalizeEmail = (v: unknown) => String(v ?? '').trim().toLowerCase();
 const normalizeUsername = (v: unknown) => String(v ?? '').trim().toLowerCase();
@@ -299,6 +300,15 @@ export default {
           select: ['displayName'],
         } as any)) as Record<string, unknown> | null;
       const displayName = String(profileBeforeDelete?.displayName ?? '').trim();
+
+      const hubCleanup = await cleanupOwnerEmbeddedHubContent(strapi, {
+        ownerId,
+        email,
+      });
+      deleted['hub-comment'] = hubCleanup.hubCommentsRemoved;
+      deleted['farmer-question'] = hubCleanup.farmerQuestionsArchived;
+      deleted['farmer-answer'] = hubCleanup.farmerAnswersRemoved;
+      deleted['farmer-comment-row'] = hubCleanup.farmerCommentRowsArchived;
 
       deleted['ad-click'] = await deleteByFilter(
         'api::ad-click.ad-click',

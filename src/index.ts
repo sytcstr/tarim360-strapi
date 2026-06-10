@@ -1,6 +1,11 @@
 ﻿import type { Core } from '@strapi/strapi';
 import { syncOwnerPremiumFlags } from './utils/premium-sync';
 import { deliverPush as deliverNotificationPush } from './api/notification/content-types/notification/lifecycles';
+import {
+  cleanupOwnerEmbeddedHubContent,
+  normalizeCleanupEmail,
+  ownerIdFromCleanupEmail,
+} from './utils/account-cleanup';
 
 type PermissionLeaf = {
   enabled: boolean;
@@ -601,10 +606,56 @@ const runPremiumFlagsBackfill = async (strapi: Core.Strapi) => {
   }
 };
 
+const registerUserDeleteCleanupLifecycle = (strapi: Core.Strapi) => {
+  const userUid = 'plugin::users-permissions.user';
+  const cleanupUser = async (
+    user: Record<string, unknown> | null | undefined,
+  ) => {
+    const email = normalizeCleanupEmail(user?.email);
+    if (!email) return;
+    const ownerId = ownerIdFromCleanupEmail(email);
+    try {
+      const result = await cleanupOwnerEmbeddedHubContent(strapi, {
+        ownerId,
+        email,
+      });
+      strapi.log.info(
+        `Account embedded hub cleanup: email=${email}, rows=${result.hubRowsUpdated}, hubComments=${result.hubCommentsRemoved}, farmerQuestions=${result.farmerQuestionsArchived}, farmerAnswers=${result.farmerAnswersRemoved}, farmerCommentRows=${result.farmerCommentRowsArchived}.`,
+      );
+    } catch (e) {
+      strapi.log.error(`Account embedded hub cleanup failed for ${email}: ${e}`);
+    }
+  };
+
+  strapi.db.lifecycles.subscribe({
+    models: [userUid],
+    async beforeDelete(event) {
+      const where = event?.params?.where ?? {};
+      const user = (await strapi.db.query(userUid).findOne({
+        where,
+        select: ['id', 'email'],
+      } as any)) as Record<string, unknown> | null;
+      await cleanupUser(user);
+    },
+    async beforeDeleteMany(event) {
+      const where = event?.params?.where ?? {};
+      const users = (await strapi.db.query(userUid).findMany({
+        where,
+        select: ['id', 'email'],
+        limit: 1000,
+      } as any)) as Record<string, unknown>[];
+      for (const user of Array.isArray(users) ? users : []) {
+        await cleanupUser(user);
+      }
+    },
+  });
+};
+
 export default {
   register() {},
 
   async bootstrap({ strapi }: { strapi: Core.Strapi }) {
+    registerUserDeleteCleanupLifecycle(strapi);
     await syncUsersPermissionsRoleConfig(strapi);
     const cleanupEnabled =
       (process.env.CLEANUP_MALFORMED_TEST_DATA ?? '').toLowerCase() === 'true';
