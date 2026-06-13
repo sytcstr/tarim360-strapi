@@ -11,6 +11,12 @@
                     "draftAndPublish":  false
                 },
     "attributes":  {
+                       "offerId":  {
+                                       "type":  "string",
+                                       "required":  true,
+                                       "unique":  true,
+                                       "description":  "Client-generated idempotency key"
+                                   },
                        "loadId":  {
                                       "type":  "string",
                                       "required":  true

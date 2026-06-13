@@ -20,6 +20,15 @@
     "mode": {
       "type": "string"
     },
+    "status": {
+      "type": "enumeration",
+      "enum": [
+        "pending",
+        "active",
+        "rejected"
+      ],
+      "default": "pending"
+    },
     "mainType": {
       "type": "string"
     },

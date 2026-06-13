@@ -6,6 +6,7 @@ import {
   normalizeCleanupEmail,
   ownerIdFromCleanupEmail,
 } from './utils/account-cleanup';
+import { runOfferIdDedupeOnce } from './utils/offer-id-dedupe';
 
 type PermissionLeaf = {
   enabled: boolean;
@@ -690,6 +691,7 @@ export default {
       strapi.log.error(`Support backfill failed: ${e}`);
     }
 
+    await runOfferIdDedupeOnce(strapi);
     await runPremiumFlagsBackfill(strapi);
     strapi.log.info('Users & Permissions roles synced from bootstrap.');
   },

@@ -12,7 +12,10 @@
   "pluginOptions": {},
   "attributes": {
     "offerId": {
-      "type": "string"
+      "type": "string",
+      "required": true,
+      "unique": true,
+      "description": "Client-generated idempotency key"
     },
     "title": {
       "type": "string"
