@@ -27,7 +27,7 @@
         "active",
         "rejected"
       ],
-      "default": "pending"
+      "default": "active"
     },
     "mainType": {
       "type": "string"

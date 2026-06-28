@@ -82,7 +82,7 @@ export default factories.createCoreController(
         identity.ownerId ||
         ownerIdFromEmail(identity.email);
       const isPremium = hasActivePremiumExpiry(profile);
-      const publishedAt = isPremium ? new Date().toISOString() : null;
+      const publishedAt = new Date().toISOString();
 
       ctx.request.body = {
         data: {
@@ -92,13 +92,13 @@ export default factories.createCoreController(
           ownerEmail: normalizeEmail(identity.email),
           isPremium,
           isPremiumOwner: isPremium,
-          status: isPremium ? 'active' : 'pending',
+          status: 'active',
           publishedAt,
         },
       };
       ctx.query = {
         ...(ctx.query ?? {}),
-        status: isPremium ? 'published' : 'draft',
+        status: 'published',
       };
 
       return super.create(ctx);
