@@ -62,6 +62,7 @@ export default factories.createCoreController(VEHICLE_UID as any, ({ strapi }) =
     }
     const created = await strapi.entityService.create(VEHICLE_UID as any, {
       data,
+      populate: { photo: true },
     } as any);
     ctx.body = { data: created };
   },

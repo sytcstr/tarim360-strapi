@@ -93,6 +93,50 @@
                        "estimatedDuration":  {
                                                  "type":  "string"
                                              },
+                       "shipmentType":  {
+                                             "type":  "string"
+                                         },
+                       "packagingType":  {
+                                              "type":  "string"
+                                          },
+                       "packageCount":  {
+                                             "type":  "integer"
+                                         },
+                       "volumeM3":  {
+                                        "type":  "decimal"
+                                    },
+                       "dimensions":  {
+                                          "type":  "string"
+                                      },
+                       "loadingMethod":  {
+                                            "type":  "string"
+                                        },
+                       "unloadingMethod":  {
+                                              "type":  "string"
+                                          },
+                       "deliveryDate":  {
+                                            "type":  "datetime"
+                                        },
+                       "temperatureRange":  {
+                                               "type":  "string"
+                                           },
+                       "dangerousGoods":  {
+                                             "type":  "boolean",
+                                             "default":  false
+                                         },
+                       "adrClass":  {
+                                        "type":  "string"
+                                    },
+                       "stackable":  {
+                                         "type":  "boolean",
+                                         "default":  false
+                                     },
+                       "budgetTry":  {
+                                        "type":  "decimal"
+                                    },
+                       "paymentTerms":  {
+                                           "type":  "string"
+                                       },
                        "loadNo":  {
                                       "type":  "string",
                                       "unique":  true

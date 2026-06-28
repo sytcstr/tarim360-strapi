@@ -186,6 +186,20 @@ const sanitizeOwnerUpdateData = (data: Record<string, any>, admin: boolean): Rec
     'ownerPhone',
     'ownerWhatsapp',
     'estimatedDuration',
+    'shipmentType',
+    'packagingType',
+    'packageCount',
+    'volumeM3',
+    'dimensions',
+    'loadingMethod',
+    'unloadingMethod',
+    'deliveryDate',
+    'temperatureRange',
+    'dangerousGoods',
+    'adrClass',
+    'stackable',
+    'budgetTry',
+    'paymentTerms',
     'loadNo',
     'photo',
   ]);
@@ -222,7 +236,10 @@ export default factories.createCoreController(UID as any, ({ strapi }) => ({
     if (!data.loadNo) {
       data.loadNo = await generatePublicNo(strapi, UID, 'loadNo');
     }
-    const created = await strapi.entityService.create(UID as any, { data } as any);
+    const created = await strapi.entityService.create(UID as any, {
+      data,
+      populate: { photo: true },
+    } as any);
     ctx.body = { data: created };
   },
 
@@ -235,6 +252,7 @@ export default factories.createCoreController(UID as any, ({ strapi }) => ({
     }
     const updated = await strapi.entityService.update(UID as any, load.id as any, {
       data: sanitizeOwnerUpdateData(asData(ctx), isAdmin(user)),
+      populate: { photo: true },
     } as any);
     ctx.body = { data: updated };
   },
