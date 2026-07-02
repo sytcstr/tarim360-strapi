@@ -4,7 +4,6 @@
 
 import { factories } from '@strapi/strapi';
 import {
-  loadEntityByRouteId,
   matchesIdentity,
   normalizeEmail,
   ownerIdFromEmail,
@@ -19,6 +18,45 @@ const findByOfferId = async (strapi: any, offerId: string) =>
   strapi.db.query(UID).findOne({
     where: { offerId },
   } as any);
+
+const offerIdCandidates = (raw: unknown): string[] => {
+  const value = String(raw ?? '').trim();
+  if (!value) return [];
+  const candidates = new Set<string>([value]);
+  if (value.startsWith('offer_')) {
+    const stripped = value.substring('offer_'.length).trim();
+    if (stripped) candidates.add(stripped);
+  } else {
+    candidates.add(`offer_${value}`);
+  }
+  return [...candidates];
+};
+
+const findByAnyOfferId = async (strapi: any, raw: unknown) => {
+  for (const candidate of offerIdCandidates(raw)) {
+    const entity = await findByOfferId(strapi, candidate);
+    if (entity) return entity;
+  }
+  return null;
+};
+
+const participantRole = (
+  entity: Record<string, unknown>,
+  identity: { email: string; ownerId: string },
+) => ({
+  requester: matchesIdentity(
+    entity,
+    identity,
+    ['requesterEmail'],
+    ['requesterProfileId'],
+  ),
+  receiver: matchesIdentity(
+    entity,
+    identity,
+    ['receiverEmail'],
+    ['receiverProfileId'],
+  ),
+});
 
 export default factories.createCoreController(UID, ({ strapi }) => ({
   async create(ctx) {
@@ -174,31 +212,7 @@ export default factories.createCoreController(UID, ({ strapi }) => ({
     const rawId = String(ctx.params.offerId || '').trim();
     if (!rawId) return ctx.badRequest('offerId zorunlu.');
 
-    let entity = await loadEntityByRouteId(strapi, UID, rawId, [
-      'id',
-      'documentId',
-      'offerId',
-      'requesterEmail',
-      'requesterProfileId',
-      'receiverEmail',
-      'receiverProfileId',
-      'seenBy',
-    ]);
-    if (!entity) {
-      entity = await strapi.db.query(UID).findOne({
-        where: { offerId: rawId },
-        select: [
-          'id',
-          'documentId',
-          'offerId',
-          'requesterEmail',
-          'requesterProfileId',
-          'receiverEmail',
-          'receiverProfileId',
-          'seenBy',
-        ],
-      } as any);
-    }
+    const entity = await findByAnyOfferId(strapi, rawId);
     if (!entity) return ctx.notFound('Teklif bulunamadi.');
 
     const isParticipant = matchesIdentity(
@@ -231,5 +245,82 @@ export default factories.createCoreController(UID, ({ strapi }) => ({
     );
 
     ctx.body = { data: { ok: true, offerId: rawId, seenAt, offer: updated } };
+  },
+
+  async updateByOfferId(ctx) {
+    const identity = readIdentity(ctx);
+    if (!identity) return ctx.unauthorized('Kimlik dogrulanamadi.');
+
+    const rawId = String(ctx.params.offerId || '').trim();
+    if (!rawId) return ctx.badRequest('offerId zorunlu.');
+    const entity = await findByAnyOfferId(strapi, rawId);
+    if (!entity) return ctx.notFound('Teklif bulunamadi.');
+
+    const role = participantRole(entity, identity);
+    if (!role.requester && !role.receiver) {
+      return ctx.forbidden('Bu teklifi guncelleme yetkiniz yok.');
+    }
+
+    const body = (ctx.request?.body ?? {}) as Record<string, unknown>;
+    const payload = (body.data ?? body) as Record<string, unknown>;
+    const status = String(payload.offerStatus ?? '').trim().toLowerCase();
+    const allowedStatuses = new Set([
+      'pending',
+      'accepted',
+      'rejected',
+      'bargaining',
+    ]);
+    if (status && !allowedStatuses.has(status)) {
+      return ctx.badRequest('Teklif durumu gecersiz.');
+    }
+    if ((status === 'accepted' || status === 'rejected') && !role.receiver) {
+      return ctx.forbidden('Teklifi yalnizca ilan sahibi kabul veya reddedebilir.');
+    }
+
+    const updateData: Record<string, unknown> = {
+      updatedAtClient:
+        String(payload.updatedAtClient ?? '').trim() ||
+        new Date().toISOString(),
+    };
+    if (status) updateData.offerStatus = status;
+    if (Object.prototype.hasOwnProperty.call(payload, 'approved')) {
+      updateData.approved = payload.approved === true;
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'priceText')) {
+      updateData.priceText = String(payload.priceText ?? '').trim();
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'note')) {
+      updateData.note = String(payload.note ?? '').trim();
+    }
+
+    const updated = await strapi.entityService.update(
+      UID as any,
+      entity.id as any,
+      { data: updateData },
+    );
+    ctx.body = { data: updated };
+  },
+
+  async deleteByOfferId(ctx) {
+    const identity = readIdentity(ctx);
+    if (!identity) return ctx.unauthorized('Kimlik dogrulanamadi.');
+
+    const rawId = String(ctx.params.offerId || '').trim();
+    if (!rawId) return ctx.badRequest('offerId zorunlu.');
+    const entity = await findByAnyOfferId(strapi, rawId);
+    if (!entity) return ctx.notFound('Teklif bulunamadi.');
+
+    const role = participantRole(entity, identity);
+    if (!role.requester && !role.receiver) {
+      return ctx.forbidden('Bu teklifi silme yetkiniz yok.');
+    }
+
+    await strapi.entityService.delete(UID as any, entity.id as any);
+    ctx.body = {
+      data: {
+        ok: true,
+        offerId: String(entity.offerId ?? rawId),
+      },
+    };
   },
 }));

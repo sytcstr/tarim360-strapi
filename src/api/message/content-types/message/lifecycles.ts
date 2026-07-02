@@ -37,6 +37,8 @@ const pushMessageNotification = async (
   const messageText = normalizeText(row.message) || normalizeText(row.text);
   const body = normalizePreview(messageText);
   const senderName = normalizeText(row.senderName) || 'Bir kullanici';
+  const threadId = normalizeText(row.threadId);
+  const listingId = normalizeText(row.listingId);
   const baseId =
     normalizeText(row.id) ||
     normalizeText(row.documentId) ||
@@ -51,6 +53,14 @@ const pushMessageNotification = async (
       isRead: false,
       targetEmail: receiverEmail,
       targetProfileId: receiverProfileId,
+      receiverEmail,
+      receiverProfileId,
+      senderEmail,
+      senderProfileId,
+      requesterEmail: normalizeText(row.requesterEmail).toLowerCase(),
+      requesterProfileId: normalizeText(row.requesterProfileId),
+      threadId,
+      listingId,
       createdAtClient: new Date().toISOString(),
     },
   });

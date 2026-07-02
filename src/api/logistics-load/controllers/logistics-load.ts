@@ -102,11 +102,19 @@ const canOwnLoad = (user: any, load: any): boolean => {
   const actor = actorKeyFor(user);
   const loadOwner = String(load.ownerKey || '').trim();
   const userId = String(user.id || '').trim();
+  const profileId = String(
+    user.profileId || user.ownerProfileId || '',
+  ).trim();
   const userEmail = String(user.email || '').trim().toLowerCase();
   return (
     loadOwner === actor ||
     loadOwner === userId ||
+    loadOwner === `id:${userId}` ||
     loadOwner === `profile:${userId}` ||
+    (profileId &&
+      (loadOwner === profileId ||
+        loadOwner === `id:${profileId}` ||
+        loadOwner === `profile:${profileId}`)) ||
     (userEmail && loadOwner === `email:${userEmail}`)
   );
 };

@@ -110,6 +110,8 @@ const authenticatedActions: string[] = [
   'api::offer.offer.findOne',
   'api::offer.offer.update',
   'api::offer.offer.delete',
+  'api::offer.offer.updateByOfferId',
+  'api::offer.offer.deleteByOfferId',
 
   // Message
   'api::message.message.create',

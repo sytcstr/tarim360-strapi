@@ -41,6 +41,87 @@ const asData = (ctx: any): Record<string, any> => {
   return body.data && typeof body.data === 'object' ? body.data : body;
 };
 
+const stripPrefixes = (raw: unknown): string[] => {
+  const id = String(raw || '').trim();
+  const out = new Set<string>([id]);
+  for (const prefix of ['veh_', 'vehicle_', 'log_vehicle_', 'strapi_']) {
+    if (id.startsWith(prefix)) out.add(id.slice(prefix.length));
+  }
+  return [...out].filter(Boolean);
+};
+
+const resolveVehicle = async (strapi: any, rawId: unknown) => {
+  for (const candidate of stripPrefixes(rawId)) {
+    const numeric = Number(candidate);
+    if (Number.isInteger(numeric) && numeric > 0) {
+      try {
+        const row = await strapi.entityService.findOne(
+          VEHICLE_UID as any,
+          numeric as any,
+        );
+        if (row) return row;
+      } catch (_) {}
+    }
+    for (const field of ['documentId', 'localId', 'vehicleNo']) {
+      try {
+        const rows = await strapi.entityService.findMany(VEHICLE_UID as any, {
+          filters: { [field]: candidate },
+          pagination: { limit: 1 },
+        } as any);
+        const row = Array.isArray(rows) ? rows[0] : rows;
+        if (row) return row;
+      } catch (_) {}
+    }
+  }
+  return null;
+};
+
+const actorKeyFor = (user: any): string => {
+  if (!user) return '';
+  const profileId = String(
+    user.profileId || user.ownerProfileId || user.id || '',
+  ).trim();
+  if (profileId) return `profile:${profileId}`;
+  const email = String(user.email || '').trim().toLowerCase();
+  return email ? `email:${email}` : '';
+};
+
+const isAdmin = (user: any): boolean => {
+  const role = user && user.role ? user.role : {};
+  const value = String(role.code || role.type || role.name || '')
+    .trim()
+    .toLowerCase();
+  return (
+    value === 'admin' ||
+    value === 'super-admin' ||
+    value === 'administrator' ||
+    value.includes('admin')
+  );
+};
+
+const canOwnVehicle = (user: any, vehicle: any): boolean => {
+  if (!user || !vehicle) return false;
+  if (isAdmin(user)) return true;
+  const actor = actorKeyFor(user);
+  const owner = String(vehicle.transporterKey || '').trim();
+  const userId = String(user.id || '').trim();
+  const profileId = String(
+    user.profileId || user.ownerProfileId || '',
+  ).trim();
+  const userEmail = String(user.email || '').trim().toLowerCase();
+  return (
+    owner === actor ||
+    owner === userId ||
+    owner === `id:${userId}` ||
+    owner === `profile:${userId}` ||
+    (profileId &&
+      (owner === profileId ||
+        owner === `id:${profileId}` ||
+        owner === `profile:${profileId}`)) ||
+    (userEmail && owner === `email:${userEmail}`)
+  );
+};
+
 const distanceKm = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
   const radiusKm = 6371;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
@@ -65,6 +146,34 @@ export default factories.createCoreController(VEHICLE_UID as any, ({ strapi }) =
       populate: { photo: true },
     } as any);
     ctx.body = { data: created };
+  },
+
+  async update(ctx) {
+    const vehicle = await resolveVehicle(strapi, ctx.params.id);
+    if (!vehicle) return ctx.notFound('Lojistik arac bulunamadi.');
+    if (!canOwnVehicle(ctx.state.user, vehicle)) {
+      return ctx.forbidden(
+        'Bu arac ilanini sadece sahibi veya admin guncelleyebilir.',
+      );
+    }
+    const data = { ...asData(ctx) };
+    delete data.transporterKey;
+    const updated = await strapi.entityService.update(
+      VEHICLE_UID as any,
+      vehicle.id as any,
+      { data, populate: { photo: true } } as any,
+    );
+    ctx.body = { data: updated };
+  },
+
+  async delete(ctx) {
+    const vehicle = await resolveVehicle(strapi, ctx.params.id);
+    if (!vehicle) return ctx.notFound('Lojistik arac bulunamadi.');
+    if (!canOwnVehicle(ctx.state.user, vehicle)) {
+      return ctx.forbidden('Bu arac ilanini sadece sahibi veya admin silebilir.');
+    }
+    await strapi.entityService.delete(VEHICLE_UID as any, vehicle.id as any);
+    ctx.body = { data: { id: vehicle.id, deleted: true } };
   },
 
   async nearby(ctx) {
