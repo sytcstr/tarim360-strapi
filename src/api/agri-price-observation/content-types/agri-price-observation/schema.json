@@ -60,6 +60,23 @@
     "sourceUrl": {
       "type": "string"
     },
+    "dataOrigin": {
+      "type": "enumeration",
+      "enum": [
+        "manual",
+        "automated"
+      ],
+      "default": "manual"
+    },
+    "confidence": {
+      "type": "decimal",
+      "min": 0,
+      "max": 1
+    },
+    "dedupeKey": {
+      "type": "string",
+      "unique": true
+    },
     "changePercent": {
       "type": "decimal"
     },
