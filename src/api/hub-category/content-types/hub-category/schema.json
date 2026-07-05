@@ -1,0 +1,61 @@
+{
+  "kind": "collectionType",
+  "collectionName": "hub_categories",
+  "info": {
+    "singularName": "hub-category",
+    "pluralName": "hub-categories",
+    "displayName": "Hub Category",
+    "description": "Categories used by Knowledge Hub content"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "name": {
+      "type": "string"
+    },
+    "slug": {
+      "type": "uid",
+      "targetField": "name"
+    },
+    "description": {
+      "type": "text"
+    },
+    "contentType": {
+      "type": "enumeration",
+      "enum": [
+        "knowledge",
+        "agriData"
+      ]
+    },
+    "iconName": {
+      "type": "string"
+    },
+    "colorHex": {
+      "type": "string"
+    },
+    "coverImage": {
+      "type": "media",
+      "multiple": false,
+      "required": false,
+      "allowedTypes": [
+        "images"
+      ]
+    },
+    "sortOrder": {
+      "type": "integer",
+      "default": 0
+    },
+    "isActive": {
+      "type": "boolean",
+      "default": true
+    },
+    "contents": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::hub-content.hub-content",
+      "mappedBy": "category"
+    }
+  }
+}

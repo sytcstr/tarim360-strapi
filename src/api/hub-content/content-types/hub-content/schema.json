@@ -72,6 +72,12 @@
     },
     "createdAtClient": {
       "type": "datetime"
+    },
+    "category": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::hub-category.hub-category",
+      "inversedBy": "contents"
     }
   }
 }

@@ -1,0 +1,68 @@
+{
+  "kind": "collectionType",
+  "collectionName": "hub_banners",
+  "info": {
+    "singularName": "hub-banner",
+    "pluralName": "hub-banners",
+    "displayName": "Hub Banner",
+    "description": "Managed hero banners for Knowledge Hub tabs"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "title": {
+      "type": "string"
+    },
+    "subtitle": {
+      "type": "text"
+    },
+    "eyebrow": {
+      "type": "string"
+    },
+    "contentType": {
+      "type": "enumeration",
+      "enum": [
+        "knowledge",
+        "agriData"
+      ]
+    },
+    "image": {
+      "type": "media",
+      "multiple": false,
+      "required": false,
+      "allowedTypes": [
+        "images"
+      ]
+    },
+    "mobileImage": {
+      "type": "media",
+      "multiple": false,
+      "required": false,
+      "allowedTypes": [
+        "images"
+      ]
+    },
+    "ctaLabel": {
+      "type": "string"
+    },
+    "ctaUrl": {
+      "type": "string"
+    },
+    "sortOrder": {
+      "type": "integer",
+      "default": 0
+    },
+    "isActive": {
+      "type": "boolean",
+      "default": true
+    },
+    "startsAt": {
+      "type": "datetime"
+    },
+    "endsAt": {
+      "type": "datetime"
+    }
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "kind": "collectionType",
+  "collectionName": "agri_products",
+  "info": {
+    "singularName": "agri-product",
+    "pluralName": "agri-products",
+    "displayName": "Agri Product",
+    "description": "Agricultural products tracked by the data center"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "name": {
+      "type": "string"
+    },
+    "slug": {
+      "type": "uid",
+      "targetField": "name"
+    },
+    "code": {
+      "type": "string"
+    },
+    "categoryName": {
+      "type": "string"
+    },
+    "defaultUnit": {
+      "type": "string"
+    },
+    "iconName": {
+      "type": "string"
+    },
+    "image": {
+      "type": "media",
+      "multiple": false,
+      "required": false,
+      "allowedTypes": [
+        "images"
+      ]
+    },
+    "sortOrder": {
+      "type": "integer",
+      "default": 0
+    },
+    "isActive": {
+      "type": "boolean",
+      "default": true
+    },
+    "observations": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::agri-price-observation.agri-price-observation",
+      "mappedBy": "product"
+    }
+  }
+}

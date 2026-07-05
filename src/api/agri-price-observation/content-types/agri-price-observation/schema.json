@@ -1,0 +1,74 @@
+{
+  "kind": "collectionType",
+  "collectionName": "agri_price_observations",
+  "info": {
+    "singularName": "agri-price-observation",
+    "pluralName": "agri-price-observations",
+    "displayName": "Agri Price Observation",
+    "description": "Time-based agricultural price observations"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "product": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::agri-product.agri-product",
+      "inversedBy": "observations"
+    },
+    "province": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::province.province",
+      "inversedBy": "observations"
+    },
+    "observedAt": {
+      "type": "datetime"
+    },
+    "price": {
+      "type": "decimal"
+    },
+    "minPrice": {
+      "type": "decimal"
+    },
+    "maxPrice": {
+      "type": "decimal"
+    },
+    "averagePrice": {
+      "type": "decimal"
+    },
+    "currency": {
+      "type": "enumeration",
+      "enum": [
+        "TRY",
+        "USD",
+        "EUR"
+      ],
+      "default": "TRY"
+    },
+    "unit": {
+      "type": "string"
+    },
+    "marketName": {
+      "type": "string"
+    },
+    "sourceName": {
+      "type": "string"
+    },
+    "sourceUrl": {
+      "type": "string"
+    },
+    "changePercent": {
+      "type": "decimal"
+    },
+    "notes": {
+      "type": "text"
+    },
+    "isVerified": {
+      "type": "boolean",
+      "default": false
+    }
+  }
+}
