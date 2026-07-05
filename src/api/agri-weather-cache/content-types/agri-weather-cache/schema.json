@@ -1,0 +1,61 @@
+{
+  "kind": "collectionType",
+  "collectionName": "agri_weather_caches",
+  "info": {
+    "singularName": "agri-weather-cache",
+    "pluralName": "agri-weather-caches",
+    "displayName": "Agri Weather Cache",
+    "description": "Normalized province weather snapshots"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "province": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::province.province",
+      "inversedBy": "weatherCaches"
+    },
+    "latitude": {
+      "type": "decimal"
+    },
+    "longitude": {
+      "type": "decimal"
+    },
+    "temperature": {
+      "type": "decimal"
+    },
+    "precipitation": {
+      "type": "decimal"
+    },
+    "windSpeed": {
+      "type": "decimal"
+    },
+    "humidity": {
+      "type": "integer",
+      "min": 0,
+      "max": 100
+    },
+    "forecastAt": {
+      "type": "datetime"
+    },
+    "fetchedAt": {
+      "type": "datetime"
+    },
+    "expiresAt": {
+      "type": "datetime"
+    },
+    "sourceName": {
+      "type": "string"
+    },
+    "sourceUrl": {
+      "type": "text"
+    },
+    "dedupeKey": {
+      "type": "string",
+      "unique": true
+    }
+  }
+}

@@ -44,6 +44,12 @@
       "relation": "oneToMany",
       "target": "api::agri-price-observation.agri-price-observation",
       "mappedBy": "province"
+    },
+    "weatherCaches": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::agri-weather-cache.agri-weather-cache",
+      "mappedBy": "province"
     }
   }
 }
