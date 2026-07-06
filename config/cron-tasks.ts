@@ -9,7 +9,10 @@ type EnvReader = {
 
 type CronTask = (context: { strapi: Core.Strapi }) => Promise<void>;
 
-export default (env: EnvReader) => {
+type CronConfigInput = EnvReader | { env: EnvReader };
+
+export default (input: CronConfigInput) => {
+  const env = typeof input === 'function' ? input : input.env;
   const tasks: Record<string, CronTask> = {
     '0 * * * * *': async ({ strapi }) => {
       const now = new Date().toISOString();
