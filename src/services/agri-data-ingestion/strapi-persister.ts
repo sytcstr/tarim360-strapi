@@ -10,6 +10,18 @@ const PROVINCE_UID = 'api::province.province';
 const OBSERVATION_UID =
   'api::agri-price-observation.agri-price-observation';
 
+const publishDraftDocument = async (
+  strapi: Core.Strapi,
+  uid: string,
+  document: { documentId?: string; publishedAt?: string | null } | null | undefined,
+) => {
+  if (!document?.documentId || document.publishedAt) return;
+  await (strapi.documents(uid as any) as any).publish({
+    documentId: document.documentId,
+    populate: {},
+  });
+};
+
 const findOrCreateProduct = async (
   strapi: Core.Strapi,
   record: PersistableAgriPriceRecord,
@@ -24,15 +36,16 @@ const findOrCreateProduct = async (
   if (existing) return existing;
 
   try {
-    return await query.create({
+    const created = await query.create({
       data: {
         name: record.productName,
         slug,
         defaultUnit: record.unit,
         isActive: true,
-        publishedAt: new Date().toISOString(),
       },
     } as any);
+    await publishDraftDocument(strapi, PRODUCT_UID, created);
+    return created;
   } catch (error) {
     const concurrent = await query.findOne({ where: { slug } } as any);
     if (concurrent) return concurrent;
@@ -55,14 +68,15 @@ const findOrCreateProvince = async (
   if (existing) return existing;
 
   try {
-    return await query.create({
+    const created = await query.create({
       data: {
         name: provinceName,
         slug,
         isActive: true,
-        publishedAt: new Date().toISOString(),
       },
     } as any);
+    await publishDraftDocument(strapi, PROVINCE_UID, created);
+    return created;
   } catch (error) {
     const concurrent = await query.findOne({ where: { slug } } as any);
     if (concurrent) return concurrent;
@@ -76,12 +90,13 @@ const calculateChangePercent = async (
   productId: number,
   provinceId: number | null,
 ): Promise<number | null> => {
+  if (!provinceId) return null;
   const where: Record<string, unknown> = {
     product: { id: productId },
+    province: { id: provinceId },
     sourceName: record.sourceName,
     observedAt: { $lt: record.observedAt },
   };
-  where.province = provinceId ? { id: provinceId } : { $null: true };
   const previous = await strapi.db.query(OBSERVATION_UID as any).findOne({
     where,
     orderBy: { observedAt: 'desc' },
@@ -110,7 +125,7 @@ export const createStrapiAgriPricePersister = (
   );
 
   try {
-    await query.create({
+    const created = await query.create({
       data: {
         product: product.id,
         province: province?.id ?? null,
@@ -129,9 +144,9 @@ export const createStrapiAgriPricePersister = (
         dedupeKey: record.dedupeKey,
         changePercent,
         isVerified: false,
-        publishedAt: new Date().toISOString(),
       },
     } as any);
+    await publishDraftDocument(strapi, OBSERVATION_UID, created);
     return 'created';
   } catch (error) {
     const concurrent = await query.findOne({

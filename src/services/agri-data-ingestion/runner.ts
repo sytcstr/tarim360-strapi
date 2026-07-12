@@ -32,12 +32,23 @@ export const ingestAgriData = async ({
       invalid += 1;
       continue;
     }
-    const result = await persist({
-      ...normalized,
-      dedupeKey: buildAgriDedupeKey(normalized),
-    });
-    if (result === 'created') created += 1;
-    else duplicates += 1;
+    try {
+      const result = await persist({
+        ...normalized,
+        dedupeKey: buildAgriDedupeKey(normalized),
+      });
+      if (result === 'created') created += 1;
+      else duplicates += 1;
+    } catch (error) {
+      invalid += 1;
+      const logger = (globalThis as { strapi?: { log?: { warn?: (message: string) => void } } })
+        .strapi?.log;
+      logger?.warn?.(
+        `[agri-ingestion] Skipped ${normalized.productName} from ${normalized.sourceName}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   }
 
   return {

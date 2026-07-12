@@ -156,6 +156,14 @@ const findIdentityConflict = (bySlug, bySecondary, label) => {
   return bySlug || bySecondary || null;
 };
 
+const publishDraftDocument = async (strapi, uid, document) => {
+  if (!document?.documentId || document.publishedAt) return;
+  await strapi.documents(uid).publish({
+    documentId: document.documentId,
+    populate: {},
+  });
+};
+
 const seedProvinces = async (strapi, now) => {
   const query = strapi.db.query(PROVINCE_UID);
   let created = 0;
@@ -178,13 +186,14 @@ const seedProvinces = async (strapi, now) => {
       latitude: province.latitude,
       longitude: province.longitude,
       isActive: true,
-      publishedAt: existing?.publishedAt || now,
     };
     if (existing) {
-      await query.update({ where: { id: existing.id }, data });
+      const updatedRow = await query.update({ where: { id: existing.id }, data });
+      await publishDraftDocument(strapi, PROVINCE_UID, updatedRow);
       updated += 1;
     } else {
-      await query.create({ data });
+      const createdRow = await query.create({ data });
+      await publishDraftDocument(strapi, PROVINCE_UID, createdRow);
       created += 1;
     }
   }
@@ -210,13 +219,14 @@ const seedProducts = async (strapi, now) => {
       categoryName: product.category,
       defaultUnit: product.defaultUnit,
       isActive: true,
-      publishedAt: existing?.publishedAt || now,
     };
     if (existing) {
-      await query.update({ where: { id: existing.id }, data });
+      const updatedRow = await query.update({ where: { id: existing.id }, data });
+      await publishDraftDocument(strapi, PRODUCT_UID, updatedRow);
       updated += 1;
     } else {
-      await query.create({ data });
+      const createdRow = await query.create({ data });
+      await publishDraftDocument(strapi, PRODUCT_UID, createdRow);
       created += 1;
     }
   }
