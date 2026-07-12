@@ -53,6 +53,18 @@ const publicActions: string[] = [
   'api::ad.ad.findOne',
   'api::hub-content.hub-content.find',
   'api::hub-content.hub-content.findOne',
+  'api::hub-category.hub-category.find',
+  'api::hub-category.hub-category.findOne',
+  'api::hub-banner.hub-banner.find',
+  'api::hub-banner.hub-banner.findOne',
+  'api::agri-product.agri-product.find',
+  'api::agri-product.agri-product.findOne',
+  'api::province.province.find',
+  'api::province.province.findOne',
+  'api::agri-price-observation.agri-price-observation.find',
+  'api::agri-price-observation.agri-price-observation.findOne',
+  'api::agri-weather-cache.agri-weather-cache.find',
+  'api::agri-weather-cache.agri-weather-cache.findOne',
 
   // Processed products public reads
   'api::processed-products.processed-products.publicList',
