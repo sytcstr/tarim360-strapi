@@ -141,9 +141,7 @@ const createMetricUpdater = (strapi: any, metric: 'view' | 'like' | 'favorite') 
   const patch: Record<string, any> = {};
 
   if (metric === 'view') {
-    const current = toInt(load.viewCount);
-    const client = toInt(data.viewCount, current + 1);
-    patch.viewCount = Math.max(current + 1, client);
+    patch.viewCount = toInt(load.viewCount) + 1;
   } else {
     const user = ctx.state.user;
     if (!user) return ctx.unauthorized('Bu islem icin giris gerekli.');
