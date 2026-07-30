@@ -59,7 +59,7 @@ const stripPrefixes = (raw: unknown): string[] => {
   return [...out].filter(Boolean);
 };
 
-const resolveLoad = async (strapi: any, rawId: unknown) => {
+export const resolveLoad = async (strapi: any, rawId: unknown) => {
   for (const candidate of stripPrefixes(rawId)) {
     const numeric = Number(candidate);
     if (Number.isInteger(numeric) && numeric > 0) {
@@ -82,7 +82,7 @@ const resolveLoad = async (strapi: any, rawId: unknown) => {
   return null;
 };
 
-const actorKeyFor = (user: any): string => {
+export const actorKeyFor = (user: any): string => {
   if (!user) return '';
   const profileId = String(user.profileId || user.ownerProfileId || user.id || '').trim();
   if (profileId) return `profile:${profileId}`;
@@ -125,6 +125,25 @@ const actorList = (value: unknown): string[] => {
   return [];
 };
 
+// Shared actor-set toggle for like/favorite so any caller (this controller's
+// own /metrics route, or the generic engagement route) converges on the same
+// likedActorKeys/favoriteActorKeys fields instead of drifting independently.
+export const applyLoadActorMetric = async (
+  strapi: any,
+  load: any,
+  actor: string,
+  metric: 'like' | 'favorite',
+  active: boolean,
+) => {
+  const field = metric === 'like' ? 'likedActorKeys' : 'favoriteActorKeys';
+  const countField = metric === 'like' ? 'likeCount' : 'favoriteCount';
+  const actors = new Set(actorList(load[field]));
+  if (active) actors.add(actor);
+  else actors.delete(actor);
+  const patch = { [field]: [...actors], [countField]: actors.size };
+  return strapi.entityService.update(UID as any, load.id as any, { data: patch } as any);
+};
+
 const metricBody = (load: any) => ({
   id: load.id,
   documentId: load.documentId,
@@ -142,22 +161,17 @@ const createMetricUpdater = (strapi: any, metric: 'view' | 'like' | 'favorite') 
 
   if (metric === 'view') {
     patch.viewCount = toInt(load.viewCount) + 1;
-  } else {
-    const user = ctx.state.user;
-    if (!user) return ctx.unauthorized('Bu islem icin giris gerekli.');
-    const actor = actorKeyFor(user);
-    if (!actor) return ctx.forbidden('Kullanici kimligi okunamadi.');
-    const active = data.active !== false;
-    const field = metric === 'like' ? 'likedActorKeys' : 'favoriteActorKeys';
-    const countField = metric === 'like' ? 'likeCount' : 'favoriteCount';
-    const actors = new Set(actorList(load[field]));
-    if (active) actors.add(actor);
-    else actors.delete(actor);
-    patch[field] = [...actors];
-    patch[countField] = actors.size;
+    const updated = await strapi.entityService.update(UID as any, load.id as any, { data: patch } as any);
+    ctx.body = { data: metricBody(updated) };
+    return;
   }
 
-  const updated = await strapi.entityService.update(UID as any, load.id as any, { data: patch } as any);
+  const user = ctx.state.user;
+  if (!user) return ctx.unauthorized('Bu islem icin giris gerekli.');
+  const actor = actorKeyFor(user);
+  if (!actor) return ctx.forbidden('Kullanici kimligi okunamadi.');
+  const active = data.active !== false;
+  const updated = await applyLoadActorMetric(strapi, load, actor, metric as 'like' | 'favorite', active);
   ctx.body = { data: metricBody(updated) };
 };
 

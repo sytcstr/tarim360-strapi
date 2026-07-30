@@ -1,4 +1,9 @@
 import { readIdentity } from '../../../utils/identity';
+import {
+  actorKeyFor as logisticsActorKeyFor,
+  applyLoadActorMetric,
+  resolveLoad as resolveLogisticsLoad,
+} from '../../logistics-load/controllers/logistics-load';
 
 const PROFILE_SETTING_UID = 'api::profile-setting.profile-setting';
 const LISTING_UID = 'api::listing.listing';
@@ -143,6 +148,7 @@ const toggleProfileList = async (
   stateField: string,
   aliases: string[],
   counter?: { field: 'favoriteCount' | 'likeCount'; listingIdField: string },
+  onChanged?: (ctx: any, id: string, enabled: boolean) => Promise<void>,
 ) => {
   const identity = readIdentity(ctx);
   if (!identity) return ctx.unauthorized('Kimlik dogrulanamadi.');
@@ -169,6 +175,9 @@ const toggleProfileList = async (
       counter.field,
       enabled ? 1 : -1,
     );
+  }
+  if (onChanged && base.changed) {
+    await onChanged(ctx, id, enabled);
   }
 
   ctx.body = {
@@ -228,7 +237,21 @@ export default {
   },
 
   async toggleLogisticsLoadLike(ctx: any) {
-    return toggleProfileList(ctx, 'loadId', 'liked', 'likedLogisticsLoadIds', []);
+    return toggleProfileList(
+      ctx,
+      'loadId',
+      'liked',
+      'likedLogisticsLoadIds',
+      [],
+      undefined,
+      async (innerCtx, loadId, enabled) => {
+        const actor = logisticsActorKeyFor(innerCtx.state.user);
+        if (!actor) return;
+        const load = await resolveLogisticsLoad(strapi, loadId);
+        if (!load) return;
+        await applyLoadActorMetric(strapi, load, actor, 'like', enabled);
+      },
+    );
   },
 
   async toggleFarmerQuestionLike(ctx: any) {
