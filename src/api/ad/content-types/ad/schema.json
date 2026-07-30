@@ -118,6 +118,10 @@
     },
     "isPremiumOwner": {
       "type": "boolean"
+    },
+    "engagementVersion": {
+      "type": "integer",
+      "default": 0
     }
   }
 }

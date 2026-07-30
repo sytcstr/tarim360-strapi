@@ -47,6 +47,24 @@ export const TARGET_UID: Record<EngagementTargetType, string> = {
   profile: 'api::profile-setting.profile-setting',
 };
 
+/**
+ * Real SQL table name backing each target — taken directly from each
+ * content-type's own schema.json `collectionName` (not derived from
+ * Strapi's runtime metadata API, whose exact typed accessor for this
+ * value wasn't confirmed during Aşama 1). Used for raw atomic
+ * increment/decrement statements against the active `trx` (§3.3) — this
+ * must be kept in sync if any of these collectionNames ever change.
+ */
+export const TARGET_COLLECTION: Record<EngagementTargetType, string> = {
+  listing: 'listings',
+  'logistics-load': 'logistics_loads',
+  'logistics-vehicle': 'logistics_vehicles',
+  'processed-product': 'processed_products',
+  ad: 'ads',
+  'hub-content': 'hub_contents',
+  profile: 'profile_settings',
+};
+
 interface DomainSupport {
   like: boolean;
   favorite: boolean;

@@ -68,6 +68,14 @@
                                          "type":  "integer",
                                          "default":  0
                                      },
+                       "viewCount":  {
+                                         "type":  "integer",
+                                         "default":  0
+                                     },
+                       "engagementVersion":  {
+                                                 "type":  "integer",
+                                                 "default":  0
+                                             },
                        "moderationStatus":  {
                                                 "type":  "enumeration",
                                                 "enum":  [

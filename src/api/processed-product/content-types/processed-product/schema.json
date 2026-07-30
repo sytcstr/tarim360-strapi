@@ -91,6 +91,22 @@
     },
     "moderationNote": {
       "type": "text"
+    },
+    "viewCount": {
+      "type": "integer",
+      "default": 0
+    },
+    "likeCount": {
+      "type": "integer",
+      "default": 0
+    },
+    "favoriteCount": {
+      "type": "integer",
+      "default": 0
+    },
+    "engagementVersion": {
+      "type": "integer",
+      "default": 0
     }
   }
 }
