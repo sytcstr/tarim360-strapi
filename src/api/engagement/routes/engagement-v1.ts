@@ -34,7 +34,19 @@ export default {
       method: 'POST',
       path: '/engagements/view',
       handler: 'engagement-v1.postView',
-      config: { auth: false },
+      config: {
+        auth: false,
+        // ENGAGEMENT_API_CONTRACT.md §9: this is the highest-risk route
+        // (no auth, guests allowed) — minimum abuse protection per
+        // Aşama 9. See src/middlewares/engagement-rate-limit.ts for the
+        // explicitly-disclosed limitations of this in-memory limiter.
+        // 60 req/min per actor-or-IP: generous enough for normal rapid
+        // browsing (the 24h dedup already absorbs true duplicate views),
+        // tight enough to blunt a naive spam loop.
+        middlewares: [
+          { name: 'global::engagement-rate-limit', config: { windowMs: 60_000, max: 60 } },
+        ],
+      },
     },
   ],
 };
