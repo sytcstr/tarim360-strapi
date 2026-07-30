@@ -4,6 +4,8 @@ import {
   applyLoadActorMetric,
   resolveLoad as resolveLogisticsLoad,
 } from '../../logistics-load/controllers/logistics-load';
+import { requireAuthenticatedActorKey } from '../../../utils/engagement-contract';
+import { setMembership } from '../services/engagement-v1';
 
 const PROFILE_SETTING_UID = 'api::profile-setting.profile-setting';
 const LISTING_UID = 'api::listing.listing';
@@ -191,16 +193,56 @@ const toggleProfileList = async (
   };
 };
 
+/**
+ * Aşama 10 (legacy delegation): routes this old endpoint into the new
+ * engagement-interaction-backed core (setMembership) instead of the
+ * profile-setting-JSON-list mechanism above, so a like/favorite
+ * performed via this legacy route and the new PUT/DELETE
+ * /engagements/like|favorite route are the SAME action against the SAME
+ * source of truth — never two independent counters drifting apart or
+ * double-incrementing. Response shape is kept backward-compatible
+ * (`{data:{ok,id,enabled,profileId,values}}`) even though the current
+ * Flutter client's _postJsonBestEffort only checks the HTTP status code
+ * and never actually parses these fields (confirmed while auditing
+ * strapi_service.dart) — kept anyway in case another consumer does.
+ * `values` is intentionally empty: this route no longer maintains
+ * profile-setting's likedListingIds/favoriteListingIds list itself —
+ * Flutter's FavoritesStore already keeps that list in sync via its own
+ * independent upsertProfileSettings call, so nothing regresses.
+ */
+const delegateListingMembershipToggle = async (
+  ctx: any,
+  idField: string,
+  payloadField: string,
+  kind: 'like' | 'favorite',
+) => {
+  const identity = readIdentity(ctx);
+  if (!identity) return ctx.unauthorized('Kimlik dogrulanamadi.');
+  const body = dataBody(ctx);
+  const id = asString(body[idField]);
+  if (!id) return ctx.badRequest(`${idField} zorunlu.`);
+  const enabled = asBool(body[payloadField], true);
+
+  const actorKey = requireAuthenticatedActorKey(ctx);
+  if (!actorKey) return ctx.unauthorized('Kimlik dogrulanamadi.');
+
+  const result = await setMembership(strapi, actorKey, 'listing', id, kind, enabled);
+  if (!result.found) return ctx.notFound('listing bulunamadi.');
+
+  ctx.body = {
+    data: {
+      ok: true,
+      id,
+      enabled: result.active,
+      profileId: identity.ownerId,
+      values: [],
+    },
+  };
+};
+
 export default {
   async toggleListingFavorite(ctx: any) {
-    return toggleProfileList(
-      ctx,
-      'listingId',
-      'favorite',
-      'favoriteListingIds',
-      ['favoritesListingIds'],
-      { field: 'favoriteCount', listingIdField: 'listingId' },
-    );
+    return delegateListingMembershipToggle(ctx, 'listingId', 'favorite', 'favorite');
   },
 
   async toggleProfileFavorite(ctx: any) {
@@ -230,10 +272,7 @@ export default {
   },
 
   async toggleListingLike(ctx: any) {
-    return toggleProfileList(ctx, 'listingId', 'liked', 'likedListingIds', [], {
-      field: 'likeCount',
-      listingIdField: 'listingId',
-    });
+    return delegateListingMembershipToggle(ctx, 'listingId', 'liked', 'like');
   },
 
   async toggleLogisticsLoadLike(ctx: any) {

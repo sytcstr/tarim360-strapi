@@ -1,4 +1,5 @@
 ﻿import { factories } from '@strapi/strapi';
+import { registerView } from '../../engagement/services/engagement-view-service';
 
 const UID = 'api::logistics-load.logistics-load';
 
@@ -157,12 +158,19 @@ const createMetricUpdater = (strapi: any, metric: 'view' | 'like' | 'favorite') 
   if (!load) return ctx.notFound('Lojistik yuk bulunamadi.');
 
   const data = asData(ctx);
-  const patch: Record<string, any> = {};
 
   if (metric === 'view') {
-    patch.viewCount = toInt(load.viewCount) + 1;
-    const updated = await strapi.entityService.update(UID as any, load.id as any, { data: patch } as any);
-    ctx.body = { data: metricBody(updated) };
+    // Aşama 10 (legacy delegation): use the same 24h-dedup, atomic
+    // engagement-view core as POST /engagements/view, instead of this
+    // route's own unconditional current+1 (which Faz A only stopped from
+    // accepting a client-supplied value, but never deduped).
+    const jwtEmail = (ctx?.state?.user?.email ?? '').toString().trim().toLowerCase();
+    const actorKey = jwtEmail ? `user:${jwtEmail}` : `ip:${ctx.request?.ip ?? ctx.ip ?? 'unknown'}`;
+    const result = await registerView(strapi, actorKey, 'logistics-load', String(load.id));
+    const refreshed = result.found
+      ? await strapi.entityService.findOne(UID as any, load.id as any)
+      : load;
+    ctx.body = { data: metricBody(refreshed) };
     return;
   }
 
