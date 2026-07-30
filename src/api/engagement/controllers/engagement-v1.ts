@@ -8,12 +8,15 @@ import { readIdentity, matchesIdentity, loadEntityByRouteId } from '../../../uti
 import {
   assertEngagementSupported,
   buildToggleBody,
+  buildViewBody,
   EngagementMembershipKind,
   requireAuthenticatedActorKey,
+  resolveActorKey,
   sendEngagementError,
   TARGET_UID,
 } from '../../../utils/engagement-contract';
 import { setMembership } from '../services/engagement-v1';
+import { registerView } from '../services/engagement-view-service';
 
 const dataBody = (ctx: any): Record<string, unknown> => {
   const body = (ctx.request?.body ?? {}) as Record<string, unknown>;
@@ -85,5 +88,36 @@ export default {
   },
   async deleteFavorite(ctx: any) {
     return handleMembership(ctx, 'favorite', false);
+  },
+
+  async postView(ctx: any) {
+    const body = dataBody(ctx);
+    const targetType = body.targetType;
+    const targetId = String(body.targetId ?? '').trim();
+    if (!targetId) return sendEngagementError(ctx, 'VALIDATION_ERROR', 'targetId zorunlu.');
+    if (!assertEngagementSupported(ctx, targetType, 'view')) return;
+
+    const actorKey = resolveActorKey(ctx);
+    if (!actorKey) {
+      return sendEngagementError(
+        ctx,
+        'VALIDATION_ERROR',
+        'Kimlik dogrulanamadi ve gecerli bir guestActorId gonderilmedi.',
+      );
+    }
+
+    const result = await registerView(strapi, actorKey, targetType, targetId);
+    if (!result.found) {
+      return sendEngagementError(ctx, 'NOT_FOUND', `${targetType} bulunamadi: ${targetId}`);
+    }
+
+    ctx.body = buildViewBody({
+      incremented: result.incremented,
+      count: result.count,
+      targetType,
+      targetId,
+      updatedAt: result.updatedAt,
+      serverVersion: result.serverVersion,
+    });
   },
 };

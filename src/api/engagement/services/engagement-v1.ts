@@ -5,25 +5,16 @@
  * identically regardless of which route (new /engagements/* or a
  * delegating legacy route, see Aşama 10) calls it.
  */
-import { loadEntityByRouteId } from '../../../utils/identity';
 import {
   COUNTER_FIELD,
   EngagementMembershipKind,
   EngagementTargetType,
   TARGET_COLLECTION,
-  TARGET_UID,
   VERSION_FIELD,
 } from '../../../utils/engagement-contract';
+import { incrementCounterAtomic, resolveTargetRow } from './engagement-core';
 
 const INTERACTION_UID = 'api::engagement-interaction.engagement-interaction';
-
-/** camelCase Strapi attribute name -> actual snake_case DB column name.
- * Verified empirically against the local dev SQLite DB (read-only
- * inspection, e.g. `ownerProfileId` -> `owner_profile_id`,
- * `viewCount` -> `view_count`) — this is Strapi's standard, consistent
- * naming convention, not a guess. */
-const toSnakeCase = (value: string): string =>
-  value.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
 
 export interface MembershipResult {
   found: boolean;
@@ -33,49 +24,6 @@ export interface MembershipResult {
   updatedAt: string;
   serverVersion: number;
 }
-
-const resolveTargetRow = async (
-  strapiInstance: any,
-  targetType: EngagementTargetType,
-  rawTargetId: string,
-): Promise<Record<string, any> | null> => {
-  const uid = TARGET_UID[targetType];
-  return loadEntityByRouteId(strapiInstance, uid, rawTargetId, ['id', 'documentId']);
-};
-
-/**
- * Single atomic UPDATE: increments (or floor-clamped decrements) the
- * counter field and engagementVersion together, in one SQL statement, no
- * row-lock required (see ENGAGEMENT_API_CONTRACT.md §3.3 — SELECT...FOR
- * UPDATE is a confirmed no-op on this project's SQLite dialect).
- */
-const incrementCounterAtomic = async (
-  trx: any,
-  collectionName: string,
-  id: number,
-  countField: string,
-  delta: 1 | -1,
-): Promise<{ count: number; serverVersion: number; updatedAt: string }> => {
-  const countCol = toSnakeCase(countField);
-  const versionCol = toSnakeCase(VERSION_FIELD);
-  const setClause =
-    delta > 0
-      ? {
-          [countCol]: trx.raw(`?? + 1`, [countCol]),
-          [versionCol]: trx.raw(`?? + 1`, [versionCol]),
-        }
-      : {
-          [countCol]: trx.raw(`MAX(?? - 1, 0)`, [countCol]),
-          [versionCol]: trx.raw(`?? + 1`, [versionCol]),
-        };
-  await trx(collectionName).where('id', id).update(setClause);
-  const row = await trx(collectionName).where('id', id).first(countCol, versionCol, 'updated_at');
-  return {
-    count: Number(row?.[countCol] ?? 0),
-    serverVersion: Number(row?.[versionCol] ?? 0),
-    updatedAt: row?.updated_at ?? new Date().toISOString(),
-  };
-};
 
 /**
  * PUT (active=true) / DELETE (active=false) for like/favorite —

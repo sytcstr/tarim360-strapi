@@ -30,5 +30,11 @@ export default {
       handler: 'engagement-v1.deleteFavorite',
       config: { auth: { scope: [] } },
     },
+    {
+      method: 'POST',
+      path: '/engagements/view',
+      handler: 'engagement-v1.postView',
+      config: { auth: false },
+    },
   ],
 };
