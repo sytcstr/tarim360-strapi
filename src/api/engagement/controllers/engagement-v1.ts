@@ -20,7 +20,22 @@ import { registerView } from '../services/engagement-view-service';
 
 const dataBody = (ctx: any): Record<string, unknown> => {
   const body = (ctx.request?.body ?? {}) as Record<string, unknown>;
-  return (body.data && typeof body.data === 'object' ? body.data : body) as Record<string, unknown>;
+  const parsed = (body.data && typeof body.data === 'object' ? body.data : body) as Record<
+    string,
+    unknown
+  >;
+  // Confirmed via a real boot (Faz B-V): DELETE requests arrive with an
+  // EMPTY ctx.request.body in this Strapi/Koa setup, even when the client
+  // sends a JSON body — DELETE-with-body support is inconsistent across
+  // HTTP clients/proxies/frameworks generally, so query-string parameters
+  // are the reliable, standard way to pass targetType/targetId on DELETE.
+  // Body values win if both are present (PUT keeps working unchanged).
+  const query = (ctx.query ?? {}) as Record<string, unknown>;
+  return {
+    targetType: parsed.targetType ?? query.targetType,
+    targetId: parsed.targetId ?? query.targetId,
+    ...parsed,
+  };
 };
 
 /** Only "listing" ownership is checked in this phase — see

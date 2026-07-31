@@ -44,6 +44,11 @@ export default {
         // browsing (the 24h dedup already absorbs true duplicate views),
         // tight enough to blunt a naive spam loop.
         middlewares: [
+          // Runs first: populates ctx.state.user from a valid JWT if one
+          // is sent, without requiring it (Strapi's auth:false skips its
+          // own JWT verification entirely — confirmed via a real boot,
+          // see src/middlewares/engagement-soft-auth.ts header comment).
+          { name: 'global::engagement-soft-auth', config: {} },
           { name: 'global::engagement-rate-limit', config: { windowMs: 60_000, max: 60 } },
         ],
       },
