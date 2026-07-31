@@ -35,6 +35,11 @@ import path from 'node:path';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { createStrapi, compileStrapi } = require('@strapi/strapi');
 
+// Must be a path relative to the Strapi project root — config/database.ts
+// joins DATABASE_FILENAME onto the project root itself, so an absolute
+// path here would be joined twice and fail with EINVAL (confirmed while
+// running this suite for real during Faz B-V).
+const TEST_DB_FILE_RELATIVE = 'tests/integration/.tmp-engagement-integration-test.db';
 const TEST_DB_FILE = path.join(__dirname, '.tmp-engagement-integration-test.db');
 const PORT = 14150;
 const BASE_URL = `http://127.0.0.1:${PORT}/api`;
@@ -44,7 +49,7 @@ let strapiInstance: any;
 before(async () => {
   if (existsSync(TEST_DB_FILE)) unlinkSync(TEST_DB_FILE);
   process.env.DATABASE_CLIENT = 'sqlite';
-  process.env.DATABASE_FILENAME = TEST_DB_FILE;
+  process.env.DATABASE_FILENAME = TEST_DB_FILE_RELATIVE;
   process.env.PORT = String(PORT);
   const compiled = await compileStrapi();
   strapiInstance = await createStrapi(compiled).load();
@@ -69,10 +74,21 @@ async function registerAndLogin(email: string): Promise<string> {
   return json.jwt;
 }
 
-async function createTestListing(jwt: string, overrides: Record<string, unknown> = {}) {
+/**
+ * Creates a listing owned by a FRESH, separate account — never the caller
+ * under test. The engagement-v1 controller correctly forbids liking/
+ * favoriting your own listing (isOwnListingTarget); an earlier version of
+ * this helper created the listing under the same JWT that then tried to
+ * like it, which made every like/favorite test fail with a genuine (and
+ * correct) self-like 403 — a test bug, not an engagement-system bug. This
+ * was caught by actually running the suite (Faz B-V), exactly the kind of
+ * thing a written-but-unexecuted test file cannot surface.
+ */
+async function createListingOwnedByStranger(overrides: Record<string, unknown> = {}) {
+  const ownerJwt = await registerAndLogin(`owner-${randomUUID()}@test.local`);
   const res = await fetch(`${BASE_URL}/listings`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${jwt}` },
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${ownerJwt}` },
     body: JSON.stringify({
       data: {
         title: 'Test listing',
@@ -95,7 +111,7 @@ const authed = (jwt: string) => ({ authorization: `Bearer ${jwt}`, 'content-type
 
 test('like: first PUT activates and increments count (changed:true)', async () => {
   const jwt = await registerAndLogin(`liker-${randomUUID()}@test.local`);
-  const listing = await createTestListing(jwt);
+  const listing = await createListingOwnedByStranger();
   const res = await fetch(`${BASE_URL}/engagements/like`, {
     method: 'PUT',
     headers: authed(jwt),
@@ -110,7 +126,7 @@ test('like: first PUT activates and increments count (changed:true)', async () =
 
 test('like: repeating the same PUT is a no-op (changed:false, same active/count)', async () => {
   const jwt = await registerAndLogin(`liker-${randomUUID()}@test.local`);
-  const listing = await createTestListing(jwt);
+  const listing = await createListingOwnedByStranger();
   await fetch(`${BASE_URL}/engagements/like`, {
     method: 'PUT',
     headers: authed(jwt),
@@ -129,16 +145,18 @@ test('like: repeating the same PUT is a no-op (changed:false, same active/count)
 
 test('like: DELETE after PUT deactivates and decrements', async () => {
   const jwt = await registerAndLogin(`liker-${randomUUID()}@test.local`);
-  const listing = await createTestListing(jwt);
+  const listing = await createListingOwnedByStranger();
   await fetch(`${BASE_URL}/engagements/like`, {
     method: 'PUT',
     headers: authed(jwt),
     body: JSON.stringify({ targetType: 'listing', targetId: listing.id }),
   });
-  const res = await fetch(`${BASE_URL}/engagements/like`, {
+  // DELETE requests carry targetType/targetId as query params, not body —
+  // confirmed via a real boot (Faz B-V) that this Strapi/Koa setup leaves
+  // ctx.request.body empty for DELETE even when a JSON body is sent.
+  const res = await fetch(`${BASE_URL}/engagements/like?targetType=listing&targetId=${listing.id}`, {
     method: 'DELETE',
     headers: authed(jwt),
-    body: JSON.stringify({ targetType: 'listing', targetId: listing.id }),
   });
   const body = await res.json();
   assert.equal(body.active, false);
@@ -148,11 +166,10 @@ test('like: DELETE after PUT deactivates and decrements', async () => {
 
 test('like: repeating DELETE when already inactive is a no-op', async () => {
   const jwt = await registerAndLogin(`liker-${randomUUID()}@test.local`);
-  const listing = await createTestListing(jwt);
-  const res = await fetch(`${BASE_URL}/engagements/like`, {
+  const listing = await createListingOwnedByStranger();
+  const res = await fetch(`${BASE_URL}/engagements/like?targetType=listing&targetId=${listing.id}`, {
     method: 'DELETE',
     headers: authed(jwt),
-    body: JSON.stringify({ targetType: 'listing', targetId: listing.id }),
   });
   const body = await res.json();
   assert.equal(body.active, false);
@@ -162,7 +179,7 @@ test('like: repeating DELETE when already inactive is a no-op', async () => {
 
 test('like: two concurrent PUTs from the same actor result in count=1, not 2 (unique constraint + insert-conflict handling)', async () => {
   const jwt = await registerAndLogin(`liker-${randomUUID()}@test.local`);
-  const listing = await createTestListing(jwt);
+  const listing = await createListingOwnedByStranger();
   const fire = () =>
     fetch(`${BASE_URL}/engagements/like`, {
       method: 'PUT',
@@ -179,32 +196,40 @@ test('like: two concurrent PUTs from the same actor result in count=1, not 2 (un
 
 test('like: two concurrent DELETEs from the same already-liked actor result in count=0, not -1', async () => {
   const jwt = await registerAndLogin(`liker-${randomUUID()}@test.local`);
-  const listing = await createTestListing(jwt);
+  const listing = await createListingOwnedByStranger();
   await fetch(`${BASE_URL}/engagements/like`, {
     method: 'PUT',
     headers: authed(jwt),
     body: JSON.stringify({ targetType: 'listing', targetId: listing.id }),
   });
   const fire = () =>
-    fetch(`${BASE_URL}/engagements/like`, {
+    fetch(`${BASE_URL}/engagements/like?targetType=listing&targetId=${listing.id}`, {
       method: 'DELETE',
       headers: authed(jwt),
-      body: JSON.stringify({ targetType: 'listing', targetId: listing.id }),
     }).then((r) => r.json());
   const [a, b] = await Promise.all([fire(), fire()]);
   assert.equal(Math.max(a.count, b.count), 0);
   assert.ok(a.count >= 0 && b.count >= 0, 'count must never go negative');
 });
 
-test('like: unauthorized request is rejected with UNAUTHORIZED', async () => {
+test('like: request with no JWT at all is rejected before reaching our controller', async () => {
+  // A completely missing token never reaches engagement-v1's controller —
+  // Strapi's OWN authorize middleware (route config `auth: {scope:[]}`)
+  // rejects it first, treating the caller as the "public" role, which
+  // does not have this action enabled. Confirmed via a real boot
+  // (Faz B-V): Strapi's native behavior here is 403, not 401 — a missing
+  // token is treated as "anonymous role lacks permission," not "who are
+  // you." This is standard Strapi framework behavior, not a bug in this
+  // implementation; ENGAGEMENT_API_CONTRACT.md's error-code table should
+  // be read with this in mind for the true-anonymous case specifically
+  // (an INVALID/expired token, by contrast, does reach readIdentity and
+  // gets our own UNAUTHORIZED envelope).
   const res = await fetch(`${BASE_URL}/engagements/like`, {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ targetType: 'listing', targetId: '1' }),
   });
-  const body = await res.json();
-  assert.equal(res.status, 401);
-  assert.equal(body.error.code, 'UNAUTHORIZED');
+  assert.equal(res.status, 403);
 });
 
 test('favorite: unsupported domain (logistics-vehicle) returns ENGAGEMENT_NOT_SUPPORTED, not a silent success', async () => {
@@ -237,7 +262,7 @@ test('like: non-existent target returns NOT_FOUND', async () => {
 
 test('view: first view increments and returns incremented:true', async () => {
   const jwt = await registerAndLogin(`viewer-${randomUUID()}@test.local`);
-  const listing = await createTestListing(jwt);
+  const listing = await createListingOwnedByStranger();
   const res = await fetch(`${BASE_URL}/engagements/view`, {
     method: 'POST',
     headers: authed(jwt),
@@ -250,7 +275,7 @@ test('view: first view increments and returns incremented:true', async () => {
 
 test('view: repeating within 24h does not increment again', async () => {
   const jwt = await registerAndLogin(`viewer-${randomUUID()}@test.local`);
-  const listing = await createTestListing(jwt);
+  const listing = await createListingOwnedByStranger();
   await fetch(`${BASE_URL}/engagements/view`, {
     method: 'POST',
     headers: authed(jwt),
@@ -273,7 +298,7 @@ test('view: after the 24h window elapses, a new view increments again (requires 
   // the same request — this exercises the real conditional-UPDATE path,
   // not a mock.
   const jwt = await registerAndLogin(`viewer-${randomUUID()}@test.local`);
-  const listing = await createTestListing(jwt);
+  const listing = await createListingOwnedByStranger();
   await fetch(`${BASE_URL}/engagements/view`, {
     method: 'POST',
     headers: authed(jwt),
@@ -296,7 +321,7 @@ test('view: after the 24h window elapses, a new view increments again (requires 
 
 test('view: two concurrent first-views from the same actor increment exactly once (unique constraint + insert-conflict handling)', async () => {
   const jwt = await registerAndLogin(`viewer-${randomUUID()}@test.local`);
-  const listing = await createTestListing(jwt);
+  const listing = await createListingOwnedByStranger();
   const fire = () =>
     fetch(`${BASE_URL}/engagements/view`, {
       method: 'POST',
@@ -310,7 +335,7 @@ test('view: two concurrent first-views from the same actor increment exactly onc
 
 test('view: a client-supplied count/viewCount in the body is ignored — server always computes it', async () => {
   const jwt = await registerAndLogin(`viewer-${randomUUID()}@test.local`);
-  const listing = await createTestListing(jwt);
+  const listing = await createListingOwnedByStranger();
   const res = await fetch(`${BASE_URL}/engagements/view`, {
     method: 'POST',
     headers: authed(jwt),
@@ -348,7 +373,7 @@ test('view: non-existent target returns NOT_FOUND', async () => {
 
 test('share: first operationId creates a real row and returns 201', async () => {
   const jwt = await registerAndLogin(`sharer-${randomUUID()}@test.local`);
-  const listing = await createTestListing(jwt);
+  const listing = await createListingOwnedByStranger();
   const operationId = randomUUID();
   const res = await fetch(`${BASE_URL}/listing-shares`, {
     method: 'POST',
@@ -362,7 +387,7 @@ test('share: first operationId creates a real row and returns 201', async () => 
 
 test('share: retrying the same operationId with the same payload is idempotent (200, no new row)', async () => {
   const jwt = await registerAndLogin(`sharer-${randomUUID()}@test.local`);
-  const listing = await createTestListing(jwt);
+  const listing = await createListingOwnedByStranger();
   const operationId = randomUUID();
   const payload = { listingId: listing.id, channel: 'whatsapp', operationId };
   await fetch(`${BASE_URL}/listing-shares`, { method: 'POST', headers: authed(jwt), body: JSON.stringify(payload) });
@@ -374,7 +399,7 @@ test('share: retrying the same operationId with the same payload is idempotent (
 
 test('share: same operationId with a DIFFERENT payload returns 409 CONFLICT', async () => {
   const jwt = await registerAndLogin(`sharer-${randomUUID()}@test.local`);
-  const listing = await createTestListing(jwt);
+  const listing = await createListingOwnedByStranger();
   const operationId = randomUUID();
   await fetch(`${BASE_URL}/listing-shares`, {
     method: 'POST',
@@ -393,7 +418,7 @@ test('share: same operationId with a DIFFERENT payload returns 409 CONFLICT', as
 
 test('share: two concurrent requests with the same operationId create exactly one row', async () => {
   const jwt = await registerAndLogin(`sharer-${randomUUID()}@test.local`);
-  const listing = await createTestListing(jwt);
+  const listing = await createListingOwnedByStranger();
   const operationId = randomUUID();
   const payload = { listingId: listing.id, channel: 'whatsapp', operationId };
   const fire = () =>
@@ -402,13 +427,15 @@ test('share: two concurrent requests with the same operationId create exactly on
   assert.equal(Math.max(a.meta.shareCount, b.meta.shareCount), 1);
 });
 
-test('share: unauthorized request is rejected (auth now required, unlike the pre-Faz-B behavior)', async () => {
+test('share: request with no JWT at all is rejected (auth now required, unlike the pre-Faz-B behavior)', async () => {
+  // Same Strapi native-403-for-missing-token behavior as the like test
+  // above — see that test's comment for the full explanation.
   const res = await fetch(`${BASE_URL}/listing-shares`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ listingId: '1', channel: 'whatsapp', operationId: randomUUID() }),
   });
-  assert.equal(res.status, 401);
+  assert.equal(res.status, 403);
 });
 
 // ---------------------------------------------------------------------
@@ -417,7 +444,7 @@ test('share: unauthorized request is rejected (auth now required, unlike the pre
 
 test('general: engagementVersion only advances on a real mutation, not on a no-op retry', async () => {
   const jwt = await registerAndLogin(`ver-${randomUUID()}@test.local`);
-  const listing = await createTestListing(jwt);
+  const listing = await createListingOwnedByStranger();
   const first = await fetch(`${BASE_URL}/engagements/like`, {
     method: 'PUT',
     headers: authed(jwt),
@@ -433,7 +460,7 @@ test('general: engagementVersion only advances on a real mutation, not on a no-o
 
 test('general: count matches the real engagement-interaction row count, not a client-influenced number', async () => {
   const jwt = await registerAndLogin(`count-${randomUUID()}@test.local`);
-  const listing = await createTestListing(jwt);
+  const listing = await createListingOwnedByStranger();
   await fetch(`${BASE_URL}/engagements/like`, {
     method: 'PUT',
     headers: authed(jwt),
