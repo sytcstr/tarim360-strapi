@@ -328,8 +328,53 @@ export default {
     return toggleProfileList(ctx, 'questionId', 'liked', 'likedFarmerQuestionIds', []);
   },
 
+  /**
+   * Faz D5-B (legacy delegation): same pattern as toggleLogisticsLoadLike —
+   * the real mutation is now setMembership (engagement_interactions +
+   * atomic likeCount increment), not a profile-setting-only list write.
+   * Unlike logistics-load, processed-product never had a dedicated
+   * /metrics/like route or a JSON actor-list mirror — its only pre-D5-B
+   * "counter" mechanism was the Flutter client computing likeCount/
+   * favoriteCount/viewCount locally and PATCHing them via the generic
+   * core update route (see processed-product.ts's stripEngagementFields),
+   * which never actually updated this content-type's real counters in a
+   * race-safe way. This route is the one dedicated legacy entry point
+   * that could still be called by an old client.
+   */
   async toggleProcessedProductLike(ctx: any) {
-    return toggleProfileList(ctx, 'productId', 'liked', 'likedProductIds', []);
+    const identity = readIdentity(ctx);
+    if (!identity) return ctx.unauthorized('Kimlik dogrulanamadi.');
+    const body = dataBody(ctx);
+    const productId = asString(body.productId);
+    if (!productId) return ctx.badRequest('productId zorunlu.');
+    const enabled = asBool(body.liked, true);
+
+    const actorKey = requireAuthenticatedActorKey(ctx);
+    if (!actorKey) return ctx.unauthorized('Kimlik dogrulanamadi.');
+
+    const result = await setMembership(strapi, actorKey, 'processed-product', productId, 'like', enabled);
+    if (!result.found) return ctx.notFound('Islenmis urun bulunamadi.');
+
+    let values: string[] = [];
+    if (result.changed) {
+      const current = await profileSettingForIdentity(strapi, identity);
+      const base = toggleListValue(current.likedProductIds, productId, result.active);
+      const next = await updateProfileSetting(strapi, identity, {
+        likedProductIds: base.next,
+        likedProductIdsUpdatedAt: new Date().toISOString(),
+      });
+      values = (next?.likedProductIds as string[]) ?? base.next;
+    }
+
+    ctx.body = {
+      data: {
+        ok: true,
+        id: productId,
+        enabled: result.active,
+        profileId: identity.ownerId,
+        values,
+      },
+    };
   },
 
   async syncProfileShowcasePins(ctx: any) {

@@ -11,6 +11,7 @@
     "develop": "strapi develop",
     "start": "strapi start",
     "seed:agri-reference": "node scripts/seed-agri-reference-data.js",
+    "recount:processed-product-engagement": "node --import tsx scripts/recount-processed-product-engagement.ts",
     "strapi": "strapi",
     "test:unit": "node --import tsx --test tests/unit/**/*.test.ts",
     "test:integration": "node --import tsx --test tests/integration/**/*.test.ts",
