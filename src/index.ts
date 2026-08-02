@@ -303,6 +303,13 @@ const authenticatedActions: string[] = [
   'api::logistics-load.logistics-load.update',
   'api::logistics-load.logistics-load.delete',
   'api::logistics-load.logistics-load.nearby',
+  // Faz D4-B: same pre-existing gap as the /engagements/* actions above —
+  // these custom metric routes use auth:{scope:[]} (JWT + permission
+  // required), but were never granted to the authenticated role anywhere
+  // in code, confirmed via a real boot while writing D4-B's integration
+  // tests (every call 403'd even with a valid JWT on a fresh instance).
+  'api::logistics-load.logistics-load.metricLike',
+  'api::logistics-load.logistics-load.metricFavorite',
   'api::logistics-vehicle.logistics-vehicle.create',
   'api::logistics-vehicle.logistics-vehicle.find',
   'api::logistics-vehicle.logistics-vehicle.findOne',

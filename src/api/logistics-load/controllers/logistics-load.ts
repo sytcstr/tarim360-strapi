@@ -1,5 +1,7 @@
 ﻿import { factories } from '@strapi/strapi';
 import { registerView } from '../../engagement/services/engagement-view-service';
+import { setMembership, MembershipResult } from '../../engagement/services/engagement-v1';
+import { requireAuthenticatedActorKey } from '../../../utils/engagement-contract';
 
 const UID = 'api::logistics-load.logistics-load';
 
@@ -126,23 +128,64 @@ const actorList = (value: unknown): string[] => {
   return [];
 };
 
-// Shared actor-set toggle for like/favorite so any caller (this controller's
-// own /metrics route, or the generic engagement route) converges on the same
-// likedActorKeys/favoriteActorKeys fields instead of drifting independently.
+/**
+ * Faz D4-B: like/favorite for logistics-load now has a single kanonik
+ * mutation core — setMembership (engagement_interactions +
+ * incrementCounterAtomic on likeCount/favoriteCount + engagementVersion),
+ * the SAME core the new PUT/DELETE /engagements/like|favorite routes use.
+ * This function no longer computes likeCount/favoriteCount from actor-set
+ * SIZE (the old, race-prone mechanism — two callers could both read a
+ * stale array and both write count+1, losing an update). It:
+ *   1) calls setMembership for the real, atomic, race-safe mutation;
+ *   2) if the membership state actually changed, best-effort mirrors the
+ *      actor into/out of the legacy likedActorKeys/favoriteActorKeys JSON
+ *      array — informational only (no reader of this array was found
+ *      anywhere in this repo, backend or Flutter — kept only in case some
+ *      external/admin-panel consumer looks at it), NEVER used again to
+ *      derive the count.
+ * Both callers of this function (this controller's own /metrics route,
+ * and the legacy /logistics-load-likes/toggle route in
+ * ../../engagement/controllers/engagement.ts) now converge on the exact
+ * same source of truth — no more independent, potentially-racing counter
+ * writes for the same user action.
+ */
 export const applyLoadActorMetric = async (
   strapi: any,
   load: any,
-  actor: string,
+  actorKey: string,
   metric: 'like' | 'favorite',
   active: boolean,
-) => {
-  const field = metric === 'like' ? 'likedActorKeys' : 'favoriteActorKeys';
-  const countField = metric === 'like' ? 'likeCount' : 'favoriteCount';
-  const actors = new Set(actorList(load[field]));
-  if (active) actors.add(actor);
-  else actors.delete(actor);
-  const patch = { [field]: [...actors], [countField]: actors.size };
-  return strapi.entityService.update(UID as any, load.id as any, { data: patch } as any);
+): Promise<{ load: any; result: MembershipResult }> => {
+  const result = await setMembership(strapi, actorKey, 'logistics-load', String(load.id), metric, active);
+
+  if (result.found && result.changed) {
+    const field = metric === 'like' ? 'likedActorKeys' : 'favoriteActorKeys';
+    try {
+      const fresh = await strapi.entityService.findOne(UID as any, load.id as any, {
+        fields: [field],
+      } as any);
+      const actors = new Set(actorList(fresh?.[field]));
+      if (result.active) actors.add(actorKey);
+      else actors.delete(actorKey);
+      await strapi.entityService.update(UID as any, load.id as any, {
+        data: { [field]: [...actors] } as any,
+      });
+    } catch (e) {
+      // Best-effort only — the real interaction row + atomic counter
+      // update already succeeded via setMembership above; a failure here
+      // must never be reported as a failed like/favorite.
+      strapi.log.warn(
+        `[logistics-load] legacy actor-list mirror failed for load ${load.id}: ${
+          (e as Error)?.message ?? e
+        }`,
+      );
+    }
+  }
+
+  const refreshed = result.found
+    ? await strapi.entityService.findOne(UID as any, load.id as any)
+    : load;
+  return { load: refreshed, result };
 };
 
 const metricBody = (load: any) => ({
@@ -176,10 +219,10 @@ const createMetricUpdater = (strapi: any, metric: 'view' | 'like' | 'favorite') 
 
   const user = ctx.state.user;
   if (!user) return ctx.unauthorized('Bu islem icin giris gerekli.');
-  const actor = actorKeyFor(user);
-  if (!actor) return ctx.forbidden('Kullanici kimligi okunamadi.');
+  const actorKey = requireAuthenticatedActorKey(ctx);
+  if (!actorKey) return ctx.unauthorized('Bu islem icin giris gerekli.');
   const active = data.active !== false;
-  const updated = await applyLoadActorMetric(strapi, load, actor, metric as 'like' | 'favorite', active);
+  const { load: updated } = await applyLoadActorMetric(strapi, load, actorKey, metric as 'like' | 'favorite', active);
   ctx.body = { data: metricBody(updated) };
 };
 

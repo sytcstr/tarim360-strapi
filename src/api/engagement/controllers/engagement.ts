@@ -1,6 +1,5 @@
 import { readIdentity } from '../../../utils/identity';
 import {
-  actorKeyFor as logisticsActorKeyFor,
   applyLoadActorMetric,
   resolveLoad as resolveLogisticsLoad,
 } from '../../logistics-load/controllers/logistics-load';
@@ -275,22 +274,54 @@ export default {
     return delegateListingMembershipToggle(ctx, 'listingId', 'liked', 'like');
   },
 
+  /**
+   * Faz D4-B (legacy delegation): this route's real mutation is now the
+   * same setMembership-backed applyLoadActorMetric core the new
+   * POST /logistics-loads/:id/metrics/like route uses (see
+   * logistics-load.ts) — never an independent counter write. The
+   * profile-setting likedLogisticsLoadIds list is kept for backward
+   * compatibility (old clients may still read it), but it is updated
+   * strictly from the server's own result (result.active/result.changed),
+   * never from the client's requested `liked` value — so a stale/duplicate
+   * client request can never desync it from the real interaction state.
+   */
   async toggleLogisticsLoadLike(ctx: any) {
-    return toggleProfileList(
-      ctx,
-      'loadId',
-      'liked',
-      'likedLogisticsLoadIds',
-      [],
-      undefined,
-      async (innerCtx, loadId, enabled) => {
-        const actor = logisticsActorKeyFor(innerCtx.state.user);
-        if (!actor) return;
-        const load = await resolveLogisticsLoad(strapi, loadId);
-        if (!load) return;
-        await applyLoadActorMetric(strapi, load, actor, 'like', enabled);
+    const identity = readIdentity(ctx);
+    if (!identity) return ctx.unauthorized('Kimlik dogrulanamadi.');
+    const body = dataBody(ctx);
+    const loadId = asString(body.loadId);
+    if (!loadId) return ctx.badRequest('loadId zorunlu.');
+    const enabled = asBool(body.liked, true);
+
+    const actorKey = requireAuthenticatedActorKey(ctx);
+    if (!actorKey) return ctx.unauthorized('Kimlik dogrulanamadi.');
+
+    const load = await resolveLogisticsLoad(strapi, loadId);
+    if (!load) return ctx.notFound('Lojistik yuk bulunamadi.');
+
+    const { result } = await applyLoadActorMetric(strapi, load, actorKey, 'like', enabled);
+    if (!result.found) return ctx.notFound('Lojistik yuk bulunamadi.');
+
+    let values: string[] = [];
+    if (result.changed) {
+      const current = await profileSettingForIdentity(strapi, identity);
+      const base = toggleListValue(current.likedLogisticsLoadIds, loadId, result.active);
+      const next = await updateProfileSetting(strapi, identity, {
+        likedLogisticsLoadIds: base.next,
+        likedLogisticsLoadIdsUpdatedAt: new Date().toISOString(),
+      });
+      values = (next?.likedLogisticsLoadIds as string[]) ?? base.next;
+    }
+
+    ctx.body = {
+      data: {
+        ok: true,
+        id: loadId,
+        enabled: result.active,
+        profileId: identity.ownerId,
+        values,
       },
-    );
+    };
   },
 
   async toggleFarmerQuestionLike(ctx: any) {
