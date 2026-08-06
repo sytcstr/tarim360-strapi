@@ -260,6 +260,11 @@ const authenticatedActions: string[] = [
   // route level already bypasses this in practice, same as postView —
   // added for the same "don't rely on that staying true" reason).
   'api::engagement.engagement-profile.getViewTarget',
+  // PUB-PROFILE-B: same defensive-bootstrap reasoning, for the new
+  // narrow public profile read (auth:false already bypasses this in
+  // practice — added for the same "don't rely on that staying true"
+  // reason).
+  'api::public-profile.public-profile.getPublicProfile',
   // Legacy engagement toggle endpoints — same gap, pre-existing (not
   // introduced by Faz B), fixed here for the same reason.
   'api::engagement.engagement.toggleListingFavorite',
