@@ -324,8 +324,56 @@ export default {
     };
   },
 
+  /**
+   * Faz D7-B (legacy delegation): same pattern as toggleLogisticsLoadLike/
+   * toggleProcessedProductLike — the real mutation is now setMembership,
+   * not a profile-setting-only list write. Farmer Questions have NO
+   * dedicated content-type of their own: they are rows in
+   * api::hub-content.hub-content with kind='farmerQuestion'
+   * (FarmerQuestionsRepo.toQuestionPayload, Flutter) — the exact same
+   * collection/UID Faz D6 already wired to targetType='hub-content'. A
+   * separate 'farmer-question' targetType was deliberately NOT created:
+   * it would let the identical physical row be liked through two
+   * independent engagement_interactions namespaces while both drove the
+   * same `likes` column — a structural double-count risk. This route
+   * therefore delegates to targetType='hub-content', the same target
+   * Knowledge Hub content already uses; `kind` is irrelevant at the
+   * engagement layer, it only matters for Flutter's own UI filtering.
+   */
   async toggleFarmerQuestionLike(ctx: any) {
-    return toggleProfileList(ctx, 'questionId', 'liked', 'likedFarmerQuestionIds', []);
+    const identity = readIdentity(ctx);
+    if (!identity) return ctx.unauthorized('Kimlik dogrulanamadi.');
+    const body = dataBody(ctx);
+    const questionId = asString(body.questionId);
+    if (!questionId) return ctx.badRequest('questionId zorunlu.');
+    const enabled = asBool(body.liked, true);
+
+    const actorKey = requireAuthenticatedActorKey(ctx);
+    if (!actorKey) return ctx.unauthorized('Kimlik dogrulanamadi.');
+
+    const result = await setMembership(strapi, actorKey, 'hub-content', questionId, 'like', enabled);
+    if (!result.found) return ctx.notFound('Soru bulunamadi.');
+
+    let values: string[] = [];
+    if (result.changed) {
+      const current = await profileSettingForIdentity(strapi, identity);
+      const base = toggleListValue(current.likedFarmerQuestionIds, questionId, result.active);
+      const next = await updateProfileSetting(strapi, identity, {
+        likedFarmerQuestionIds: base.next,
+        likedFarmerQuestionIdsUpdatedAt: new Date().toISOString(),
+      });
+      values = (next?.likedFarmerQuestionIds as string[]) ?? base.next;
+    }
+
+    ctx.body = {
+      data: {
+        ok: true,
+        id: questionId,
+        enabled: result.active,
+        profileId: identity.ownerId,
+        values,
+      },
+    };
   },
 
   /**
