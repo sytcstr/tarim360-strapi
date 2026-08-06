@@ -255,6 +255,11 @@ const authenticatedActions: string[] = [
   'api::engagement.engagement-v1.putFavorite',
   'api::engagement.engagement-v1.deleteFavorite',
   'api::engagement.engagement-v1.postView',
+  // Faz D8-V-B: same defensive-bootstrap reasoning as the block above,
+  // for the new narrow profile-view-target lookup (auth:false at the
+  // route level already bypasses this in practice, same as postView —
+  // added for the same "don't rely on that staying true" reason).
+  'api::engagement.engagement-profile.getViewTarget',
   // Legacy engagement toggle endpoints — same gap, pre-existing (not
   // introduced by Faz B), fixed here for the same reason.
   'api::engagement.engagement.toggleListingFavorite',
