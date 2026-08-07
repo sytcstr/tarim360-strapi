@@ -77,11 +77,20 @@ interface DomainSupport {
  * Domain x engagement-type support matrix (ENGAGEMENT_API_CONTRACT.md §4.6).
  * Comment/share are listed for completeness but only "listing" has a real
  * implementation in this phase (hub-content comment migration is deferred).
+ *
+ * logistics-vehicle.favorite: added post-D-final production-blocker fix --
+ * the Flutter client was toggling vehicle favorites via the generic
+ * `listing-favorites/toggle` route, treating a vehicle id as if it were a
+ * listing id (a real cross-domain id-collision risk, see
+ * FAVORITES_LOCAL_MIRROR_AND_LOGISTICS_LOAD_D4F_REPORT.md for the same
+ * class of bug already fixed for logistics-load). `like` stays unsupported
+ * for this domain -- there has never been a like UI for vehicles, only
+ * favorite and view.
  */
 export const DOMAIN_SUPPORT: Record<EngagementTargetType, DomainSupport> = {
   listing: { like: true, favorite: true, view: true, comment: true, share: true },
   'logistics-load': { like: true, favorite: true, view: true, comment: false, share: false },
-  'logistics-vehicle': { like: false, favorite: false, view: true, comment: false, share: false },
+  'logistics-vehicle': { like: false, favorite: true, view: true, comment: false, share: false },
   'processed-product': { like: true, favorite: true, view: true, comment: false, share: false },
   ad: { like: true, favorite: false, view: true, comment: false, share: false },
   'hub-content': { like: true, favorite: false, view: false, comment: false, share: false },
@@ -92,6 +101,7 @@ export const DOMAIN_SUPPORT: Record<EngagementTargetType, DomainSupport> = {
 export const COUNTER_FIELD: Partial<Record<EngagementTargetType, Record<EngagementMembershipKind, string>>> = {
   listing: { like: 'likeCount', favorite: 'favoriteCount' },
   'logistics-load': { like: 'likeCount', favorite: 'favoriteCount' },
+  'logistics-vehicle': { like: 'likeCount', favorite: 'favoriteCount' },
   'processed-product': { like: 'likeCount', favorite: 'favoriteCount' },
   ad: { like: 'likes', favorite: 'favoriteCount' },
   'hub-content': { like: 'likes', favorite: 'favoriteCount' },

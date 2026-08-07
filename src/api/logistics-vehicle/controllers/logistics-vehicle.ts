@@ -41,6 +41,26 @@ const asData = (ctx: any): Record<string, any> => {
   return body.data && typeof body.data === 'object' ? body.data : body;
 };
 
+/**
+ * Production-blocker fix (post D-final): logistics-vehicle now supports
+ * `favorite` in the engagement contract (engagement-contract.ts), so
+ * `favoriteCount`/`viewCount`/`likeCount`/`engagementVersion` must never
+ * be settable through this create/update action -- engagement_interactions
+ * (via setMembership/registerView) is the only real source of truth for
+ * these counters now. Mirrors the same stripEngagementFields pattern
+ * already applied to hub-content (D6-B) and processed-product (D5-B).
+ * `likeCount` is stripped defensively even though `like` is not a
+ * supported kind for this domain (no such UI exists) -- consistent with
+ * COUNTER_FIELD's own complete like+favorite entry for this target.
+ */
+const ENGAGEMENT_ONLY_FIELDS = ['favoriteCount', 'viewCount', 'likeCount', 'engagementVersion'];
+
+const stripEngagementFields = (data: Record<string, any>): Record<string, any> => {
+  const next = { ...data };
+  for (const field of ENGAGEMENT_ONLY_FIELDS) delete next[field];
+  return next;
+};
+
 const stripPrefixes = (raw: unknown): string[] => {
   const id = String(raw || '').trim();
   const out = new Set<string>([id]);
@@ -136,7 +156,7 @@ const distanceKm = (lat1: number, lng1: number, lat2: number, lng2: number): num
 
 export default factories.createCoreController(VEHICLE_UID as any, ({ strapi }) => ({
   async create(ctx) {
-    const data = { ...asData(ctx) };
+    const data = stripEngagementFields({ ...asData(ctx) });
     data.vehicleNo = normalizePublicNo(data.vehicleNo);
     if (!data.vehicleNo) {
       data.vehicleNo = await generatePublicNo(strapi, VEHICLE_UID, 'vehicleNo');
@@ -156,7 +176,7 @@ export default factories.createCoreController(VEHICLE_UID as any, ({ strapi }) =
         'Bu arac ilanini sadece sahibi veya admin guncelleyebilir.',
       );
     }
-    const data = { ...asData(ctx) };
+    const data = stripEngagementFields({ ...asData(ctx) });
     delete data.transporterKey;
     const updated = await strapi.entityService.update(
       VEHICLE_UID as any,
