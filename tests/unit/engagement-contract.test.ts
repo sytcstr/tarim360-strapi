@@ -34,7 +34,7 @@ test('DOMAIN_SUPPORT matrix matches ENGAGEMENT_API_CONTRACT.md §4.6', () => {
   assert.equal(DOMAIN_SUPPORT.listing.share, true);
 
   assert.equal(DOMAIN_SUPPORT['logistics-vehicle'].like, false);
-  assert.equal(DOMAIN_SUPPORT['logistics-vehicle'].favorite, false);
+  assert.equal(DOMAIN_SUPPORT['logistics-vehicle'].favorite, true);
   assert.equal(DOMAIN_SUPPORT['logistics-vehicle'].view, true);
 
   assert.equal(DOMAIN_SUPPORT.ad.favorite, false);

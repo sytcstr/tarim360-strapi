@@ -232,12 +232,16 @@ test('like: request with no JWT at all is rejected before reaching our controlle
   assert.equal(res.status, 403);
 });
 
-test('favorite: unsupported domain (logistics-vehicle) returns ENGAGEMENT_NOT_SUPPORTED, not a silent success', async () => {
+test('favorite: unsupported domain (hub-content) returns ENGAGEMENT_NOT_SUPPORTED, not a silent success', async () => {
+  // logistics-vehicle used to be the example here; it now supports
+  // favorite (post-D-final production-blocker fix, see
+  // logistics-vehicle-favorite.integration.test.ts) so it is no longer a
+  // valid "unsupported" example. hub-content still has favorite:false.
   const jwt = await registerAndLogin(`liker-${randomUUID()}@test.local`);
   const res = await fetch(`${BASE_URL}/engagements/favorite`, {
     method: 'PUT',
     headers: authed(jwt),
-    body: JSON.stringify({ targetType: 'logistics-vehicle', targetId: '1' }),
+    body: JSON.stringify({ targetType: 'hub-content', targetId: '1' }),
   });
   const body = await res.json();
   assert.equal(res.status, 400);
