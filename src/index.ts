@@ -7,6 +7,7 @@ import {
   ownerIdFromCleanupEmail,
 } from './utils/account-cleanup';
 import { runOfferIdDedupeOnce } from './utils/offer-id-dedupe';
+import { hasUniqueIndex } from './utils/engagement-index-support';
 
 /**
  * Faz B-V: reliable, idempotent composite-unique-index creation for the
@@ -21,15 +22,20 @@ import { runOfferIdDedupeOnce } from './utils/offer-id-dedupe';
  * brand-new content-type's table is guaranteed to not exist yet the
  * first time a migration shipped in the same deploy would run. This
  * function has no such problem: by the time it runs, the table always
- * exists. It is idempotent (checks PRAGMA index_list first) and safe to
- * run on every single boot. Unlike the migration files
+ * exists. It is idempotent (checks index existence via
+ * `hasUniqueIndex`/`dialect.schemaInspector` first — dialect-portable,
+ * see src/utils/engagement-index-support.ts; a prior version used a
+ * hand-written SQLite-only PRAGMA query here, which crashed Strapi
+ * Cloud's boot on production's non-SQLite dialect — see
+ * ENGAGEMENT_INDEX_PORTABILITY_PRODUCTION_FIX_REPORT.md) and safe to run
+ * on every single boot. Unlike the migration files
  * (database/migrations/*add-engagement-*-unique-index.ts, kept as a
  * secondary/redundant safety net now that their own export-shape bug is
  * fixed), a genuine failure here is NOT swallowed — it rethrows, so a
  * broken index creation fails the boot loudly instead of silently
  * leaving the engagement system without its concurrency guarantee.
  */
-const ENGAGEMENT_UNIQUE_INDEXES: Array<{ table: string; name: string; columns: string[] }> = [
+export const ENGAGEMENT_UNIQUE_INDEXES: Array<{ table: string; name: string; columns: string[] }> = [
   {
     table: 'engagement_interactions',
     name: 'engagement_interactions_actor_target_kind_unique',
@@ -42,7 +48,7 @@ const ENGAGEMENT_UNIQUE_INDEXES: Array<{ table: string; name: string; columns: s
   },
 ];
 
-const ensureEngagementUniqueIndexes = async (strapi: Core.Strapi) => {
+export const ensureEngagementUniqueIndexes = async (strapi: Core.Strapi) => {
   const knex = (strapi.db as any).connection;
   for (const { table, name, columns } of ENGAGEMENT_UNIQUE_INDEXES) {
     try {
@@ -52,8 +58,7 @@ const ensureEngagementUniqueIndexes = async (strapi: Core.Strapi) => {
         // more fundamental is wrong — surface it, don't hide it.
         throw new Error(`Table "${table}" does not exist after schema sync.`);
       }
-      const existing: Array<{ name: string }> = await knex.raw(`PRAGMA index_list(${table})`);
-      if (Array.isArray(existing) && existing.some((i) => i.name === name)) {
+      if (await hasUniqueIndex(strapi.db as any, table, name)) {
         strapi.log.info(`[engagement bootstrap] ${name} already present on ${table}.`);
         continue;
       }
