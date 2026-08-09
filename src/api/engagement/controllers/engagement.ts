@@ -1,4 +1,10 @@
 import { readIdentity } from '../../../utils/identity';
+import {
+  applyLoadActorMetric,
+  resolveLoad as resolveLogisticsLoad,
+} from '../../logistics-load/controllers/logistics-load';
+import { requireAuthenticatedActorKey } from '../../../utils/engagement-contract';
+import { setMembership } from '../services/engagement-v1';
 
 const PROFILE_SETTING_UID = 'api::profile-setting.profile-setting';
 const LISTING_UID = 'api::listing.listing';
@@ -143,6 +149,7 @@ const toggleProfileList = async (
   stateField: string,
   aliases: string[],
   counter?: { field: 'favoriteCount' | 'likeCount'; listingIdField: string },
+  onChanged?: (ctx: any, id: string, enabled: boolean) => Promise<void>,
 ) => {
   const identity = readIdentity(ctx);
   if (!identity) return ctx.unauthorized('Kimlik dogrulanamadi.');
@@ -170,6 +177,9 @@ const toggleProfileList = async (
       enabled ? 1 : -1,
     );
   }
+  if (onChanged && base.changed) {
+    await onChanged(ctx, id, enabled);
+  }
 
   ctx.body = {
     data: {
@@ -182,16 +192,56 @@ const toggleProfileList = async (
   };
 };
 
+/**
+ * Aşama 10 (legacy delegation): routes this old endpoint into the new
+ * engagement-interaction-backed core (setMembership) instead of the
+ * profile-setting-JSON-list mechanism above, so a like/favorite
+ * performed via this legacy route and the new PUT/DELETE
+ * /engagements/like|favorite route are the SAME action against the SAME
+ * source of truth — never two independent counters drifting apart or
+ * double-incrementing. Response shape is kept backward-compatible
+ * (`{data:{ok,id,enabled,profileId,values}}`) even though the current
+ * Flutter client's _postJsonBestEffort only checks the HTTP status code
+ * and never actually parses these fields (confirmed while auditing
+ * strapi_service.dart) — kept anyway in case another consumer does.
+ * `values` is intentionally empty: this route no longer maintains
+ * profile-setting's likedListingIds/favoriteListingIds list itself —
+ * Flutter's FavoritesStore already keeps that list in sync via its own
+ * independent upsertProfileSettings call, so nothing regresses.
+ */
+const delegateListingMembershipToggle = async (
+  ctx: any,
+  idField: string,
+  payloadField: string,
+  kind: 'like' | 'favorite',
+) => {
+  const identity = readIdentity(ctx);
+  if (!identity) return ctx.unauthorized('Kimlik dogrulanamadi.');
+  const body = dataBody(ctx);
+  const id = asString(body[idField]);
+  if (!id) return ctx.badRequest(`${idField} zorunlu.`);
+  const enabled = asBool(body[payloadField], true);
+
+  const actorKey = requireAuthenticatedActorKey(ctx);
+  if (!actorKey) return ctx.unauthorized('Kimlik dogrulanamadi.');
+
+  const result = await setMembership(strapi, actorKey, 'listing', id, kind, enabled);
+  if (!result.found) return ctx.notFound('listing bulunamadi.');
+
+  ctx.body = {
+    data: {
+      ok: true,
+      id,
+      enabled: result.active,
+      profileId: identity.ownerId,
+      values: [],
+    },
+  };
+};
+
 export default {
   async toggleListingFavorite(ctx: any) {
-    return toggleProfileList(
-      ctx,
-      'listingId',
-      'favorite',
-      'favoriteListingIds',
-      ['favoritesListingIds'],
-      { field: 'favoriteCount', listingIdField: 'listingId' },
-    );
+    return delegateListingMembershipToggle(ctx, 'listingId', 'favorite', 'favorite');
   },
 
   async toggleProfileFavorite(ctx: any) {
@@ -221,22 +271,158 @@ export default {
   },
 
   async toggleListingLike(ctx: any) {
-    return toggleProfileList(ctx, 'listingId', 'liked', 'likedListingIds', [], {
-      field: 'likeCount',
-      listingIdField: 'listingId',
-    });
+    return delegateListingMembershipToggle(ctx, 'listingId', 'liked', 'like');
   },
 
+  /**
+   * Faz D4-B (legacy delegation): this route's real mutation is now the
+   * same setMembership-backed applyLoadActorMetric core the new
+   * POST /logistics-loads/:id/metrics/like route uses (see
+   * logistics-load.ts) — never an independent counter write. The
+   * profile-setting likedLogisticsLoadIds list is kept for backward
+   * compatibility (old clients may still read it), but it is updated
+   * strictly from the server's own result (result.active/result.changed),
+   * never from the client's requested `liked` value — so a stale/duplicate
+   * client request can never desync it from the real interaction state.
+   */
   async toggleLogisticsLoadLike(ctx: any) {
-    return toggleProfileList(ctx, 'loadId', 'liked', 'likedLogisticsLoadIds', []);
+    const identity = readIdentity(ctx);
+    if (!identity) return ctx.unauthorized('Kimlik dogrulanamadi.');
+    const body = dataBody(ctx);
+    const loadId = asString(body.loadId);
+    if (!loadId) return ctx.badRequest('loadId zorunlu.');
+    const enabled = asBool(body.liked, true);
+
+    const actorKey = requireAuthenticatedActorKey(ctx);
+    if (!actorKey) return ctx.unauthorized('Kimlik dogrulanamadi.');
+
+    const load = await resolveLogisticsLoad(strapi, loadId);
+    if (!load) return ctx.notFound('Lojistik yuk bulunamadi.');
+
+    const { result } = await applyLoadActorMetric(strapi, load, actorKey, 'like', enabled);
+    if (!result.found) return ctx.notFound('Lojistik yuk bulunamadi.');
+
+    let values: string[] = [];
+    if (result.changed) {
+      const current = await profileSettingForIdentity(strapi, identity);
+      const base = toggleListValue(current.likedLogisticsLoadIds, loadId, result.active);
+      const next = await updateProfileSetting(strapi, identity, {
+        likedLogisticsLoadIds: base.next,
+        likedLogisticsLoadIdsUpdatedAt: new Date().toISOString(),
+      });
+      values = (next?.likedLogisticsLoadIds as string[]) ?? base.next;
+    }
+
+    ctx.body = {
+      data: {
+        ok: true,
+        id: loadId,
+        enabled: result.active,
+        profileId: identity.ownerId,
+        values,
+      },
+    };
   },
 
+  /**
+   * Faz D7-B (legacy delegation): same pattern as toggleLogisticsLoadLike/
+   * toggleProcessedProductLike — the real mutation is now setMembership,
+   * not a profile-setting-only list write. Farmer Questions have NO
+   * dedicated content-type of their own: they are rows in
+   * api::hub-content.hub-content with kind='farmerQuestion'
+   * (FarmerQuestionsRepo.toQuestionPayload, Flutter) — the exact same
+   * collection/UID Faz D6 already wired to targetType='hub-content'. A
+   * separate 'farmer-question' targetType was deliberately NOT created:
+   * it would let the identical physical row be liked through two
+   * independent engagement_interactions namespaces while both drove the
+   * same `likes` column — a structural double-count risk. This route
+   * therefore delegates to targetType='hub-content', the same target
+   * Knowledge Hub content already uses; `kind` is irrelevant at the
+   * engagement layer, it only matters for Flutter's own UI filtering.
+   */
   async toggleFarmerQuestionLike(ctx: any) {
-    return toggleProfileList(ctx, 'questionId', 'liked', 'likedFarmerQuestionIds', []);
+    const identity = readIdentity(ctx);
+    if (!identity) return ctx.unauthorized('Kimlik dogrulanamadi.');
+    const body = dataBody(ctx);
+    const questionId = asString(body.questionId);
+    if (!questionId) return ctx.badRequest('questionId zorunlu.');
+    const enabled = asBool(body.liked, true);
+
+    const actorKey = requireAuthenticatedActorKey(ctx);
+    if (!actorKey) return ctx.unauthorized('Kimlik dogrulanamadi.');
+
+    const result = await setMembership(strapi, actorKey, 'hub-content', questionId, 'like', enabled);
+    if (!result.found) return ctx.notFound('Soru bulunamadi.');
+
+    let values: string[] = [];
+    if (result.changed) {
+      const current = await profileSettingForIdentity(strapi, identity);
+      const base = toggleListValue(current.likedFarmerQuestionIds, questionId, result.active);
+      const next = await updateProfileSetting(strapi, identity, {
+        likedFarmerQuestionIds: base.next,
+        likedFarmerQuestionIdsUpdatedAt: new Date().toISOString(),
+      });
+      values = (next?.likedFarmerQuestionIds as string[]) ?? base.next;
+    }
+
+    ctx.body = {
+      data: {
+        ok: true,
+        id: questionId,
+        enabled: result.active,
+        profileId: identity.ownerId,
+        values,
+      },
+    };
   },
 
+  /**
+   * Faz D5-B (legacy delegation): same pattern as toggleLogisticsLoadLike —
+   * the real mutation is now setMembership (engagement_interactions +
+   * atomic likeCount increment), not a profile-setting-only list write.
+   * Unlike logistics-load, processed-product never had a dedicated
+   * /metrics/like route or a JSON actor-list mirror — its only pre-D5-B
+   * "counter" mechanism was the Flutter client computing likeCount/
+   * favoriteCount/viewCount locally and PATCHing them via the generic
+   * core update route (see processed-product.ts's stripEngagementFields),
+   * which never actually updated this content-type's real counters in a
+   * race-safe way. This route is the one dedicated legacy entry point
+   * that could still be called by an old client.
+   */
   async toggleProcessedProductLike(ctx: any) {
-    return toggleProfileList(ctx, 'productId', 'liked', 'likedProductIds', []);
+    const identity = readIdentity(ctx);
+    if (!identity) return ctx.unauthorized('Kimlik dogrulanamadi.');
+    const body = dataBody(ctx);
+    const productId = asString(body.productId);
+    if (!productId) return ctx.badRequest('productId zorunlu.');
+    const enabled = asBool(body.liked, true);
+
+    const actorKey = requireAuthenticatedActorKey(ctx);
+    if (!actorKey) return ctx.unauthorized('Kimlik dogrulanamadi.');
+
+    const result = await setMembership(strapi, actorKey, 'processed-product', productId, 'like', enabled);
+    if (!result.found) return ctx.notFound('Islenmis urun bulunamadi.');
+
+    let values: string[] = [];
+    if (result.changed) {
+      const current = await profileSettingForIdentity(strapi, identity);
+      const base = toggleListValue(current.likedProductIds, productId, result.active);
+      const next = await updateProfileSetting(strapi, identity, {
+        likedProductIds: base.next,
+        likedProductIdsUpdatedAt: new Date().toISOString(),
+      });
+      values = (next?.likedProductIds as string[]) ?? base.next;
+    }
+
+    ctx.body = {
+      data: {
+        ok: true,
+        id: productId,
+        enabled: result.active,
+        profileId: identity.ownerId,
+        values,
+      },
+    };
   },
 
   async syncProfileShowcasePins(ctx: any) {

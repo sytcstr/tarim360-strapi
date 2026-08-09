@@ -1,0 +1,41 @@
+{
+  "kind": "collectionType",
+  "collectionName": "engagement_interactions",
+  "info": {
+    "singularName": "engagement-interaction",
+    "pluralName": "engagement-interactions",
+    "displayName": "Engagement Interaction"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "actorKey": {
+      "type": "string",
+      "required": true
+    },
+    "targetType": {
+      "type": "enumeration",
+      "enum": [
+        "listing",
+        "logistics-load",
+        "logistics-vehicle",
+        "processed-product",
+        "ad",
+        "hub-content",
+        "profile"
+      ],
+      "required": true
+    },
+    "targetId": {
+      "type": "string",
+      "required": true
+    },
+    "kind": {
+      "type": "enumeration",
+      "enum": ["like", "favorite"],
+      "required": true
+    }
+  }
+}

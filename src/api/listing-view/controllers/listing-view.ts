@@ -1,60 +1,22 @@
 import { factories } from '@strapi/strapi';
+import { registerView } from '../../engagement/services/engagement-view-service';
 
 const UID = 'api::listing-view.listing-view';
-const LISTING_UID = 'api::listing.listing';
 
 const asString = (value: unknown): string => String(value ?? '').trim();
 
-const listingCandidates = (raw: unknown): string[] => {
-  const id = asString(raw);
-  if (!id) return [];
-  const set = new Set<string>([id]);
-  for (const prefix of ['strapi_', 'listing_']) {
-    if (id.startsWith(prefix)) {
-      const trimmed = id.slice(prefix.length).trim();
-      if (trimmed) set.add(trimmed);
-    }
-  }
-  const digit = id.match(/(\d+)/)?.[1];
-  if (digit) set.add(digit);
-  return [...set];
-};
-
-const findListing = async (strapi: any, rawId: unknown) => {
-  for (const id of listingCandidates(rawId)) {
-    const numeric = Number(id);
-    if (Number.isInteger(numeric) && numeric > 0) {
-      try {
-        const row = await strapi.entityService.findOne(LISTING_UID as any, numeric as any, {
-          fields: ['id', 'documentId', 'listingNo', 'viewCount'],
-        });
-        if (row) return row;
-      } catch (_) {
-        // continue
-      }
-    }
-    try {
-      const row = await strapi.db.query(LISTING_UID).findOne({
-        where: { documentId: id },
-      } as any);
-      if (row) return row;
-    } catch (_) {
-      // continue
-    }
-    if (Number.isInteger(numeric) && numeric > 0) {
-      try {
-        const row = await strapi.db.query(LISTING_UID).findOne({
-          where: { listingNo: numeric },
-        } as any);
-        if (row) return row;
-      } catch (_) {
-        // continue
-      }
-    }
-  }
-  return null;
-};
-
+/**
+ * Aşama 10 (legacy delegation): the counter-increment side of this route
+ * now goes through the same engagement-view dedup/atomic-increment core
+ * (registerView) used by POST /engagements/view, instead of its own
+ * unconditional current+1 update. This is the fix for the "no dedup, any
+ * request increments" finding from the earlier backend audit, and it
+ * also means a view recorded via this legacy route and one recorded via
+ * the new route share the SAME 24h-dedup record — no double counting
+ * regardless of which URL a given Flutter build calls. The raw
+ * listing-view event row is still created unchanged, for anything that
+ * still expects an event log.
+ */
 export default factories.createCoreController(UID as any, ({ strapi }) => ({
   async create(ctx) {
     const body = (ctx.request?.body ?? {}) as Record<string, unknown>;
@@ -75,13 +37,17 @@ export default factories.createCoreController(UID as any, ({ strapi }) => ({
     });
 
     try {
-      const listing = await findListing(strapi, listingId);
-      if (listing?.id) {
-        const current = Math.max(0, Number(listing.viewCount ?? 0) || 0);
-        await strapi.entityService.update(LISTING_UID as any, listing.id, {
-          data: { viewCount: current + 1 } as any,
-        });
-      }
+      const email = asString(data.email).toLowerCase();
+      const ownerId = asString(data.ownerId);
+      const jwtEmail = (ctx?.state?.user?.email ?? '').toString().trim().toLowerCase();
+      const actorKey = jwtEmail
+        ? `user:${jwtEmail}`
+        : email
+          ? `user:${email}`
+          : ownerId
+            ? `owner:${ownerId}`
+            : `ip:${ctx.request?.ip ?? ctx.ip ?? 'unknown'}`;
+      await registerView(strapi, actorKey, 'listing', listingId);
     } catch (e) {
       strapi.log.warn(`Listing view counter update failed: ${String(e)}`);
     }

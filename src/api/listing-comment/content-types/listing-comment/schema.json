@@ -1,0 +1,43 @@
+{
+  "kind": "collectionType",
+  "collectionName": "listing_comments",
+  "info": {
+    "singularName": "listing-comment",
+    "pluralName": "listing-comments",
+    "displayName": "Listing Comment"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "listingId": {
+      "type": "string",
+      "required": true
+    },
+    "ownerId": {
+      "type": "string"
+    },
+    "ownerEmail": {
+      "type": "email"
+    },
+    "body": {
+      "type": "text",
+      "required": true
+    },
+    "createdAtClient": {
+      "type": "datetime"
+    },
+    "isDeleted": {
+      "type": "boolean",
+      "default": false
+    },
+    "operationId": {
+      "type": "string",
+      "unique": true
+    },
+    "payloadFingerprint": {
+      "type": "string"
+    }
+  }
+}

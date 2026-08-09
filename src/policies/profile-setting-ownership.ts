@@ -15,15 +15,31 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
   const id = String(ctx.params?.id ?? '').trim();
 
   if (method === 'GET' && !id) {
-    const query = (ctx.query ?? {}) as Record<string, unknown>;
-    const filters = (query.filters ?? {}) as Record<string, unknown>;
-    ctx.query = {
+    // SEC-1 fix: this branch previously only assigned `ctx.query = {...}`.
+    // Confirmed via a real boot (debug instrumentation, not a guess) that
+    // in Strapi's policy execution context `ctx.query` and
+    // `ctx.request.query` are NOT the same delegated property the way
+    // they are on a vanilla Koa context: `ctx.query` here starts out
+    // `undefined` even with a real querystring on the request, and
+    // Strapi's core `find` controller reads the filter from
+    // `ctx.request.query` — which the old code never touched. The result
+    // was that this entire branch was a no-op: whatever `filters` the
+    // client sent was honored exactly as sent, completely unrestricted by
+    // identity. Any authenticated caller could read any other user's full
+    // profile-setting document (phone, bio, favorites, follow lists,
+    // etc.) via GET /profile-settings?filters[profileId][$eq]=<target> --
+    // or, as this fix's own regression coverage proves, via a filter on
+    // ANY field, not just profileId (the client's filters object as a
+    // whole was never constrained). Both `ctx.query` and
+    // `ctx.request.query` are now set so this holds regardless of which
+    // one a given Strapi core action reads from.
+    const query = (ctx.request?.query ?? {}) as Record<string, unknown>;
+    const forced = {
       ...query,
-      filters: {
-        ...filters,
-        profileId: { $eq: identity.ownerId },
-      },
+      filters: { profileId: { $eq: identity.ownerId } },
     };
+    ctx.query = forced;
+    ctx.request.query = forced;
     return true;
   }
 

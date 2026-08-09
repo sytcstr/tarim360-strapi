@@ -8,6 +8,68 @@ import {
 } from './utils/account-cleanup';
 import { runOfferIdDedupeOnce } from './utils/offer-id-dedupe';
 
+/**
+ * Faz B-V: reliable, idempotent composite-unique-index creation for the
+ * Engagement API's interaction/view tables. This runs here — inside
+ * `bootstrap()`, which Strapi's own boot sequence guarantees executes
+ * AFTER `db.schema.sync()` has created/altered every content-type table
+ * for this boot (verified: `@strapi/core`'s `Strapi.js#bootstrap()` calls
+ * `db.schema.sync()` then, at the very end, `runUserLifecycles(BOOTSTRAP)`,
+ * which is what invokes this function) — rather than in
+ * `database/migrations/`, because Strapi runs pending migrations BEFORE
+ * schema sync (`@strapi/database`'s `schema/index.js#sync()`), so a
+ * brand-new content-type's table is guaranteed to not exist yet the
+ * first time a migration shipped in the same deploy would run. This
+ * function has no such problem: by the time it runs, the table always
+ * exists. It is idempotent (checks PRAGMA index_list first) and safe to
+ * run on every single boot. Unlike the migration files
+ * (database/migrations/*add-engagement-*-unique-index.ts, kept as a
+ * secondary/redundant safety net now that their own export-shape bug is
+ * fixed), a genuine failure here is NOT swallowed — it rethrows, so a
+ * broken index creation fails the boot loudly instead of silently
+ * leaving the engagement system without its concurrency guarantee.
+ */
+const ENGAGEMENT_UNIQUE_INDEXES: Array<{ table: string; name: string; columns: string[] }> = [
+  {
+    table: 'engagement_interactions',
+    name: 'engagement_interactions_actor_target_kind_unique',
+    columns: ['actor_key', 'target_type', 'target_id', 'kind'],
+  },
+  {
+    table: 'engagement_views',
+    name: 'engagement_views_actor_target_unique',
+    columns: ['actor_key', 'target_type', 'target_id'],
+  },
+];
+
+const ensureEngagementUniqueIndexes = async (strapi: Core.Strapi) => {
+  const knex = (strapi.db as any).connection;
+  for (const { table, name, columns } of ENGAGEMENT_UNIQUE_INDEXES) {
+    try {
+      const hasTable = await knex.schema.hasTable(table);
+      if (!hasTable) {
+        // Should not happen this late in boot; if it does, something
+        // more fundamental is wrong — surface it, don't hide it.
+        throw new Error(`Table "${table}" does not exist after schema sync.`);
+      }
+      const existing: Array<{ name: string }> = await knex.raw(`PRAGMA index_list(${table})`);
+      if (Array.isArray(existing) && existing.some((i) => i.name === name)) {
+        strapi.log.info(`[engagement bootstrap] ${name} already present on ${table}.`);
+        continue;
+      }
+      await knex.schema.alterTable(table, (t: any) => {
+        t.unique(columns, { indexName: name });
+      });
+      strapi.log.info(`[engagement bootstrap] Created unique index ${name} on ${table}.`);
+    } catch (e) {
+      strapi.log.error(
+        `[engagement bootstrap] FAILED to ensure unique index ${name} on ${table}: ${e}`,
+      );
+      throw e;
+    }
+  }
+};
+
 type PermissionLeaf = {
   enabled: boolean;
   policy?: string;
@@ -181,6 +243,43 @@ const authenticatedActions: string[] = [
   'api::profile-setting.profile-setting.update',
   'api::profile-setting.profile-setting.delete',
 
+  // Engagement API v1 (ENGAGEMENT_API_CONTRACT.md) — confirmed via a real
+  // boot (Faz B-V) that these action IDs were NOT granted to the
+  // authenticated role anywhere in code, causing every /engagements/*
+  // call to 403 on any freshly-provisioned Strapi instance (a real
+  // deploy/dev/production instance may have had these clicked on
+  // manually in the admin panel at some point — out-of-band, not
+  // reproducible — which is exactly the gap this array exists to close).
+  'api::engagement.engagement-v1.putLike',
+  'api::engagement.engagement-v1.deleteLike',
+  'api::engagement.engagement-v1.putFavorite',
+  'api::engagement.engagement-v1.deleteFavorite',
+  'api::engagement.engagement-v1.postView',
+  // Faz D8-V-B: same defensive-bootstrap reasoning as the block above,
+  // for the new narrow profile-view-target lookup (auth:false at the
+  // route level already bypasses this in practice, same as postView —
+  // added for the same "don't rely on that staying true" reason).
+  'api::engagement.engagement-profile.getViewTarget',
+  // PUB-PROFILE-B: same defensive-bootstrap reasoning, for the new
+  // narrow public profile read (auth:false already bypasses this in
+  // practice — added for the same "don't rely on that staying true"
+  // reason).
+  'api::public-profile.public-profile.getPublicProfile',
+  // Legacy engagement toggle endpoints — same gap, pre-existing (not
+  // introduced by Faz B), fixed here for the same reason.
+  'api::engagement.engagement.toggleListingFavorite',
+  'api::engagement.engagement.toggleProfileFavorite',
+  'api::engagement.engagement.toggleListingLike',
+  'api::engagement.engagement.toggleLogisticsLoadLike',
+  'api::engagement.engagement.toggleFarmerQuestionLike',
+  'api::engagement.engagement.toggleProcessedProductLike',
+  'api::engagement.engagement.syncProfileShowcasePins',
+  'api::engagement.engagement.syncOfflineListing',
+  // listing-comment / listing-share (operationId-idempotent endpoints)
+  'api::listing-comment.listing-comment.create',
+  'api::listing-comment.listing-comment.delete',
+  'api::listing-share.listing-share.create',
+
   // AI assistant
   'api::ai.ai.agriAssistant',
   'api::ai.ai.agriVision',
@@ -214,6 +313,13 @@ const authenticatedActions: string[] = [
   'api::logistics-load.logistics-load.update',
   'api::logistics-load.logistics-load.delete',
   'api::logistics-load.logistics-load.nearby',
+  // Faz D4-B: same pre-existing gap as the /engagements/* actions above —
+  // these custom metric routes use auth:{scope:[]} (JWT + permission
+  // required), but were never granted to the authenticated role anywhere
+  // in code, confirmed via a real boot while writing D4-B's integration
+  // tests (every call 403'd even with a valid JWT on a fresh instance).
+  'api::logistics-load.logistics-load.metricLike',
+  'api::logistics-load.logistics-load.metricFavorite',
   'api::logistics-vehicle.logistics-vehicle.create',
   'api::logistics-vehicle.logistics-vehicle.find',
   'api::logistics-vehicle.logistics-vehicle.findOne',
@@ -670,6 +776,7 @@ export default {
   register() {},
 
   async bootstrap({ strapi }: { strapi: Core.Strapi }) {
+    await ensureEngagementUniqueIndexes(strapi);
     registerUserDeleteCleanupLifecycle(strapi);
     await syncUsersPermissionsRoleConfig(strapi);
     const cleanupEnabled =

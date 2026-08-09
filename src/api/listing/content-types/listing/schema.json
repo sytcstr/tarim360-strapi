@@ -128,6 +128,22 @@
       "type": "integer",
       "default": 0
     },
+    "offerCount": {
+      "type": "integer",
+      "default": 0
+    },
+    "commentCount": {
+      "type": "integer",
+      "default": 0
+    },
+    "shareCount": {
+      "type": "integer",
+      "default": 0
+    },
+    "engagementVersion": {
+      "type": "integer",
+      "default": 0
+    },
     "createdAtClient": {
       "type": "datetime"
     },

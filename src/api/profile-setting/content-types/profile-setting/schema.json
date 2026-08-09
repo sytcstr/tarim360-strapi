@@ -277,6 +277,14 @@
                                     },
                        "lastSeenAt":  {
                                           "type":  "datetime"
-                                      }
+                                      },
+                       "viewCount":  {
+                                         "type":  "integer",
+                                         "default":  0
+                                     },
+                       "engagementVersion":  {
+                                                 "type":  "integer",
+                                                 "default":  0
+                                             }
                    }
 }

@@ -78,6 +78,10 @@
       "relation": "manyToOne",
       "target": "api::hub-category.hub-category",
       "inversedBy": "contents"
+    },
+    "engagementVersion": {
+      "type": "integer",
+      "default": 0
     }
   }
 }

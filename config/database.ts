@@ -57,6 +57,17 @@ const config = ({ env }: Core.Config.Shared.ConfigParams): Core.Config.Database 
       ...connections[client],
       acquireConnectionTimeout: env.int('DATABASE_CONNECTION_TIMEOUT', 60000),
     },
+    settings: {
+      // Verified via a real boot against a throwaway SQLite DB (Faz B-V):
+      // without this flag, Strapi resolves `database/migrations` against
+      // the project root (TS source, no .js files there) instead of the
+      // compiled `dist/database/migrations`, so every .ts migration file
+      // in this project was silently invisible — `strapi_migrations`
+      // stayed empty with no error at all. See
+      // node_modules/@strapi/core/dist/Strapi.js:211-213
+      // (tsMigrationsEnabled / projectDir resolution).
+      useTypescriptMigrations: true,
+    },
   };
 };
 

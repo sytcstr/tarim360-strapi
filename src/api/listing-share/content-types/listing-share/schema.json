@@ -1,0 +1,44 @@
+{
+  "kind": "collectionType",
+  "collectionName": "listing_shares",
+  "info": {
+    "singularName": "listing-share",
+    "pluralName": "listing-shares",
+    "displayName": "Listing Share"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "listingId": {
+      "type": "string",
+      "required": true
+    },
+    "ownerId": {
+      "type": "string"
+    },
+    "ownerEmail": {
+      "type": "email"
+    },
+    "channel": {
+      "type": "string"
+    },
+    "sharedAt": {
+      "type": "datetime"
+    },
+    "createdAtClient": {
+      "type": "datetime"
+    },
+    "metadata": {
+      "type": "json"
+    },
+    "operationId": {
+      "type": "string",
+      "unique": true
+    },
+    "payloadFingerprint": {
+      "type": "string"
+    }
+  }
+}
