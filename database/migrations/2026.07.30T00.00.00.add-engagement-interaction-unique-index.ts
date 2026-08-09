@@ -38,13 +38,25 @@ import type { Database } from '@strapi/database';
  * idempotent — that is now the primary mechanism. This migration file is
  * kept as a secondary, standards-shaped `database/migrations` entry
  * that will also succeed correctly on any second-or-later boot.
+ *
+ * PRODUCTION FIX: the existence check below used to run a hand-written
+ * `knex.raw('PRAGMA index_list(...)')`, which is SQLite-only syntax and
+ * crashed on production's non-SQLite dialect (see
+ * ENGAGEMENT_INDEX_PORTABILITY_PRODUCTION_FIX_REPORT.md). Now uses `db`'s
+ * own dialect-portable schema inspector instead — no hand-written SQL,
+ * so this can never run the wrong dialect's query. Not sharing
+ * src/utils/engagement-index-support.ts's identical helper here
+ * deliberately: migrations resolve from TS source outside the normal
+ * src/ build graph (see the useTypescriptMigrations note in
+ * config/database.ts), so this file stays self-contained rather than
+ * relying on an unverified cross-boundary import.
  */
 
 const TABLE = 'engagement_interactions';
 const INDEX_NAME = 'engagement_interactions_actor_target_kind_unique';
 const COLUMNS = ['actor_key', 'target_type', 'target_id', 'kind'];
 
-export async function up(knex: Knex, _db: Database) {
+export async function up(knex: Knex, db: Database) {
   const hasTable = await knex.schema.hasTable(TABLE);
   if (!hasTable) {
     strapi?.log?.warn?.(
@@ -59,8 +71,8 @@ export async function up(knex: Knex, _db: Database) {
     );
     return;
   }
-  const existingIndexes: Array<{ name: string }> = await knex.raw(`PRAGMA index_list(${TABLE})`);
-  if (Array.isArray(existingIndexes) && existingIndexes.some((i) => i.name === INDEX_NAME)) {
+  const existingIndexes = await (db as any).dialect.schemaInspector.getIndexes(TABLE);
+  if (Array.isArray(existingIndexes) && existingIndexes.some((i: { name?: string }) => i.name === INDEX_NAME)) {
     return; // already present
   }
   await knex.schema.alterTable(TABLE, (table) => {

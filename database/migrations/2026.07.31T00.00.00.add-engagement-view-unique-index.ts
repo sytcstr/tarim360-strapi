@@ -14,13 +14,18 @@ import type { Database } from '@strapi/database';
  * mechanism for a fresh install is now `ensureEngagementUniqueIndexes`
  * in src/index.ts's `bootstrap({strapi})` hook; this migration is a
  * secondary safety net.
+ *
+ * PRODUCTION FIX: same SQLite-only PRAGMA bug and same dialect-portable
+ * fix as that file too (see
+ * ENGAGEMENT_INDEX_PORTABILITY_PRODUCTION_FIX_REPORT.md) — uses `db`'s
+ * dialect schema inspector instead of hand-written PRAGMA SQL.
  */
 
 const TABLE = 'engagement_views';
 const INDEX_NAME = 'engagement_views_actor_target_unique';
 const COLUMNS = ['actor_key', 'target_type', 'target_id'];
 
-export async function up(knex: Knex, _db: Database) {
+export async function up(knex: Knex, db: Database) {
   const hasTable = await knex.schema.hasTable(TABLE);
   if (!hasTable) {
     strapi?.log?.warn?.(
@@ -35,8 +40,8 @@ export async function up(knex: Knex, _db: Database) {
     );
     return;
   }
-  const existingIndexes: Array<{ name: string }> = await knex.raw(`PRAGMA index_list(${TABLE})`);
-  if (Array.isArray(existingIndexes) && existingIndexes.some((i) => i.name === INDEX_NAME)) {
+  const existingIndexes = await (db as any).dialect.schemaInspector.getIndexes(TABLE);
+  if (Array.isArray(existingIndexes) && existingIndexes.some((i: { name?: string }) => i.name === INDEX_NAME)) {
     return;
   }
   await knex.schema.alterTable(TABLE, (table) => {
