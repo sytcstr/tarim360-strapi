@@ -44,6 +44,18 @@ const AD_UID = 'api::ad.ad';
  * distinct, narrower question from "moderation state" that is out of
  * this item's named scope; flagged in
  * SEMANTIC_CONTRACT_S2_HIGH_FIX_REPORT.md as a follow-up, not fixed here.
+ *
+ * The original audit's own description of 2.11 names a SECOND mechanism
+ * beyond client-side spoofing: approvalStatus/isApproved/approved have no
+ * schema default, so a freshly-created ad's fields stay null -- and
+ * approved_ads_repo.dart's own fallback check (`approvedBool != false`,
+ * i.e. `null != false` -> true) treats an unmoderated ad as approved
+ * whenever that fallback path is hit. Stripping client input on create
+ * does not fix this by itself (stripped fields simply stay null, same as
+ * before). Fixed by stamping an explicit, safe "not yet reviewed" default
+ * on every create, matching this codebase's own established convention
+ * for missing moderation state (see audit 2.10's logistics
+ * moderationStatus default:"pending").
  */
 const CLIENT_PROTECTED_FIELDS = [
   'approvalStatus',
@@ -75,7 +87,15 @@ export default factories.createCoreController(AD_UID as any, () => ({
   async create(ctx: any) {
     const body = (ctx.request?.body ?? {}) as Record<string, any>;
     const input = (body.data && typeof body.data === 'object' ? body.data : body) as Record<string, any>;
-    ctx.request.body = { data: stripClientProtectedFields(input) };
+    ctx.request.body = {
+      data: {
+        ...stripClientProtectedFields(input),
+        approvalStatus: 'pending',
+        reviewStatus: 'pending',
+        isApproved: false,
+        approved: false,
+      },
+    };
     return super.create(ctx);
   },
 

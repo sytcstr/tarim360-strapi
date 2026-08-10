@@ -101,16 +101,33 @@ test('create: spoofed approval/moderation/engagement fields are ignored, server 
     engagementVersion: 999,
     isPremiumOwner: true,
   });
-  assert.notEqual(body.data.approvalStatus, 'approved');
-  assert.notEqual(body.data.reviewStatus, 'approved');
-  assert.notEqual(body.data.isApproved, true);
-  assert.notEqual(body.data.approved, true);
+  assert.equal(body.data.approvalStatus, 'pending');
+  assert.equal(body.data.reviewStatus, 'pending');
+  assert.equal(body.data.isApproved, false);
+  assert.equal(body.data.approved, false);
   assert.notEqual(body.data.likes, 999);
   assert.notEqual(body.data.impressions, 999);
   assert.notEqual(body.data.likeCount, 999);
   assert.notEqual(body.data.favoriteCount, 999);
   assert.notEqual(body.data.viewCount, 999);
   assert.notEqual(body.data.isPremiumOwner, true);
+});
+
+test('create: a normal ad with no spoofing attempt still starts explicitly unapproved, not null (audit 2.11\'s original missing-default mechanism)', async () => {
+  // approvalStatus/isApproved/approved have no schema default, so before
+  // this fix a plain, honest create left them null -- and
+  // approved_ads_repo.dart's own fallback check (`approvedBool != false`,
+  // i.e. `null != false` -> true) would treat that unmoderated ad as
+  // already approved. This is the original audit's exact framing, distinct
+  // from the spoofing test above.
+  const jwt = await registerAndLogin(`ad-create-normal-default-${randomUUID()}@test.local`);
+  const body = await createAd(jwt);
+  assert.equal(body.data.approvalStatus, 'pending');
+  assert.equal(body.data.reviewStatus, 'pending');
+  assert.equal(body.data.isApproved, false);
+  assert.equal(body.data.approved, false);
+  assert.notEqual(body.data.isApproved, null);
+  assert.notEqual(body.data.approved, null);
 });
 
 test('update: a normal owner cannot self-approve their own ad (approvalStatus/isApproved/reviewStatus/approved all stripped)', async () => {
