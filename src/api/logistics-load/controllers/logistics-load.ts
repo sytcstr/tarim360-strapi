@@ -2,6 +2,7 @@
 import { registerView } from '../../engagement/services/engagement-view-service';
 import { setMembership, MembershipResult } from '../../engagement/services/engagement-v1';
 import { requireAuthenticatedActorKey } from '../../../utils/engagement-contract';
+import { readIdentity, matchesOwnerKey } from '../../../utils/identity';
 
 const UID = 'api::logistics-load.logistics-load';
 
@@ -99,11 +100,33 @@ const isAdmin = (user: any): boolean => {
   return value === 'admin' || value === 'super-admin' || value === 'administrator' || value.includes('admin');
 };
 
+/**
+ * SEMANTIC_CONTRACT_S1: `ownerKey` is set once at creation directly from
+ * whatever the client sends (see sanitizeCreateData -- never computed
+ * server-side), and Flutter's own `_currentLogisticsActorKey()`
+ * (logistics_models.dart) always produces `id:u_<normalized-email>`. The
+ * canonical check below (matchesOwnerKey against readIdentity's
+ * email-derived ownerId) recognizes that format directly -- this is the
+ * SAME comparison logistics-offer.ts's transporter-ownership check
+ * already used successfully. The remaining branches are legacy-only
+ * fallbacks (a real Strapi numeric user.id-based scheme this function
+ * used before this fix, which Flutter never actually sends but which a
+ * pre-existing row or an out-of-band write could still carry) -- kept
+ * read-only so no currently-working access is revoked. See
+ * SEMANTIC_CONTRACT_S1_CRITICAL_FIX_REPORT.md.
+ */
 const canOwnLoad = (user: any, load: any): boolean => {
   if (!user || !load) return false;
   if (isAdmin(user)) return true;
-  const actor = actorKeyFor(user);
   const loadOwner = String(load.ownerKey || '').trim();
+  if (!loadOwner) return false;
+
+  if (matchesOwnerKey(loadOwner, readIdentity({ state: { user } }))) {
+    return true;
+  }
+
+  // Legacy fallback only -- never written by current code.
+  const actor = actorKeyFor(user);
   const userId = String(user.id || '').trim();
   const profileId = String(
     user.profileId || user.ownerProfileId || '',

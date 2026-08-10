@@ -186,6 +186,32 @@ export const readIdentity = (ctx: any): SessionIdentity | null => {
   return { email, ownerId };
 };
 
+/**
+ * SEMANTIC_CONTRACT_S1: the one canonical way to check whether a stored
+ * `type:value` owner/actor key (e.g. logistics-load's `ownerKey`,
+ * logistics-vehicle's `transporterKey`, offer's `transporterKey`) belongs
+ * to the given session identity. Strips a leading `id:`/`email:`/
+ * `profile:`/`username:` prefix and compares the remainder against the
+ * identity's email-derived ownerId or raw email -- the exact scheme
+ * Flutter's own actor-key builders (`_currentLogisticsActorKey`,
+ * `ownerIdFromEmail`) always produce. This is the same comparison
+ * `logistics-offer.ts`'s own `matchesTransporter` already used
+ * successfully; logistics-load/vehicle's ownership checks previously
+ * implemented a DIFFERENT, real-numeric-Strapi-user-id-based scheme here
+ * that Flutter never actually sends, making owner update/delete always
+ * fail. See SEMANTIC_CONTRACT_S1_CRITICAL_FIX_REPORT.md.
+ */
+export const matchesOwnerKey = (
+  rawKey: unknown,
+  identity: SessionIdentity | null,
+): boolean => {
+  if (!identity) return false;
+  const raw = String(rawKey ?? '').trim().toLowerCase();
+  if (!raw) return false;
+  const normalized = raw.replace(/^(id:|email:|profile:|username:)/, '');
+  return normalized === identity.ownerId.toLowerCase() || normalized === identity.email;
+};
+
 export const denyNoIdentity = (ctx: any): false => {
   if (typeof ctx?.unauthorized === 'function') {
     ctx.unauthorized('Kimlik dogrulanamadi.');

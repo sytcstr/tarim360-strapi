@@ -12,7 +12,7 @@ const findAd = async (strapi: any, rawId: unknown) => {
   if (Number.isInteger(numeric) && numeric > 0) {
     try {
       const row = await strapi.entityService.findOne(AD_UID as any, numeric as any, {
-        fields: ['id', 'documentId', 'impressions', 'showCount', 'displayCount', 'viewCount'],
+        fields: ['id', 'documentId', 'showCount', 'displayCount', 'viewCount'],
       });
       if (row) return row;
     } catch (_) {
@@ -35,28 +35,49 @@ export default factories.createCoreController(UID as any, ({ strapi }) => ({
     >;
     const adId = asString(data.adId);
     if (!adId) return ctx.badRequest('adId zorunlu.');
+    const eventType = asString(data.eventType) || 'impression';
     const entity = await strapi.entityService.create(UID as any, {
       data: {
         ...data,
         adId,
-        eventType: asString(data.eventType) || 'impression',
+        eventType,
         createdAtClient: asString(data.createdAtClient) || new Date().toISOString(),
       },
     });
 
-    try {
-      const ad = await findAd(strapi, adId);
-      if (ad?.id) {
-        const impressions = Math.max(0, Number(ad.impressions ?? 0) || 0) + 1;
-        const showCount = Math.max(0, Number(ad.showCount ?? 0) || 0) + 1;
-        const displayCount = Math.max(0, Number(ad.displayCount ?? 0) || 0) + 1;
-        const viewCount = Math.max(0, Number(ad.viewCount ?? 0) || 0) + 1;
-        await strapi.entityService.update(AD_UID as any, ad.id, {
-          data: { impressions, showCount, displayCount, viewCount } as any,
-        });
+    /**
+     * SEMANTIC_CONTRACT_S2 (audit 2.7): `impressions` is now exclusively
+     * owned by Engagement v1's registerView (engagement-contract.ts's
+     * VIEW_COUNT_FIELD.ad = 'impressions', 24h actor-dedup) -- this handler
+     * used to bump it unconditionally on every ad-event regardless of
+     * eventType. The only eventType any live Flutter caller actually sends
+     * here is 'click' (ApprovedAdsStore.trackClick, deliberately kept
+     * outside the engagement contract per main.dart's own comment at the
+     * registerView/trackClick call site) -- meaning every real call to this
+     * endpoint was double-counting one ad-detail-page open as two
+     * impressions, AND counting a click itself as an impression. `likes`
+     * is engagement-v1-owned too (COUNTER_FIELD.ad.like = 'likes') and was
+     * never touched here, so no change needed for that field.
+     *
+     * Fix: never touch `impressions` here (Engagement v1's registerView is
+     * the single authority). Only bump the legacy show/display/view
+     * counters, and only for a genuine impression-shaped event -- a click
+     * must not inflate any impression-labeled counter either.
+     */
+    if (eventType === 'impression') {
+      try {
+        const ad = await findAd(strapi, adId);
+        if (ad?.id) {
+          const showCount = Math.max(0, Number(ad.showCount ?? 0) || 0) + 1;
+          const displayCount = Math.max(0, Number(ad.displayCount ?? 0) || 0) + 1;
+          const viewCount = Math.max(0, Number(ad.viewCount ?? 0) || 0) + 1;
+          await strapi.entityService.update(AD_UID as any, ad.id, {
+            data: { showCount, displayCount, viewCount } as any,
+          });
+        }
+      } catch (e) {
+        strapi.log.warn(`Ad event counter update failed: ${String(e)}`);
       }
-    } catch (e) {
-      strapi.log.warn(`Ad event counter update failed: ${String(e)}`);
     }
 
     ctx.body = { data: entity };

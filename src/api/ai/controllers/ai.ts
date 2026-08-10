@@ -1,5 +1,6 @@
 import { readIdentity } from '../../../utils/identity';
 import { generateAgriAiReply } from '../../../utils/agri-ai';
+import { isPremiumActiveFromProfile } from '../../../utils/premium-sync';
 
 const AI_LOG_UID = 'api::ai-log.ai-log';
 const PROFILE_SETTING_UID = 'api::profile-setting.profile-setting';
@@ -31,14 +32,6 @@ const asBool = (value: unknown, fallback = false): boolean => {
   return fallback;
 };
 
-const parseIso = (value: unknown): Date | null => {
-  const raw = asString(value);
-  if (!raw) return null;
-  const time = Date.parse(raw);
-  if (Number.isNaN(time)) return null;
-  return new Date(time);
-};
-
 const dayStartIso = () => {
   const now = new Date();
   return new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
@@ -62,6 +55,15 @@ const asStringList = (value: unknown): string[] =>
     ? value.map((row) => asString(row)).filter((row) => row.length > 0)
     : [];
 
+/**
+ * SEMANTIC_CONTRACT_S1: activation itself (missing endsAt = active/
+ * unlimited, matching premium-sync.ts's own canonical rule) now delegates
+ * to isPremiumActiveFromProfile instead of a separate, disagreeing local
+ * reimplementation (the old version returned false for a missing endsAt,
+ * denying AI access to exactly the members the canonical rule considers
+ * active). `hasAiAssistant` stays a separate, AI-specific plan-tier gate
+ * on top. See SEMANTIC_CONTRACT_S1_CRITICAL_FIX_REPORT.md.
+ */
 const hasActiveAiAccess = (row: Record<string, unknown> | null): boolean => {
   if (!row) return false;
   const premium =
@@ -70,9 +72,7 @@ const hasActiveAiAccess = (row: Record<string, unknown> | null): boolean => {
       null) as Record<string, unknown> | null) ?? null;
   if (!premium) return false;
   if (!asBool(premium.hasAiAssistant, false)) return false;
-  const endsAt = parseIso(premium.endsAt);
-  if (!endsAt) return false;
-  return endsAt.getTime() > Date.now();
+  return isPremiumActiveFromProfile(row);
 };
 
 const ensureAiAccess = async (ctx: any) => {

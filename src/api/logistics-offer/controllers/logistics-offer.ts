@@ -1,5 +1,5 @@
 import { factories } from '@strapi/strapi';
-import { readIdentity } from '../../../utils/identity';
+import { readIdentity, matchesOwnerKey } from '../../../utils/identity';
 
 const OFFER_UID = 'api::logistics-offer.logistics-offer';
 const LOAD_UID = 'api::logistics-load.logistics-load';
@@ -20,16 +20,6 @@ const findByOfferId = async (strapi: any, offerId: string) =>
   strapi.db.query(OFFER_UID).findOne({
     where: { offerId },
   } as any);
-
-const matchesTransporter = (
-  entity: Record<string, unknown>,
-  email: string,
-  ownerId: string,
-): boolean => {
-  const raw = asString(entity.transporterKey).toLowerCase();
-  const normalized = raw.replace(/^(id:|email:|username:)/, '').trim();
-  return normalized === ownerId.toLowerCase() || normalized === email;
-};
 
 const findEntityById = async (strapi: any, uid: string, rawId: string) => {
   const id = asString(rawId);
@@ -79,13 +69,7 @@ export default factories.createCoreController(
       const respondWithExisting = async (
         entity: Record<string, unknown>,
       ) => {
-        if (
-          !matchesTransporter(
-            entity,
-            identity.email,
-            identity.ownerId,
-          )
-        ) {
+        if (!matchesOwnerKey(entity.transporterKey, identity)) {
           return ctx.conflict('Bu offerId baska bir teklifte kullaniliyor.');
         }
         const sanitized = await this.sanitizeOutput(entity, ctx);
