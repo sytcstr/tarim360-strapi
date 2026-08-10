@@ -1,4 +1,5 @@
 ﻿import { factories } from '@strapi/strapi';
+import { readIdentity, matchesOwnerKey } from '../../../utils/identity';
 
 const VEHICLE_UID = 'api::logistics-vehicle.logistics-vehicle';
 
@@ -119,11 +120,33 @@ const isAdmin = (user: any): boolean => {
   );
 };
 
+/**
+ * SEMANTIC_CONTRACT_S1: `transporterKey` is set once at creation directly
+ * from whatever the client sends (never computed server-side), and
+ * Flutter's own `_currentLogisticsActorKey()` (logistics_models.dart)
+ * always produces `id:u_<normalized-email>`. The canonical check below
+ * (matchesOwnerKey against readIdentity's email-derived ownerId)
+ * recognizes that format directly -- this is the SAME comparison
+ * logistics-offer.ts's transporter-ownership check already used
+ * successfully. The remaining branches are legacy-only fallbacks (a real
+ * Strapi numeric user.id-based scheme this function used before this
+ * fix, which Flutter never actually sends but which a pre-existing row
+ * or an out-of-band write could still carry) -- kept read-only so no
+ * currently-working access is revoked. See
+ * SEMANTIC_CONTRACT_S1_CRITICAL_FIX_REPORT.md.
+ */
 const canOwnVehicle = (user: any, vehicle: any): boolean => {
   if (!user || !vehicle) return false;
   if (isAdmin(user)) return true;
-  const actor = actorKeyFor(user);
   const owner = String(vehicle.transporterKey || '').trim();
+  if (!owner) return false;
+
+  if (matchesOwnerKey(owner, readIdentity({ state: { user } }))) {
+    return true;
+  }
+
+  // Legacy fallback only -- never written by current code.
+  const actor = actorKeyFor(user);
   const userId = String(user.id || '').trim();
   const profileId = String(
     user.profileId || user.ownerProfileId || '',
