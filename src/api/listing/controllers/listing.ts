@@ -4,41 +4,25 @@
 
 import { factories } from '@strapi/strapi';
 import { normalizeEmail, ownerIdFromEmail, readIdentity } from '../../../utils/identity';
+import { isPremiumActiveFromProfile } from '../../../utils/premium-sync';
 
 const LISTING_UID = 'api::listing.listing';
 const PROFILE_UID = 'api::profile-setting.profile-setting';
 
 const clean = (value: unknown): string => String(value ?? '').trim();
 
-const parseObject = (value: unknown): Record<string, unknown> | null => {
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    return value as Record<string, unknown>;
-  }
-  if (typeof value !== 'string' || !value.trim()) return null;
-  try {
-    const parsed = JSON.parse(value);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : null;
-  } catch (_) {
-    return null;
-  }
-};
-
+/**
+ * SEMANTIC_CONTRACT_S1: delegates entirely to premium-sync.ts's canonical
+ * rule (missing endsAt = active/unlimited) instead of a separate, stricter
+ * local reimplementation (the old version returned false for a missing
+ * endsAt, stamping isPremium:false on a brand-new listing for exactly the
+ * members the canonical rule -- and premium-sync.ts's own resync of this
+ * member's EXISTING listings -- consider active). See
+ * SEMANTIC_CONTRACT_S1_CRITICAL_FIX_REPORT.md.
+ */
 const hasActivePremiumExpiry = (
   profile: Record<string, unknown> | null,
-): boolean => {
-  if (!profile) return false;
-  const premium = parseObject(
-    profile.activePremium ?? profile.activePremiumSubscription,
-  );
-  if (!premium) return false;
-
-  const raw = clean(premium.endsAt ?? premium.endDate ?? premium.expiresAt);
-  if (!raw) return false;
-  const endsAt = new Date(raw);
-  return !Number.isNaN(endsAt.getTime()) && endsAt.getTime() > Date.now();
-};
+): boolean => isPremiumActiveFromProfile(profile);
 
 const findProfileForIdentity = async (
   strapi: any,

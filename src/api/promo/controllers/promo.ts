@@ -1,6 +1,7 @@
 import { PREMIUM_PRODUCTS, asString, parseIso } from '../../purchase/lib/catalog';
 import { normalizeEmail, readIdentity } from '../../../utils/identity';
 import { normalizePromoCode } from '../../../utils/promo';
+import { isPremiumActiveFromProfile } from '../../../utils/premium-sync';
 
 const PROMO_CODE_UID = 'api::promo-code.promo-code';
 const PROMO_REDEMPTION_UID = 'api::promo-redemption.promo-redemption';
@@ -54,10 +55,15 @@ const buildSubscriptionPayload = (input: {
   const now = new Date();
   const current = input.currentPremium ?? null;
   const currentEndsAt = parseIso(current?.endsAt);
+  // SEMANTIC_CONTRACT_S1: delegates to premium-sync.ts's canonical rule
+  // (missing endsAt = active/unlimited) instead of a separate, stricter
+  // local check (the old version treated a missing endsAt as NOT active,
+  // which would let a promo-code redemption silently REPLACE an
+  // unlimited/admin-granted premium with a fresh, time-limited one
+  // instead of extending it). See
+  // SEMANTIC_CONTRACT_S1_CRITICAL_FIX_REPORT.md.
   const hasActiveCurrent =
-    current != null &&
-    currentEndsAt != null &&
-    currentEndsAt.getTime() > now.getTime();
+    current != null && isPremiumActiveFromProfile({ activePremium: current });
 
   if (hasActiveCurrent && !input.allowWhenPremiumActive) {
     throw new Error(
@@ -97,9 +103,15 @@ const buildSubscriptionPayload = (input: {
       : (asString(current?.planTitle) || spec.planTitle),
     priceTl: currentPrice > spec.priceTl ? currentPrice : spec.priceTl,
     startedAt: asString(current?.startedAt) || now.toISOString(),
-    endsAt: new Date(
-      currentEndsAt!.getTime() + spec.durationDays * 24 * 60 * 60 * 1000,
-    ).toISOString(),
+    // currentEndsAt can now be null here (hasActiveCurrent is true for a
+    // missing endsAt too, per the canonical rule above) -- an unlimited
+    // grant stays unlimited rather than being narrowed to a fixed date;
+    // there is no well-defined "extend infinity by N days".
+    endsAt: currentEndsAt
+      ? new Date(
+          currentEndsAt.getTime() + spec.durationDays * 24 * 60 * 60 * 1000,
+        ).toISOString()
+      : null,
     autoRenew: false,
     smartAdIncludedTotal:
       asInt(current?.smartAdIncludedTotal) + spec.smartAdIncludedTotal,

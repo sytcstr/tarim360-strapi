@@ -1,4 +1,6 @@
-﻿const LOGISTICS_MODULES = new Set(['logistics', 'lojistik', 'nakliye', 'nakliyat']);
+﻿import { isPremiumActiveFromProfile } from '../utils/premium-sync';
+
+const LOGISTICS_MODULES = new Set(['logistics', 'lojistik', 'nakliye', 'nakliyat']);
 
 const toList = (value: unknown): unknown[] => {
   if (!value) return [];
@@ -35,23 +37,16 @@ const isLogisticsModuleDisabled = (profile: any): boolean => {
   return disabledModules.some((item) => LOGISTICS_MODULES.has(normalizeModule(item)));
 };
 
-const premiumEndsAt = (premium: any): Date | null => {
-  if (!premium || typeof premium !== 'object') return null;
-  const raw = premium.endsAt || premium.endDate || premium.expiresAt;
-  if (!raw) return null;
-  const date = new Date(raw);
-  return Number.isNaN(date.getTime()) ? null : date;
-};
-
-const hasActivePremium = (profile: any): boolean => {
-  const direct = profile?.activePremiumSubscription || profile?.activePremium;
-  if (direct && typeof direct === 'object') {
-    const endsAt = premiumEndsAt(direct);
-    if (endsAt) return endsAt.getTime() > Date.now();
-    if (direct.active === true || direct.isActive === true) return true;
-  }
-  return false;
-};
+/**
+ * SEMANTIC_CONTRACT_S1: delegates entirely to premium-sync.ts's canonical
+ * rule (missing endsAt = active/unlimited) instead of a separate, stricter
+ * local reimplementation (the old version returned false for a missing
+ * endsAt, denying the Logistics module to exactly the members the
+ * canonical rule considers active). See
+ * SEMANTIC_CONTRACT_S1_CRITICAL_FIX_REPORT.md.
+ */
+const hasActivePremium = (profile: any): boolean =>
+  isPremiumActiveFromProfile(profile);
 
 const findProfileForUser = async (strapi: any, user: any) => {
   const email = String(user?.email || '').trim().toLowerCase();
@@ -68,19 +63,50 @@ const findProfileForUser = async (strapi: any, user: any) => {
   return Array.isArray(rows) ? rows[0] : rows;
 };
 
+/**
+ * SEMANTIC_CONTRACT_S1: `policyContext.unauthorized`/`.forbidden` are not
+ * guaranteed to exist at the policy layer in this Strapi version -- the
+ * same reason src/utils/identity.ts's denyNoIdentity/denyForbidden exist
+ * (calling them directly crashed with a 500 "not a function" instead of
+ * ever returning the intended 401/403; only discovered now because no
+ * prior test exercised this policy's rejection path via a real HTTP
+ * request -- existing tests bypass it entirely via entityService).
+ */
+const denyPolicy = (ctx: any, status: 401 | 403, message: string): false => {
+  if (status === 401 && typeof ctx?.unauthorized === 'function') {
+    ctx.unauthorized(message);
+  } else if (status === 403 && typeof ctx?.forbidden === 'function') {
+    ctx.forbidden(message);
+  } else if (typeof ctx?.throw === 'function') {
+    ctx.throw(status, message);
+  } else {
+    ctx.status = status;
+    ctx.body = { error: { message } };
+  }
+  return false;
+};
+
 export default async (policyContext: any, _config: any, { strapi }: any) => {
   const user = policyContext.state.user;
   if (!user) {
-    return policyContext.unauthorized('Nakliye ilani acmak icin giris gerekli.');
+    return denyPolicy(policyContext, 401, 'Nakliye ilani acmak icin giris gerekli.');
   }
 
   const profile = await findProfileForUser(strapi, user);
   if (!profile || !hasActivePremium(profile) || !hasLogisticsModule(profile)) {
-    return policyContext.forbidden('Nakliye ilani acmak icin aktif Premium Lojistik modulu gerekir.');
+    return denyPolicy(
+      policyContext,
+      403,
+      'Nakliye ilani acmak icin aktif Premium Lojistik modulu gerekir.',
+    );
   }
 
   if (isLogisticsModuleDisabled(profile)) {
-    return policyContext.forbidden('Nakliye ve Lojistik modulu hesabinda kapali. Modul Yonetimi sayfasindan tekrar acabilirsin.');
+    return denyPolicy(
+      policyContext,
+      403,
+      'Nakliye ve Lojistik modulu hesabinda kapali. Modul Yonetimi sayfasindan tekrar acabilirsin.',
+    );
   }
 
   const body = policyContext.request.body || {};
