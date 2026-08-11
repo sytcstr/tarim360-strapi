@@ -112,9 +112,103 @@ test('response exposes exactly the allowlisted fields -- nothing else', async ()
     new Set([
       'ownerId', 'displayName', 'publicUsername', 'brandName', 'city', 'bio', 'aboutText',
       'logisticsAboutText', 'accountType', 'avatarUrl', 'coverUrl', 'coverFocusY', 'avatarZoom',
-      'showcasePinnedIds', 'showcasePinnedOrder', 'ratingAverage', 'ratingCount',
+      'showcasePinnedIds', 'showcasePinnedOrder', 'ratingAverage', 'ratingCount', 'isPremium',
     ]),
   );
+});
+
+// ---------------------------------------------------------------------
+// BUG-002 fix -- public isPremium boolean (PROFILE_RELEASE_AUDIT.md,
+// PROFILE_BUG002_PUBLIC_PREMIUM_FIX_REPORT.md)
+// ---------------------------------------------------------------------
+
+test('isPremium: no activePremium/activePremiumSubscription payload -> false', async () => {
+  const { profile } = await setupProfile(`pub-premium-none-${randomUUID()}@test.local`);
+  const res = await fetch(`${BASE_URL}/public-profiles/${profile.profileId}`);
+  const body = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(body.profile.isPremium, false);
+});
+
+test('isPremium: activePremium with no endsAt (unlimited grant) -> true', async () => {
+  const { profile } = await setupProfile(`pub-premium-unlimited-${randomUUID()}@test.local`);
+  await strapiInstance.db.query('api::profile-setting.profile-setting').update({
+    where: { profileId: profile.profileId },
+    data: { activePremium: { planTitle: 'Yillik' }, activePremiumSubscription: { planTitle: 'Yillik' } },
+  });
+  const res = await fetch(`${BASE_URL}/public-profiles/${profile.profileId}`);
+  const body = await res.json();
+  assert.equal(body.profile.isPremium, true);
+});
+
+test('isPremium: activePremium.endsAt in the future -> true', async () => {
+  const { profile } = await setupProfile(`pub-premium-future-${randomUUID()}@test.local`);
+  const endsAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  await strapiInstance.db.query('api::profile-setting.profile-setting').update({
+    where: { profileId: profile.profileId },
+    data: { activePremium: { endsAt }, activePremiumSubscription: { endsAt } },
+  });
+  const res = await fetch(`${BASE_URL}/public-profiles/${profile.profileId}`);
+  const body = await res.json();
+  assert.equal(body.profile.isPremium, true);
+});
+
+test('isPremium: activePremium.endsAt in the past -> false', async () => {
+  const { profile } = await setupProfile(`pub-premium-past-${randomUUID()}@test.local`);
+  const endsAt = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  await strapiInstance.db.query('api::profile-setting.profile-setting').update({
+    where: { profileId: profile.profileId },
+    data: { activePremium: { endsAt }, activePremiumSubscription: { endsAt } },
+  });
+  const res = await fetch(`${BASE_URL}/public-profiles/${profile.profileId}`);
+  const body = await res.json();
+  assert.equal(body.profile.isPremium, false);
+});
+
+test('isPremium: computed from a stranger (non-owner) caller identically to a guest caller', async () => {
+  const { profile } = await setupProfile(`pub-premium-stranger-${randomUUID()}@test.local`);
+  await strapiInstance.db.query('api::profile-setting.profile-setting').update({
+    where: { profileId: profile.profileId },
+    data: { activePremium: { planTitle: 'Yillik' }, activePremiumSubscription: { planTitle: 'Yillik' } },
+  });
+  const strangerJwt = await registerAndLogin(`pub-premium-stranger-viewer-${randomUUID()}@test.local`);
+  const res = await fetch(`${BASE_URL}/public-profiles/${profile.profileId}`, { headers: authed(strangerJwt) });
+  const body = await res.json();
+  assert.equal(body.profile.isPremium, true);
+});
+
+test('the raw activePremium/activePremiumSubscription payload never leaks into the response, premium or not', async () => {
+  const { profile } = await setupProfile(`pub-premium-privacy-${randomUUID()}@test.local`);
+  const secretPlanTitle = `secret-plan-${randomUUID()}`;
+  const secretTransactionId = `secret-txn-${randomUUID()}`;
+  await strapiInstance.db.query('api::profile-setting.profile-setting').update({
+    where: { profileId: profile.profileId },
+    data: {
+      activePremium: {
+        planTitle: secretPlanTitle,
+        priceTl: 999,
+        transactionId: secretTransactionId,
+        startsAt: '2026-01-01T00:00:00.000Z',
+        endsAt: null,
+      },
+      activePremiumSubscription: {
+        planTitle: secretPlanTitle,
+        priceTl: 999,
+        transactionId: secretTransactionId,
+      },
+    },
+  });
+  const res = await fetch(`${BASE_URL}/public-profiles/${profile.profileId}`);
+  const raw = await res.text();
+  const body = JSON.parse(raw);
+  assert.equal(body.profile.isPremium, true, 'the boolean itself must still resolve correctly');
+  assert.equal(body.profile.activePremium, undefined, 'activePremium must never be a response key');
+  assert.equal(body.profile.activePremiumSubscription, undefined, 'activePremiumSubscription must never be a response key');
+  assert.ok(!raw.includes(secretPlanTitle), 'planTitle must never leak');
+  assert.ok(!raw.includes('999'), 'price must never leak');
+  assert.ok(!raw.includes(secretTransactionId), 'transactionId must never leak');
+  assert.ok(!raw.includes('startsAt'), 'startsAt must never leak');
+  assert.ok(!raw.includes('activePremium'), 'the field name itself must never appear in the response body');
 });
 
 test('phone, email, and other private fields never leak into the response', async () => {
