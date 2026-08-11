@@ -29,16 +29,28 @@
  * These are personal contact/PII fields; exposing them to any caller
  * who knows/guesses an ownerId is not something this phase reintroduces.
  * Also excluded: activeModules/businessModules/disabledBusinessModules
- * and any premium/purchase field (their availability computation is
- * entangled with activePremium/activePremiumSubscription, which must
- * stay private) -- business-vertical sections on a viewed profile may
- * not reflect the owner's active modules until a dedicated, deliberately
- * public "which modules are active" signal is designed. "Herkese açık
- * ilan sayısı" from the field inventory is also not implemented here: it
- * is not a profile-setting field at all (it would require aggregating
- * other content-types by owner), out of this endpoint's scope.
+ * (their availability computation is entangled with activePremium/
+ * activePremiumSubscription, which must stay private) -- business-
+ * vertical sections on a viewed profile may not reflect the owner's
+ * active modules until a dedicated, deliberately public "which modules
+ * are active" signal is designed. "Herkese açık ilan sayısı" from the
+ * field inventory is also not implemented here: it is not a
+ * profile-setting field at all (it would require aggregating other
+ * content-types by owner), out of this endpoint's scope.
+ *
+ * PROFILE_RELEASE_AUDIT.md / BUG-002: `activePremium`/
+ * `activePremiumSubscription` themselves stay private (selected here
+ * only to feed `isPremiumActiveFromProfile`, never spread into the
+ * response), but the single computed boolean they resolve to -- is this
+ * owner currently premium, yes or no -- is exactly as public as a
+ * "verified" badge and was wrongly withheld entirely. Flutter's own
+ * visitor-view code was reduced to guessing via `accountType ===
+ * 'premium'`, a value nothing in this codebase ever writes. `isPremium`
+ * closes that gap using the exact same canonical rule every other
+ * premium gate in this backend already uses -- no new business rule.
  */
 import { TARGET_UID } from '../../../utils/engagement-contract';
+import { isPremiumActiveFromProfile } from '../../../utils/premium-sync';
 
 const PROFILE_UID = TARGET_UID.profile;
 
@@ -63,6 +75,10 @@ const SELECT_FIELDS = [
   'ratingAverageBase',
   'ratingVotesByViewer',
   'ratingVotes',
+  // Selected ONLY to feed isPremiumActiveFromProfile below -- never
+  // spread into PublicProfileFields / the response body.
+  'activePremium',
+  'activePremiumSubscription',
 ] as const;
 
 export interface PublicProfileFields {
@@ -83,6 +99,7 @@ export interface PublicProfileFields {
   showcasePinnedOrder: string;
   ratingAverage: number;
   ratingCount: number;
+  isPremium: boolean;
 }
 
 export interface PublicProfileResult {
@@ -169,6 +186,7 @@ export const resolvePublicProfile = async (
       showcasePinnedOrder: str(row.showcasePinnedOrder),
       ratingAverage: average,
       ratingCount: count,
+      isPremium: isPremiumActiveFromProfile(row),
     },
   };
 };
