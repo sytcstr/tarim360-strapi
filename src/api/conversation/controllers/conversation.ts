@@ -275,6 +275,27 @@ const normalizeThreadData = (data, user) => {
   };
 };
 
+const updateExistingThread = (strapi, existing, normalized) =>
+  strapi.entityService.update(THREAD_UID, existing.id, {
+    data: {
+      ...normalized,
+      threadId: existing.threadId || normalized.threadId,
+      conversationKey: existing.conversationKey || normalized.conversationKey,
+    },
+  });
+
+/**
+ * MESSAGING M5 (MESSAGING_M1_M3_CORE_FIX_REPORT.md): `thread.conversationKey`
+ * has a real unique DB constraint, but the find-then-create sequence below
+ * has no transaction/lock -- two near-simultaneous first-messages between
+ * the same two users could both pass `findThread`'s "not found" check and
+ * both attempt `create`. The second would previously hit an unhandled
+ * unique-constraint error and surface as a raw 500 for a request that, in
+ * substance, succeeded (the conversation DOES exist, just created by the
+ * other concurrent request). On a create failure, re-run `findThread` and
+ * use the now-existing row instead of propagating the error -- no blind
+ * duplicate create, and a losing race is not a user-visible failure.
+ */
 const upsertThread = async (strapi, data, user) => {
   const normalized = normalizeThreadData(data, user);
   const existing = await findThread(
@@ -284,15 +305,22 @@ const upsertThread = async (strapi, data, user) => {
     normalized.threadId,
   );
   if (existing) {
-    return strapi.entityService.update(THREAD_UID, existing.id, {
-      data: {
-        ...normalized,
-        threadId: existing.threadId || normalized.threadId,
-        conversationKey: existing.conversationKey || normalized.conversationKey,
-      },
-    });
+    return updateExistingThread(strapi, existing, normalized);
   }
-  return strapi.entityService.create(THREAD_UID, { data: normalized });
+  try {
+    return await strapi.entityService.create(THREAD_UID, { data: normalized });
+  } catch (e) {
+    const raced = await findThread(
+      strapi,
+      data,
+      normalized.conversationKey,
+      normalized.threadId,
+    );
+    if (raced) {
+      return updateExistingThread(strapi, raced, normalized);
+    }
+    throw e;
+  }
 };
 
 const userFilter = (user) => {
