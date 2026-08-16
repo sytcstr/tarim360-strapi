@@ -10,6 +10,7 @@ import {
   readIdentity,
   resolveListingOwnerByAnyId,
 } from '../../../utils/identity';
+import { recountListingOffers } from '../../../utils/listing-metrics';
 
 const UID = 'api::offer.offer';
 const createLocks = new Map<string, Promise<void>>();
@@ -163,6 +164,11 @@ export default factories.createCoreController(UID, ({ strapi }) => ({
       const entity = await strapi.entityService.create(UID as any, {
         data: sanitizedInput,
       });
+      try {
+        await recountListingOffers(strapi, data.listingId ?? data.listingNo);
+      } catch (e) {
+        strapi.log.warn(`Offer counter update failed: ${String(e)}`);
+      }
 
       try {
         const notifData: Record<string, unknown> = {
@@ -321,7 +327,13 @@ export default factories.createCoreController(UID, ({ strapi }) => ({
       return ctx.forbidden('Bu teklifi silme yetkiniz yok.');
     }
 
+    const listingId = entity.listingId;
     await strapi.entityService.delete(UID as any, entity.id as any);
+    try {
+      await recountListingOffers(strapi, listingId);
+    } catch (e) {
+      strapi.log.warn(`Offer counter recount failed: ${String(e)}`);
+    }
     ctx.body = {
       data: {
         ok: true,
