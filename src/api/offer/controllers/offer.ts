@@ -117,15 +117,21 @@ export default factories.createCoreController(UID, ({ strapi }) => ({
       const requesterEmail = identity.email;
       const requesterProfileId = identity.ownerId;
 
-      let receiverEmail = normalizeEmail(data.receiverEmail);
-      let receiverProfileId = String(data.receiverProfileId ?? '').trim();
-
-      if (!receiverEmail && listingOwner?.email) {
-        receiverEmail = listingOwner.email;
-      }
-      if (!receiverProfileId && listingOwner?.ownerId) {
-        receiverProfileId = listingOwner.ownerId;
-      }
+      // O1 (OFFER_O1_CORE_FIX_REPORT.md / BUG-OFFER-001): the resolved
+      // listing owner is now always authoritative over client-supplied
+      // receiver fields, not just a fallback used when both are empty.
+      // Previously, a client sending BOTH receiverEmail and
+      // receiverProfileId bypassed listing-owner resolution entirely --
+      // confirmed live: an attacker could create a 201 offer targeting
+      // an arbitrary victim on a listing that didn't even need to exist,
+      // since only the requester identity was ever verified. Client
+      // values are now only a fallback for the case listingOwner
+      // resolution itself fails (unknown/legacy listingId) -- same
+      // "server wins, client is a hint at best" posture as M1's message
+      // sender-identity fix.
+      let receiverEmail = listingOwner?.email || normalizeEmail(data.receiverEmail);
+      let receiverProfileId =
+        listingOwner?.ownerId || String(data.receiverProfileId ?? '').trim();
       if (!receiverProfileId && receiverEmail) {
         receiverProfileId = ownerIdFromEmail(receiverEmail);
       }

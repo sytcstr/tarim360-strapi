@@ -1,4 +1,5 @@
 import {
+  denyForbidden,
   denyNoIdentity,
   loadEntityByRouteId,
   matchesIdentity,
@@ -36,46 +37,43 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
     const requesterEmail = String(data.requesterEmail ?? '').trim().toLowerCase();
     const requesterProfileId = String(data.requesterProfileId ?? '').trim();
     if (requesterEmail && requesterEmail !== identity.email) {
-      ctx.forbidden('Teklif acan kullanici eslesmiyor.');
-      return false;
+      return denyForbidden(ctx, 'Teklif acan kullanici eslesmiyor.');
     }
     if (requesterProfileId && requesterProfileId !== identity.ownerId) {
-      ctx.forbidden('Teklif profil kimligi eslesmiyor.');
-      return false;
+      return denyForbidden(ctx, 'Teklif profil kimligi eslesmiyor.');
     }
 
     data.requesterEmail = identity.email;
     data.requesterProfileId = identity.ownerId;
 
-    let receiverEmail = String(data.receiverEmail ?? '').trim().toLowerCase();
-    let receiverProfileId = String(data.receiverProfileId ?? '').trim();
-
-    if (!receiverEmail || !receiverProfileId) {
-      const owner = await resolveListingOwnerByAnyId(
-        strapi,
-        data.listingId ?? data.listingNo,
-      );
-      if (!receiverEmail && owner?.email) receiverEmail = owner.email;
-      if (!receiverProfileId && owner?.ownerId) {
-        receiverProfileId = owner.ownerId;
-      }
-    }
+    // O1 (OFFER_O1_CORE_FIX_REPORT.md / BUG-OFFER-001): same fix as
+    // offer.ts's create action, kept consistent here since this policy
+    // runs first (on the stock POST /offers route) and independently
+    // re-derives the same fields -- the resolved listing owner always
+    // wins over client-supplied receiver fields now, not just when both
+    // are empty.
+    const owner = await resolveListingOwnerByAnyId(
+      strapi,
+      data.listingId ?? data.listingNo,
+    );
+    let receiverEmail =
+      owner?.email || String(data.receiverEmail ?? '').trim().toLowerCase();
+    let receiverProfileId =
+      owner?.ownerId || String(data.receiverProfileId ?? '').trim();
 
     if (!receiverProfileId && receiverEmail) {
       receiverProfileId = ownerIdFromEmail(receiverEmail);
     }
 
     if (!receiverEmail && !receiverProfileId) {
-      ctx.forbidden('Teklif alicisi bulunamadi. Ilan sahibi bilgisi eksik.');
-      return false;
+      return denyForbidden(ctx, 'Teklif alicisi bulunamadi. Ilan sahibi bilgisi eksik.');
     }
 
     if (
       receiverEmail === identity.email ||
       receiverProfileId === identity.ownerId
     ) {
-      ctx.forbidden('Kendi ilaniniza teklif veremezsiniz.');
-      return false;
+      return denyForbidden(ctx, 'Kendi ilaniniza teklif veremezsiniz.');
     }
 
     data.receiverEmail = receiverEmail;
@@ -89,8 +87,7 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
     const entity = await loadEntityByRouteId(strapi, UID, id, [...EMAIL_FIELDS, ...PROFILE_FIELDS]);
     const allowed = matchesIdentity(entity, identity, EMAIL_FIELDS, PROFILE_FIELDS);
     if (!allowed) {
-      ctx.forbidden('Bu teklif kaydina erisim yetkin yok.');
-      return false;
+      return denyForbidden(ctx, 'Bu teklif kaydina erisim yetkin yok.');
     }
   }
 
