@@ -408,7 +408,6 @@ export default {
 
     const updatedThread = await strapi.entityService.update(THREAD_UID, thread.id, {
       data: {
-        unreadCount: 0,
         lastReadAt: readAt,
         readReceipts: currentReceipts,
       } as any,
@@ -420,8 +419,25 @@ export default {
         limit: 300,
       });
       const list = Array.isArray(messages) ? messages : [];
+      // MESSAGING M2 / BUG-M6 (MESSAGING_RELEASE_FORENSIC_AUDIT.md,
+      // MESSAGING_M2_READ_UNREAD_FIX_REPORT.md): this used to stamp
+      // readAt/readBy on EVERY message in the thread, including the
+      // caller's own outgoing ones -- corrupting the double-tick UI (a
+      // message would look "read" the moment anyone in the thread
+      // called markRead, regardless of who actually read it) and
+      // colliding with unread-count, which also keys off readAt. Only
+      // messages the caller did NOT send, and that are still unread, are
+      // touched -- an already-read message's readAt is left as-is
+      // (repeat markRead calls are then a true no-op at the message
+      // level; only the thread's readReceipts/lastReadAt watermark
+      // above advances on every call, which is expected).
+      const toMark = list.filter(
+        (message: any) =>
+          !isSamePerson(actor.profileId, actor.email, message.senderProfileId, message.senderEmail) &&
+          !message.readAt,
+      );
       await Promise.all(
-        list.map((message: any) => {
+        toMark.map((message: any) => {
           const readBy =
             message.readBy && typeof message.readBy === 'object'
               ? { ...message.readBy }

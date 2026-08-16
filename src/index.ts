@@ -226,6 +226,15 @@ const authenticatedActions: string[] = [
   'api::conversation.conversation.messagesByThread',
   'api::conversation.conversation.upsert',
   'api::conversation.conversation.sendMessage',
+  // MESSAGING M2 (MESSAGING_M2_READ_UNREAD_FIX_REPORT.md): same
+  // pre-existing gap as the logistics-load metric routes above --
+  // markRead uses auth:{scope:[]} but was never granted to the
+  // authenticated role anywhere, so every real PATCH .../read call has
+  // 403'd since this route was added (confirmed live while writing this
+  // phase's integration tests: a valid JWT for a real participant still
+  // got a bare Strapi "Forbidden", not this controller's own 403
+  // message). Read/seen state cannot exist at all without this.
+  'api::conversation.conversation.markRead',
 
   // Notification
   'api::notification.notification.create',
