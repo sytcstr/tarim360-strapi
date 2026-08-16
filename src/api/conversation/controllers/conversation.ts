@@ -1,6 +1,11 @@
 ﻿'use strict';
 
 const crypto = require('crypto');
+const {
+  isValidOperationId,
+  fingerprintPayload,
+  resolveOperation,
+} = require('../../../utils/operation-idempotency');
 
 const THREAD_UID = 'api::thread.thread';
 const MESSAGE_UID = 'api::message.message';
@@ -584,6 +589,38 @@ export default {
       return ctx.forbidden('Sadece sohbet katilimcisi mesaj gonderebilir.');
     }
 
+    // MESSAGING M4 (MESSAGING_M4_RELIABILITY_FIX_REPORT.md): a client
+    // retrying a send it never got a response for (timeout, dropped
+    // connection) must not be able to create a second message. The
+    // client generates a stable UUID operationId once per logical send
+    // attempt and resends the SAME one on retry -- mirrors the proven
+    // listing-comment/listing-share pattern (operation-idempotency.ts).
+    // Clients that don't send one (older builds, or callers that don't
+    // need retry, e.g. the stock-CRUD fallback path) are unaffected:
+    // operationId is optional, and a message without one is simply never
+    // matched by resolveOperation.
+    const operationIdRaw = pick(data, ['operationId', 'clientMessageId']);
+    const operationId = isValidOperationId(operationIdRaw) ? operationIdRaw : '';
+    let fingerprint = '';
+    if (operationId) {
+      fingerprint = fingerprintPayload({
+        threadId,
+        text,
+        senderProfileId: p.senderProfileId,
+        senderEmail: p.senderEmail,
+        receiverProfileId: p.receiverProfileId,
+        receiverEmail: p.receiverEmail,
+      });
+      const resolution = await resolveOperation(strapi, MESSAGE_UID, operationId, fingerprint);
+      if (resolution.status === 'conflict') {
+        return ctx.badRequest('Bu operationId farkli bir istekle daha once kullanilmis.');
+      }
+      if (resolution.status === 'duplicate') {
+        ctx.body = { data: resolution.existing, thread: existingThread };
+        return;
+      }
+    }
+
     const thread = await upsertThread(
       strapi,
       {
@@ -597,40 +634,59 @@ export default {
       user,
     );
     const sentAt = pick(data, ['sentAt']) || new Date().toISOString();
-    const message = await strapi.entityService.create(MESSAGE_UID, {
-      data: {
-        threadId: thread.threadId,
-        conversationKey: thread.conversationKey,
-        contextType: thread.contextType,
-        contextId: thread.contextId,
-        listingId: thread.listingId,
-        listingTitle: thread.listingTitle,
-        message: text,
-        text,
-        direction: pick(data, ['direction']),
-        senderEmail: p.senderEmail,
-        senderProfileId: p.senderProfileId,
-        senderName: p.senderName,
-        requesterEmail: p.requesterEmail,
-        requesterProfileId: p.requesterProfileId,
-        requesterName: p.requesterName,
-        receiverEmail: p.receiverEmail,
-        receiverProfileId: p.receiverProfileId,
-        receiverName: p.receiverName,
-        targetEmail: cleanEmail(pick(data, ['targetEmail', 'messageReceiverEmail'])),
-        targetProfileId: cleanId(
-          pick(data, ['targetProfileId', 'messageReceiverProfileId']),
-        ),
-        messageReceiverEmail: cleanEmail(
-          pick(data, ['messageReceiverEmail', 'targetEmail']),
-        ),
-        messageReceiverProfileId: cleanId(
-          pick(data, ['messageReceiverProfileId', 'targetProfileId']),
-        ),
-        sentAt,
-        metadata: messageMetadataFor(data),
-      },
-    });
+    const messageData: Record<string, unknown> = {
+      threadId: thread.threadId,
+      conversationKey: thread.conversationKey,
+      contextType: thread.contextType,
+      contextId: thread.contextId,
+      listingId: thread.listingId,
+      listingTitle: thread.listingTitle,
+      message: text,
+      text,
+      direction: pick(data, ['direction']),
+      senderEmail: p.senderEmail,
+      senderProfileId: p.senderProfileId,
+      senderName: p.senderName,
+      requesterEmail: p.requesterEmail,
+      requesterProfileId: p.requesterProfileId,
+      requesterName: p.requesterName,
+      receiverEmail: p.receiverEmail,
+      receiverProfileId: p.receiverProfileId,
+      receiverName: p.receiverName,
+      targetEmail: cleanEmail(pick(data, ['targetEmail', 'messageReceiverEmail'])),
+      targetProfileId: cleanId(
+        pick(data, ['targetProfileId', 'messageReceiverProfileId']),
+      ),
+      messageReceiverEmail: cleanEmail(
+        pick(data, ['messageReceiverEmail', 'targetEmail']),
+      ),
+      messageReceiverProfileId: cleanId(
+        pick(data, ['messageReceiverProfileId', 'targetProfileId']),
+      ),
+      sentAt,
+      metadata: messageMetadataFor(data),
+    };
+    if (operationId) {
+      messageData.operationId = operationId;
+      messageData.payloadFingerprint = fingerprint;
+    }
+
+    let message;
+    try {
+      message = await strapi.entityService.create(MESSAGE_UID, { data: messageData as any });
+    } catch (e) {
+      if (operationId) {
+        // Concurrent retry already inserted the same operationId first --
+        // re-resolve and return the winner's row idempotently instead of
+        // propagating a raw unique-constraint error.
+        const retry = await resolveOperation(strapi, MESSAGE_UID, operationId, fingerprint);
+        if (retry.status === 'duplicate') {
+          ctx.body = { data: retry.existing, thread };
+          return;
+        }
+      }
+      throw e;
+    }
     ctx.body = { data: message, thread };
   },
 

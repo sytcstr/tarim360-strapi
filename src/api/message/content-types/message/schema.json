@@ -98,6 +98,13 @@
                                                     },
                        "metadata":  {
                                         "type":  "json"
-                                    }
+                                    },
+                       "operationId":  {
+                                           "type":  "string",
+                                           "unique":  true
+                                       },
+                       "payloadFingerprint":  {
+                                                  "type":  "string"
+                                              }
                    }
 }
