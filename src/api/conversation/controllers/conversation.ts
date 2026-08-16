@@ -74,6 +74,22 @@ const inferContextId = (data) =>
     'threadId',
   ]);
 
+/**
+ * MESSAGING M1 (MESSAGING_M1_M3_CORE_FIX_REPORT.md): sender identity is
+ * NEVER taken from the client. Previously `senderEmail`/`senderProfileId`
+ * were picked from the request body FIRST, falling back to the real
+ * `ctx.state.user` identity only if the client omitted them -- meaning
+ * any authenticated caller could submit `senderEmail`/`senderProfileId`
+ * for a DIFFERENT real user and have a message recorded as if that
+ * person sent it, as long as the fabricated participant set was
+ * internally self-consistent (message-ownership.ts's stock-CRUD policy
+ * already got this right: `data.senderEmail = identity.email` is forced
+ * unconditionally; this file's own custom route never had that). Sender
+ * is now always `current` (derived from the JWT-authenticated user),
+ * full stop -- requester/receiver (the two parties of the conversation)
+ * remain client-suppliable, same as before, since the backend has no
+ * other way to learn who a NEW conversation's other party is.
+ */
 const normalizeParticipants = (data, user) => {
   const current = actorForUser(user);
   let requesterEmail = cleanEmail(pick(data, ['requesterEmail', 'requestedByEmail']));
@@ -97,9 +113,9 @@ const normalizeParticipants = (data, user) => {
   );
   let receiverName = pick(data, ['receiverName', 'targetName', 'ownerName', 'personName']);
 
-  const senderEmail = cleanEmail(pick(data, ['senderEmail'])) || current.email;
-  const senderProfileId = cleanId(pick(data, ['senderProfileId'])) || current.profileId;
-  const senderName = pick(data, ['senderName']) || current.name;
+  const senderEmail = current.email;
+  const senderProfileId = current.profileId;
+  const senderName = current.name;
 
   if (!requesterEmail && !requesterProfileId) {
     requesterEmail = senderEmail;
@@ -193,6 +209,31 @@ const findThread = async (strapi, data, conversationKey, threadId) => {
   return null;
 };
 
+/**
+ * MESSAGING M1 (found while building the mandate's own "A, participant
+ * olmadigi conversation'a gonderir -> 403" test, disclosed here rather
+ * than silently left): closing the sender-identity gap above is NOT
+ * enough on its own. `sendMessage`/`upsert` used to derive "am I allowed"
+ * (`senderIsParticipant`) from participants computed out of the CLIENT
+ * PAYLOAD, not from the thread actually matched by conversationKey/
+ * threadId. A caller could supply a real existing threadId belonging to
+ * two OTHER users plus a self-consistent, fabricated requester/receiver
+ * pair (matching their own real identity), pass `senderIsParticipant`
+ * against their OWN fabrication, and have `upsertThread` then locate and
+ * OVERWRITE the real, unrelated thread's participant fields. This checks
+ * the caller against the thread's OWN, ALREADY-STORED participant
+ * fields -- the only trustworthy source once a thread already exists.
+ * Returns true when no thread exists yet (nothing to hijack; a brand
+ * new conversation is being created).
+ */
+const isRealParticipantOfThread = (thread, current) => {
+  if (!thread) return true;
+  return (
+    isSamePerson(current.profileId, current.email, thread.requesterProfileId, thread.requesterEmail) ||
+    isSamePerson(current.profileId, current.email, thread.receiverProfileId, thread.receiverEmail)
+  );
+};
+
 const normalizeThreadData = (data, user) => {
   const p = normalizeParticipants(data, user);
   const contextType = inferContextType(data);
@@ -221,8 +262,13 @@ const normalizeThreadData = (data, user) => {
     lastMessage: pick(data, ['lastMessage', 'message', 'text']),
     lastMessagePreview: pick(data, ['lastMessagePreview', 'lastMessage', 'message', 'text']),
     lastMessageAt: pick(data, ['lastMessageAt', 'sentAt', 'updatedAtClient']) || nowIso,
-    lastSenderEmail: cleanEmail(pick(data, ['lastSenderEmail', 'senderEmail'])) || p.senderEmail,
-    lastSenderProfileId: cleanId(pick(data, ['lastSenderProfileId', 'senderProfileId'])) || p.senderProfileId,
+    // MESSAGING M1: same reasoning as normalizeParticipants above -- a
+    // client-supplied lastSenderEmail/lastSenderProfileId used to be
+    // trusted here directly (bypassing the normalizeParticipants fix
+    // entirely, since this read `data` again instead of using `p`).
+    // Always the real, authenticated sender now.
+    lastSenderEmail: p.senderEmail,
+    lastSenderProfileId: p.senderProfileId,
     lastTimeText: pick(data, ['lastTimeText']),
     unreadCount: Number(data.unreadCount || 0),
     metadata: data.metadata || {},
@@ -369,6 +415,13 @@ export default {
     const user = ctx.state.user;
     if (!user) return ctx.unauthorized('Giris gerekli.');
     const data = asData(ctx);
+    const current = actorForUser(user);
+    const conversationKey = conversationKeyFor(data, user);
+    const threadId = threadIdFor(data, conversationKey);
+    const existingThread = await findThread(strapi, data, conversationKey, threadId);
+    if (!isRealParticipantOfThread(existingThread, current)) {
+      return ctx.forbidden('Bu sohbete erisim yetkin yok.');
+    }
     const p = normalizeParticipants(data, user);
     if (
       isSamePerson(
@@ -393,6 +446,13 @@ export default {
     const data = asData(ctx);
     const text = pick(data, ['message', 'text', 'body']);
     if (!text) return ctx.badRequest('Mesaj bos olamaz.');
+    const current = actorForUser(user);
+    const conversationKey = conversationKeyFor(data, user);
+    const threadId = threadIdFor(data, conversationKey);
+    const existingThread = await findThread(strapi, data, conversationKey, threadId);
+    if (!isRealParticipantOfThread(existingThread, current)) {
+      return ctx.forbidden('Bu sohbete erisim yetkin yok.');
+    }
     const p = normalizeParticipants(data, user);
     if (
       isSamePerson(
