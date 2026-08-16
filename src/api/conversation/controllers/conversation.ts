@@ -338,6 +338,56 @@ const userFilter = (user) => {
   return ors.length ? { $or: ors } : { id: -1 };
 };
 
+/**
+ * MESSAGING M2 (MESSAGING_M2_READ_UNREAD_FIX_REPORT.md): a message is
+ * "unread by `current`" iff `current` did not send it AND nobody has
+ * stamped it read yet (`readAt` empty). `readAt` is the canonical,
+ * single read signal for a message (message.readBy carries the same
+ * fact keyed by actor, for potential multi-party display, but readAt is
+ * what unread-count and the double-tick UI both key off of -- one
+ * semantic, not two).
+ */
+const messageIsUnreadFor = (message: any, current: { profileId: string; email: string }) => {
+  if (isSamePerson(current.profileId, current.email, message.senderProfileId, message.senderEmail)) {
+    return false;
+  }
+  return !message.readAt;
+};
+
+/**
+ * MESSAGING M2: `thread.unreadCount` (the stored scalar) can never hold
+ * two independent participants' counts at once, and nothing was ever
+ * incrementing it on message send -- it was always 0 by the time a
+ * client read it (BUG audited in MESSAGING_RELEASE_FORENSIC_AUDIT.md).
+ * Unread count is computed fresh per request instead, from the same
+ * per-message `readAt` ledger markRead already writes: for the calling
+ * user, count messages in the given threads that are still unread
+ * (readAt empty) and were not sent by that user. This is naturally
+ * always >= 0, self-heals on refetch/app-restart, and needs no
+ * incremental counter to keep in sync.
+ */
+const computeUnreadCountsByThread = async (
+  strapi: any,
+  threadIds: string[],
+  current: { profileId: string; email: string },
+) => {
+  const counts = new Map<string, number>();
+  const ids = Array.from(new Set(threadIds.filter(Boolean)));
+  if (!ids.length) return counts;
+  const rows = await strapi.entityService.findMany(MESSAGE_UID, {
+    filters: { threadId: { $in: ids }, readAt: { $null: true } } as any,
+    fields: ['threadId', 'senderEmail', 'senderProfileId', 'readAt'],
+    limit: 5000,
+  });
+  const list = Array.isArray(rows) ? rows : [];
+  for (const message of list) {
+    if (!messageIsUnreadFor(message, current)) continue;
+    const key = (message as any).threadId;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return counts;
+};
+
 export default {
   async mine(ctx) {
     const limit = Math.min(Number(ctx.query?.pagination?.limit || ctx.query?.limit || 220), 300);
@@ -346,7 +396,18 @@ export default {
       sort: { lastMessageAt: 'desc' } as any,
       limit,
     });
-    ctx.body = { data: rows };
+    const list = Array.isArray(rows) ? rows : [];
+    const current = actorForUser(ctx.state.user);
+    const unreadByThread = await computeUnreadCountsByThread(
+      strapi,
+      list.map((row: any) => row.threadId),
+      current,
+    );
+    const withUnread = list.map((row: any) => ({
+      ...row,
+      unreadCount: unreadByThread.get(row.threadId) || 0,
+    }));
+    ctx.body = { data: withUnread };
   },
 
   async myMessages(ctx) {
@@ -356,7 +417,18 @@ export default {
       sort: { sentAt: 'desc' },
       limit,
     });
-    ctx.body = { data: rows };
+    const list = Array.isArray(rows) ? rows : [];
+    const current = actorForUser(ctx.state.user);
+    const unreadByThread = await computeUnreadCountsByThread(
+      strapi,
+      list.map((row: any) => row.threadId),
+      current,
+    );
+    const withUnread = list.map((row: any) => ({
+      ...row,
+      unreadCount: unreadByThread.get(row.threadId) || 0,
+    }));
+    ctx.body = { data: withUnread };
   },
 
   async messagesByThread(ctx) {
