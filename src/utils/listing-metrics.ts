@@ -13,6 +13,39 @@ type ListingCounterField =
 
 const asString = (value: unknown): string => String(value ?? '').trim();
 
+/**
+ * LISTING_SYSTEM_RELEASE_FORENSIC_AUDIT.md BUG-LISTING-001/004: single
+ * source of truth for which listing fields a client must never be able
+ * to write directly, shared by listing.ts's own create/update guard and
+ * by engagement.ts's syncOfflineListing (the offline-queue write path,
+ * which previously bypassed this list entirely). Includes isDoping/
+ * rocketEndsAt -- SEMANTIC_CONTRACT_S2's CLIENT_PROTECTED_FIELDS
+ * deliberately excluded these ("a separate rocket/promotion mechanism,
+ * not part of this audit item"), which meant any listing owner could
+ * self-grant a free rocket/boost via a crafted PUT; closed here.
+ */
+export const LISTING_CLIENT_PROTECTED_FIELDS = [
+  'likeCount',
+  'favoriteCount',
+  'viewCount',
+  'offerCount',
+  'commentCount',
+  'shareCount',
+  'engagementVersion',
+  'isPremium',
+  'isPremiumOwner',
+  'isDoping',
+  'rocketEndsAt',
+] as const;
+
+export const stripListingProtectedFields = (
+  data: Record<string, any>,
+): Record<string, any> => {
+  const next = { ...data };
+  for (const field of LISTING_CLIENT_PROTECTED_FIELDS) delete next[field];
+  return next;
+};
+
 export const listingIdCandidates = (raw: unknown): string[] => {
   const id = asString(raw);
   if (!id) return [];

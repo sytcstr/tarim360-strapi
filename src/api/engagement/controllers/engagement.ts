@@ -1,10 +1,11 @@
-import { readIdentity } from '../../../utils/identity';
+import { matchesIdentity, readIdentity } from '../../../utils/identity';
 import {
   applyLoadActorMetric,
   resolveLoad as resolveLogisticsLoad,
 } from '../../logistics-load/controllers/logistics-load';
 import { requireAuthenticatedActorKey } from '../../../utils/engagement-contract';
 import { setMembership } from '../services/engagement-v1';
+import { stripListingProtectedFields } from '../../../utils/listing-metrics';
 
 const PROFILE_SETTING_UID = 'api::profile-setting.profile-setting';
 const LISTING_UID = 'api::listing.listing';
@@ -98,7 +99,7 @@ const findListingByAnyId = async (strapi: any, rawId: unknown) => {
     if (Number.isInteger(numeric) && numeric > 0) {
       try {
         const row = await strapi.entityService.findOne(LISTING_UID as any, numeric as any, {
-          fields: ['id', 'documentId', 'listingNo', 'ownerEmail', 'ownerProfileId'],
+          fields: ['id', 'documentId', 'listingNo', 'ownerEmail', 'ownerProfileId', 'ownerId'],
         });
         if (row) return row;
       } catch (_) {
@@ -444,6 +445,23 @@ export default {
     ctx.body = { data: { ok: true, profileId, pinnedIds, pinnedOrder } };
   },
 
+  /**
+   * LISTING_SYSTEM_RELEASE_FORENSIC_AUDIT.md BUG-LISTING-001 (CRITICAL):
+   * this offline-queue write path (Flutter's ListingPendingSyncQueue)
+   * previously had NO ownership check on the `update`/`upsert` branch --
+   * `findListingByAnyId` resolved the target purely by id/documentId/
+   * listingNo, with no comparison against the caller's identity -- and
+   * NO field protection at all (stripClientProtectedFields was never
+   * called here, unlike listing.ts's own create/update). Any
+   * authenticated caller who knew/guessed another listing's id could
+   * reassign that listing to their own account (ownerEmail/
+   * ownerProfileId/ownerId were overwritten to the CALLER's identity)
+   * and freely set isPremium/isDoping/rocketEndsAt/every counter/status
+   * on it. Fixed: ownership is now verified via matchesIdentity before
+   * any update (403 if the resolved row isn't the caller's own), and
+   * stripListingProtectedFields runs on both the create and update
+   * paths -- the exact same protection listing.ts's own routes have.
+   */
   async syncOfflineListing(ctx: any) {
     const identity = readIdentity(ctx);
     if (!identity) return ctx.unauthorized('Kimlik dogrulanamadi.');
@@ -458,23 +476,44 @@ export default {
     }
     if (Object.keys(listing).length === 0) return ctx.badRequest('listing zorunlu.');
 
-    listing.ownerEmail = identity.email;
-    listing.ownerProfileId = identity.ownerId;
-    listing.ownerId = identity.ownerId;
-    listing.updatedAtClient = asString(listing.updatedAtClient) || new Date().toISOString();
-
     const rawId = listing.id ?? listing.listingId ?? listing.remoteId ?? listing.documentId;
     const existing = rawId ? await findListingByAnyId(strapi, rawId) : null;
+
+    // The client's own id/documentId/listingId/remoteId must never reach
+    // `data` -- the target row is already selected via `existing.id`
+    // below; including a client-supplied `id` in the update payload can
+    // make Strapi attempt to move the row to a DIFFERENT primary key
+    // (confirmed live while writing this fix's tests: a client-echoed
+    // `id` field caused a genuine "UNIQUE constraint failed: listings.id"
+    // error instead of a normal field update).
+    const safeListing = stripListingProtectedFields(listing);
+    delete safeListing.id;
+    delete safeListing.documentId;
+    delete safeListing.listingId;
+    delete safeListing.remoteId;
+    safeListing.ownerEmail = identity.email;
+    safeListing.ownerProfileId = identity.ownerId;
+    safeListing.ownerId = identity.ownerId;
+    safeListing.updatedAtClient = asString(listing.updatedAtClient) || new Date().toISOString();
+
     if (existing?.id) {
+      const isOwner = matchesIdentity(
+        existing,
+        identity,
+        ['ownerEmail'],
+        ['ownerProfileId', 'ownerId'],
+      );
+      if (!isOwner) return ctx.forbidden('Bu ilan size ait degil.');
+
       const entity = await strapi.entityService.update(LISTING_UID as any, existing.id, {
-        data: listing,
+        data: safeListing,
       });
       ctx.body = { data: { ok: true, operation: 'update', listing: entity } };
       return;
     }
 
     const entity = await strapi.entityService.create(LISTING_UID as any, {
-      data: listing,
+      data: safeListing,
     });
     ctx.body = { data: { ok: true, operation: 'create', listing: entity } };
   },
