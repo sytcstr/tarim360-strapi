@@ -25,7 +25,7 @@ const { createStrapi, compileStrapi } = require('@strapi/strapi');
 
 const TEST_DB_FILE_RELATIVE = 'tests/integration/.tmp-conversation-send-retry-test.db';
 const TEST_DB_FILE = path.join(__dirname, '.tmp-conversation-send-retry-test.db');
-const PORT = 14167;
+const PORT = 14171;
 const BASE_URL = `http://127.0.0.1:${PORT}/api`;
 
 let strapiInstance: any;

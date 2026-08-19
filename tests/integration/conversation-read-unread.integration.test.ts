@@ -29,7 +29,7 @@ const { createStrapi, compileStrapi } = require('@strapi/strapi');
 
 const TEST_DB_FILE_RELATIVE = 'tests/integration/.tmp-conversation-read-unread-test.db';
 const TEST_DB_FILE = path.join(__dirname, '.tmp-conversation-read-unread-test.db');
-const PORT = 14166;
+const PORT = 14170;
 const BASE_URL = `http://127.0.0.1:${PORT}/api`;
 
 let strapiInstance: any;
