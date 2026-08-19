@@ -233,15 +233,19 @@ const authenticatedActions: string[] = [
   'api::conversation.conversation.messagesByThread',
   'api::conversation.conversation.upsert',
   'api::conversation.conversation.sendMessage',
-  // MESSAGING M2 (MESSAGING_M2_READ_UNREAD_FIX_REPORT.md): same
-  // pre-existing gap as the logistics-load metric routes above --
-  // markRead uses auth:{scope:[]} but was never granted to the
-  // authenticated role anywhere, so every real PATCH .../read call has
-  // 403'd since this route was added (confirmed live while writing this
-  // phase's integration tests: a valid JWT for a real participant still
-  // got a bare Strapi "Forbidden", not this controller's own 403
-  // message). Read/seen state cannot exist at all without this.
+  // MESSAGING M2 (MESSAGING_M2_READ_UNREAD_FIX_REPORT.md) / PERMISSION_GAP_S5A
+  // (PERMISSION_GAP_RELEASE_AUDIT.md PERM-N4 / PERM-N5 = BUG-M7): same
+  // pre-existing gap as the logistics-load metric routes and
+  // offer.markSeen -- markRead/deleteByThreadId use auth:{scope:[]} but
+  // were never granted to the authenticated role anywhere, so every real
+  // call 403'd (confirmed live in both M2's and S5A's integration tests).
+  // Both handlers already enforce participant-only access at the query
+  // level (userFilter(user) baked into the thread lookup) -- only the
+  // permission grant was missing. Found and fixed independently by both
+  // the messaging (M2) and permission-gap (S5A) sprints; reconciled here
+  // during release/preflight-integration merge.
   'api::conversation.conversation.markRead',
+  'api::conversation.conversation.deleteByThreadId',
 
   // Notification
   'api::notification.notification.create',
@@ -249,6 +253,12 @@ const authenticatedActions: string[] = [
   'api::notification.notification.findOne',
   'api::notification.notification.update',
   'api::notification.notification.delete',
+  // PERMISSION_GAP_S5A (PERMISSION_GAP_RELEASE_AUDIT.md PERM-N1): same
+  // gap as above -- markRead uses auth:{scope:[]} but was never granted
+  // to the authenticated role. The controller's own owner-match (or
+  // broadcast-bypass) check was already correct; only the permission
+  // grant was missing.
+  'api::notification.notification.markRead',
 
   // Hub content
   'api::hub-content.hub-content.create',
@@ -309,6 +319,14 @@ const authenticatedActions: string[] = [
   'api::auth-flow.auth-flow.updateUsername',
   'api::auth-flow.auth-flow.registerPushToken',
   'api::auth-flow.auth-flow.unregisterPushToken',
+  // PERMISSION_GAP_S5A (PERMISSION_GAP_RELEASE_AUDIT.md PERM-N2): same
+  // gap as above -- deleteAccount uses auth:{scope:[]} but was never
+  // granted to the authenticated role, confirmed live (the "Hesabi ve
+  // Verileri Sil" button always 403'd for every user). The controller
+  // is self-only and non-spoofable (userId/email/ownerId are all read
+  // from ctx.state.user, never from the request body); only the
+  // permission grant was missing.
+  'api::auth-flow.auth-flow.deleteAccount',
 
   // Processed products module
   'api::processed-seller-stores.processed-seller-stores.mine',
