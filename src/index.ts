@@ -191,6 +191,13 @@ const authenticatedActions: string[] = [
   'api::offer.offer.delete',
   'api::offer.offer.updateByOfferId',
   'api::offer.offer.deleteByOfferId',
+  // O1 (OFFER_O1_CORE_FIX_REPORT.md): same pre-existing gap as
+  // markRead/metricLike/metricFavorite before it -- markSeen uses
+  // auth:{scope:[]} but was never granted to the authenticated role
+  // anywhere, confirmed live (a valid JWT still got Strapi's generic
+  // 403, never reaching the controller). Offer "seen" tracking cannot
+  // exist at all without this.
+  'api::offer.offer.markSeen',
 
   // Message
   'api::message.message.create',
