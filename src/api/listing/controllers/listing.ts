@@ -5,6 +5,7 @@
 import { factories } from '@strapi/strapi';
 import { normalizeEmail, ownerIdFromEmail, readIdentity } from '../../../utils/identity';
 import { isPremiumActiveFromProfile } from '../../../utils/premium-sync';
+import { stripListingProtectedFields } from '../../../utils/listing-metrics';
 
 const LISTING_UID = 'api::listing.listing';
 const PROFILE_UID = 'api::profile-setting.profile-setting';
@@ -28,28 +29,33 @@ const clean = (value: unknown): string => String(value ?? '').trim();
  * their own listing a premium badge without actually being premium.
  * These are premium-sync.ts-owned, not engagement-v1-owned, but the
  * vulnerability class and the fix are identical; disclosed here rather
- * than silently left in place. Not included: isDoping/rocketEndsAt (a
- * separate rocket/promotion mechanism, not part of this audit item --
- * flagged in SEMANTIC_CONTRACT_S2_HIGH_FIX_REPORT.md as a follow-up, not
- * fixed here).
+ * than silently left in place.
+ *
+ * LISTING_SYSTEM_RELEASE_FORENSIC_AUDIT.md BUG-LISTING-004: isDoping/
+ * rocketEndsAt were previously excluded here ("a separate rocket/
+ * promotion mechanism, not part of this audit item"), which meant any
+ * listing owner could self-grant a free rocket/boost via a crafted PUT.
+ * Now sourced from listing-metrics.ts's LISTING_CLIENT_PROTECTED_FIELDS
+ * (shared with engagement.ts's syncOfflineListing, see BUG-LISTING-001),
+ * which includes both.
  */
-const CLIENT_PROTECTED_FIELDS = [
-  'likeCount',
-  'favoriteCount',
-  'viewCount',
-  'offerCount',
-  'commentCount',
-  'shareCount',
-  'engagementVersion',
-  'isPremium',
-  'isPremiumOwner',
-];
+const stripClientProtectedFields = stripListingProtectedFields;
 
-const stripClientProtectedFields = (
+/**
+ * A client-supplied `id`/`documentId` must never reach entityService's
+ * `data` payload -- confirmed live (LISTING_SYSTEM_RELEASE_FORENSIC_AUDIT.md
+ * BUG-LISTING-001 regression testing) that an echoed `id` field can make
+ * Strapi attempt to move the row to a different primary key, causing a
+ * "UNIQUE constraint failed" error instead of a normal field update. The
+ * target row is already selected via the route param / entity lookup;
+ * these fields are never legitimate input.
+ */
+const stripIdentifierFields = (
   data: Record<string, any>,
 ): Record<string, any> => {
   const next = { ...data };
-  for (const field of CLIENT_PROTECTED_FIELDS) delete next[field];
+  delete next.id;
+  delete next.documentId;
   return next;
 };
 
@@ -112,7 +118,7 @@ export default factories.createCoreController(
 
       ctx.request.body = {
         data: {
-          ...stripClientProtectedFields(input),
+          ...stripIdentifierFields(stripClientProtectedFields(input)),
           ownerProfileId,
           ownerId: ownerProfileId,
           ownerEmail: normalizeEmail(identity.email),
@@ -131,9 +137,30 @@ export default factories.createCoreController(
     },
 
     async update(ctx) {
+      const identity = readIdentity(ctx);
+      if (!identity) return ctx.unauthorized('Oturum gerekli.');
+
       const body = (ctx.request?.body ?? {}) as Record<string, any>;
       const input = (body.data && typeof body.data === 'object' ? body.data : body) as Record<string, any>;
-      ctx.request.body = { data: stripClientProtectedFields(input) };
+
+      // LISTING_SYSTEM_RELEASE_FORENSIC_AUDIT.md BUG-LISTING-005: unlike
+      // create(), update() never re-forced ownerEmail/ownerProfileId/
+      // ownerId from the caller's identity -- listing-owner-write policy
+      // (which runs first) only verifies the CURRENT row's owner fields
+      // match the caller, it never strips or overwrites the update body.
+      // A real owner could therefore include a different ownerEmail/
+      // ownerProfileId/ownerId in their own PUT body and reassign their
+      // own listing's ownership to an arbitrary identity. Forcing these
+      // from `identity` here is safe: the policy has already proven
+      // `identity` is the row's rightful owner by the time this runs.
+      ctx.request.body = {
+        data: {
+          ...stripIdentifierFields(stripClientProtectedFields(input)),
+          ownerProfileId: identity.ownerId,
+          ownerId: identity.ownerId,
+          ownerEmail: normalizeEmail(identity.email),
+        },
+      };
       return super.update(ctx);
     },
   }),
