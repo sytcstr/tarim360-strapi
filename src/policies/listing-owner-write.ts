@@ -1,4 +1,4 @@
-import { denyNoIdentity, loadEntityByRouteId, normalizeEmail, ownerIdFromEmail, readIdentity } from '../utils/identity';
+import { denyForbidden, denyNoIdentity, loadEntityByRouteId, normalizeEmail, ownerIdFromEmail, readIdentity } from '../utils/identity';
 
 const UID = 'api::listing.listing';
 
@@ -30,8 +30,7 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
 
   const entity = await loadEntityByRouteId(strapi, UID, id, ['ownerEmail', 'ownerProfileId', 'ownerId']);
   if (!entity) {
-    ctx.forbidden('Bu ilana erisim yetkin yok.');
-    return false;
+    return denyForbidden(ctx, 'Bu ilana erisim yetkin yok.');
   }
 
   const ownerEmail = normalizeEmail(entity.ownerEmail);
@@ -40,8 +39,7 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
   const resolvedOwnerId = ownerProfileId || ownerId || ownerIdFromEmail(ownerEmail);
 
   if (ownerEmail !== identity.email && resolvedOwnerId !== identity.ownerId) {
-    ctx.forbidden('Bu ilana erisim yetkin yok.');
-    return false;
+    return denyForbidden(ctx, 'Bu ilana erisim yetkin yok.');
   }
 
   return true;
