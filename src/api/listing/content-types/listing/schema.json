@@ -99,7 +99,8 @@
       "type": "string"
     },
     "ownerEmail": {
-      "type": "email"
+      "type": "email",
+      "private": true
     },
     "isPremiumOwner": {
       "type": "boolean"
