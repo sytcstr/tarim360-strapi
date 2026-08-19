@@ -1,0 +1,48 @@
+{
+  "kind": "collectionType",
+  "collectionName": "rocket_activations",
+  "info": {
+    "singularName": "rocket-activation",
+    "pluralName": "rocket-activations",
+    "displayName": "Rocket Activation"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "operationId": {
+      "type": "string",
+      "required": true,
+      "unique": true
+    },
+    "payloadFingerprint": {
+      "type": "string",
+      "required": true
+    },
+    "listingId": {
+      "type": "string",
+      "required": true
+    },
+    "ownerProfileId": {
+      "type": "string",
+      "required": true
+    },
+    "sourceType": {
+      "type": "enumeration",
+      "enum": ["premium_credit", "purchase"],
+      "required": true
+    },
+    "purchaseTransactionId": {
+      "type": "string"
+    },
+    "days": {
+      "type": "integer",
+      "required": true
+    },
+    "rocketEndsAt": {
+      "type": "datetime",
+      "required": true
+    }
+  }
+}

@@ -3,12 +3,27 @@
  */
 
 import { factories } from '@strapi/strapi';
-import { normalizeEmail, ownerIdFromEmail, readIdentity } from '../../../utils/identity';
-import { isPremiumActiveFromProfile } from '../../../utils/premium-sync';
-import { stripListingProtectedFields } from '../../../utils/listing-metrics';
+import { matchesIdentity, normalizeEmail, ownerIdFromEmail, readIdentity } from '../../../utils/identity';
+import { isPremiumActiveFromProfile, loadPremiumProfile } from '../../../utils/premium-sync';
+import { findListingByAnyId, stripListingProtectedFields } from '../../../utils/listing-metrics';
+import { fingerprintPayload, isValidOperationId, resolveOperation } from '../../../utils/operation-idempotency';
 
 const LISTING_UID = 'api::listing.listing';
 const PROFILE_UID = 'api::profile-setting.profile-setting';
+const PURCHASE_EVENT_UID = 'api::purchase-event.purchase-event';
+const ROCKET_ACTIVATION_UID = 'api::rocket-activation.rocket-activation';
+
+const ROCKET_PRODUCT_BY_DAYS: Record<number, string> = {
+  7: 'doping_7_189',
+  14: 'doping_14_249',
+  28: 'doping_28_359',
+};
+const ROCKET_VALID_DAYS = new Set<number>([
+  1, // Kolay Premium's included rocket credit (see PREMIUM_PRODUCTS in purchase/lib/catalog.ts)
+  7,
+  14,
+  28,
+]);
 
 const clean = (value: unknown): string => String(value ?? '').trim();
 
@@ -162,6 +177,222 @@ export default factories.createCoreController(
         },
       };
       return super.update(ctx);
+    },
+
+    /**
+     * PREMIUM_P1_TARGETED_FIX_REPORT.md, BUG-PREM-001: the only prior
+     * write path for a listing's isDoping/rocketEndsAt was a plain PUT
+     * /listings/:id -- which stripClientProtectedFields now (correctly)
+     * blocks, per BUG-LISTING-004. That closed a self-grant exploit but
+     * also broke the ONE legitimate activation flow (premium rocket
+     * credit or a paid doping_* purchase), since no replacement
+     * server-authoritative path existed. This action is that
+     * replacement: it never trusts a client-supplied isDoping/
+     * rocketEndsAt (the client sends only `days` + an idempotency
+     * `operationId`), verifies a real entitlement against the EXISTING
+     * sources of truth (profile-setting.activePremium.rocketRemaining,
+     * or an unconsumed verified purchase-event for the matching
+     * doping_* SKU -- no third parallel entitlement system), and is
+     * idempotent against retries/double-taps via the same
+     * operationId+fingerprint ledger pattern listing-comment/
+     * listing-share already use.
+     */
+    async activateRocket(ctx) {
+      const identity = readIdentity(ctx);
+      if (!identity) return ctx.unauthorized('Oturum gerekli.');
+
+      const rawId = String(ctx.params?.id ?? '').trim();
+      if (!rawId) return ctx.badRequest('Ilan kimligi zorunlu.');
+
+      const body = (ctx.request?.body ?? {}) as Record<string, unknown>;
+      const data = (body.data && typeof body.data === 'object' ? body.data : body) as Record<string, unknown>;
+      const days = Number(data.days);
+      const operationId = String(data.operationId ?? '').trim();
+      if (!ROCKET_VALID_DAYS.has(days)) {
+        return ctx.badRequest('Gecersiz roket suresi.');
+      }
+      if (!isValidOperationId(operationId)) {
+        return ctx.badRequest('operationId gecersiz.');
+      }
+
+      const listing = await findListingByAnyId(strapi, rawId, [
+        'id',
+        'documentId',
+        'listingNo',
+        'ownerEmail',
+        'ownerProfileId',
+        'ownerId',
+        'rocketEndsAt',
+      ]);
+      if (!listing) return ctx.notFound('Ilan bulunamadi.');
+      if (
+        !matchesIdentity(
+          listing as Record<string, unknown>,
+          identity,
+          ['ownerEmail'],
+          ['ownerProfileId', 'ownerId'],
+        )
+      ) {
+        return ctx.forbidden('Bu ilan size ait degil.');
+      }
+
+      // documentId, not the numeric id, is what identifies "the same
+      // listing" stably across requests for fingerprinting purposes --
+      // see findListingByAnyId's own PUBLISHED_ONLY comment for why the
+      // numeric id alone is not a safe cross-request identity here.
+      const fingerprint = fingerprintPayload({
+        listingId: (listing as any).documentId,
+        days,
+      });
+      const resolution = await resolveOperation(
+        strapi,
+        ROCKET_ACTIVATION_UID,
+        operationId,
+        fingerprint,
+      );
+      if (resolution.status === 'conflict') {
+        return ctx.conflict('Bu islem kimligi baska bir roketleme icin kullanilmis.');
+      }
+      if (resolution.status === 'duplicate') {
+        const existing = resolution.existing;
+        ctx.body = {
+          data: {
+            ok: true,
+            isDoping: true,
+            rocketEndsAt: existing.rocketEndsAt,
+            idempotent: true,
+          },
+        };
+        return;
+      }
+
+      const profile = await loadPremiumProfile(strapi, identity);
+      const premium = (profile?.activePremium ?? profile?.activePremiumSubscription ?? null) as
+        | Record<string, unknown>
+        | null;
+      const rocketRemaining = Number(premium?.rocketRemaining ?? 0);
+      const rocketDays = Number(premium?.rocketDays ?? 0);
+      const premiumEligible =
+        isPremiumActiveFromProfile(profile) && rocketRemaining > 0 && rocketDays === days;
+
+      let purchaseEvent: Record<string, unknown> | null = null;
+      if (!premiumEligible) {
+        const productId = ROCKET_PRODUCT_BY_DAYS[days];
+        const candidate = productId
+          ? ((await strapi.db.query(PURCHASE_EVENT_UID).findOne({
+              where: {
+                ownerProfileId: identity.ownerId,
+                productId,
+                status: 'verified',
+              },
+              orderBy: { verifiedAt: 'desc' },
+            } as any)) as Record<string, unknown> | null)
+          : null;
+        if (candidate) {
+          const consumed = await strapi.db.query(ROCKET_ACTIVATION_UID).findOne({
+            where: { purchaseTransactionId: candidate.transactionId },
+          } as any);
+          if (!consumed) purchaseEvent = candidate;
+        }
+      }
+
+      if (!premiumEligible && !purchaseEvent) {
+        return ctx.forbidden(
+          'Aktif roket hakkiniz veya odemesi dogrulanmis bir roket satin aliminiz yok.',
+        );
+      }
+
+      const sourceType: 'premium_credit' | 'purchase' = premiumEligible
+        ? 'premium_credit'
+        : 'purchase';
+      // Extend from the listing's current rocketEndsAt if it's still in
+      // the future (matches ListingsStore.setRocket's existing Flutter-
+      // side extension semantics), otherwise start counting from now.
+      const currentRocketEndsAt = new Date(String((listing as any).rocketEndsAt ?? ''));
+      const extendFrom =
+        !Number.isNaN(currentRocketEndsAt.getTime()) && currentRocketEndsAt.getTime() > Date.now()
+          ? currentRocketEndsAt
+          : new Date();
+      const rocketEndsAt = new Date(
+        extendFrom.getTime() + days * 24 * 60 * 60 * 1000,
+      ).toISOString();
+
+      // The ledger create is the atomic claim: operationId's unique
+      // constraint means only one concurrent request with the same
+      // operationId can ever win this insert -- the loser re-reads the
+      // winner's result instead of separately consuming the entitlement.
+      let raced = false;
+      try {
+        await strapi.entityService.create(ROCKET_ACTIVATION_UID as any, {
+          data: {
+            operationId,
+            payloadFingerprint: fingerprint,
+            listingId: String((listing as any).documentId),
+            ownerProfileId: identity.ownerId,
+            sourceType,
+            purchaseTransactionId:
+              sourceType === 'purchase' ? String(purchaseEvent!.transactionId) : null,
+            days,
+            rocketEndsAt,
+          },
+        });
+      } catch (_e) {
+        raced = true;
+      }
+      if (raced) {
+        const existing = await strapi.db.query(ROCKET_ACTIVATION_UID).findOne({
+          where: { operationId },
+        } as any);
+        if (existing) {
+          ctx.body = {
+            data: {
+              ok: true,
+              isDoping: true,
+              rocketEndsAt: existing.rocketEndsAt,
+              idempotent: true,
+            },
+          };
+          return;
+        }
+        return ctx.internalServerError('Roketleme kaydi dogrulanamadi.');
+      }
+
+      if (sourceType === 'premium_credit' && profile?.id) {
+        const nextPremium = {
+          ...(premium as Record<string, unknown>),
+          rocketRemaining: rocketRemaining - 1,
+        };
+        await strapi.entityService.update(PROFILE_UID as any, profile.id as any, {
+          data: {
+            activePremium: nextPremium,
+            activePremiumSubscription: nextPremium,
+          },
+        });
+      }
+
+      // This content-type has draftAndPublish:true, meaning a single
+      // documentId can back TWO physical rows (a draft and a published
+      // one) -- confirmed live while writing this fix that targeting only
+      // the one row findListingByAnyId happened to resolve (whether via
+      // entityService.update or a single-row db.query update) could leave
+      // a sibling row unchanged, and which row a subsequent reader
+      // resolves back to is not reliably the one just written. Updating
+      // every row for this documentId sidesteps the ambiguity entirely:
+      // whichever row any reader (REST API, another db.query call)
+      // resolves to next, it already has the correct isDoping/rocketEndsAt.
+      await strapi.db.query(LISTING_UID).updateMany({
+        where: { documentId: (listing as any).documentId },
+        data: { isDoping: true, rocketEndsAt },
+      } as any);
+
+      ctx.body = {
+        data: {
+          ok: true,
+          isDoping: true,
+          rocketEndsAt,
+          rocketRemaining: sourceType === 'premium_credit' ? rocketRemaining - 1 : null,
+        },
+      };
     },
   }),
 );

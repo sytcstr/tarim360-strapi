@@ -1,5 +1,6 @@
 const LISTING_UID = 'api::listing.listing';
 const AD_UID = 'api::ad.ad';
+const PROFILE_UID = 'api::profile-setting.profile-setting';
 
 const normalizeText = (value: unknown): string => String(value ?? '').trim();
 
@@ -79,6 +80,29 @@ const updateCollectionPremiumFlags = async (
       },
     });
   }
+};
+
+/**
+ * PREMIUM_P1_TARGETED_FIX_REPORT.md: the same profile-setting lookup
+ * listing.ts's create()/update() already do inline (findProfileForIdentity),
+ * shared here so every server-authoritative premium gate loads the row the
+ * same way instead of each controller growing its own copy. Selects only
+ * what isPremiumActiveFromProfile (and callers reading rocket/smartAd
+ * counters off the same payload) need.
+ */
+export const loadPremiumProfile = async (
+  strapiRef: any,
+  identity: { email: string; ownerId: string },
+): Promise<Record<string, unknown> | null> => {
+  const rows = await strapiRef.entityService.findMany(PROFILE_UID as any, {
+    filters: {
+      $or: [{ profileId: identity.ownerId }, { ownerEmail: identity.email }],
+    },
+    fields: ['id', 'profileId', 'ownerEmail', 'activePremium', 'activePremiumSubscription'],
+    limit: 1,
+  } as any);
+  const row = Array.isArray(rows) ? rows[0] : rows;
+  return (row as Record<string, unknown> | undefined) ?? null;
 };
 
 export const syncOwnerPremiumFlags = async (

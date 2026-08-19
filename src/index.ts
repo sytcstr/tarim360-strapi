@@ -175,6 +175,11 @@ const authenticatedActions: string[] = [
   'api::listing.listing.findOne',
   'api::listing.listing.update',
   'api::listing.listing.delete',
+  // PREMIUM_P1_TARGETED_FIX_REPORT.md BUG-PREM-001: server-authoritative
+  // rocket activation -- verifies entitlement (premium rocket credit or
+  // an unconsumed verified doping_* purchase) instead of trusting a
+  // client-supplied isDoping/rocketEndsAt.
+  'api::listing.listing.activateRocket',
 
   // Ad
   'api::ad.ad.create',

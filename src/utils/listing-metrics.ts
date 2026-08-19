@@ -66,6 +66,19 @@ export const findListingByAnyId = async (
   rawId: unknown,
   fields: string[] = ['id', 'documentId', 'listingNo'],
 ) => {
+  // PREMIUM_P1_TARGETED_FIX_REPORT.md: this content-type has
+  // draftAndPublish:true, so entityService.create (even with publishedAt
+  // set) leaves TWO physical rows sharing one documentId -- a draft
+  // (publishedAt: null) and the published row callers actually mean
+  // (confirmed live: entityService.create's own return value is the
+  // published row, but a plain db.query by documentId with no further
+  // filter can match either one, non-deterministically). Every db.query
+  // fallback below must filter to the published row explicitly, or a
+  // write can silently land on the invisible draft while every real
+  // reader (the public API, entityService.findOne's own default) keeps
+  // showing the unchanged published row.
+  const PUBLISHED_ONLY = { publishedAt: { $notNull: true } };
+
   for (const id of listingIdCandidates(rawId)) {
     const numeric = Number(id);
     if (Number.isInteger(numeric) && numeric > 0) {
@@ -79,10 +92,19 @@ export const findListingByAnyId = async (
       } catch (_) {
         // continue
       }
+      try {
+        const row = await strapi.db.query(LISTING_UID).findOne({
+          where: { id: numeric, ...PUBLISHED_ONLY },
+          select: fields as any,
+        } as any);
+        if (row) return row;
+      } catch (_) {
+        // continue
+      }
     }
     try {
       const row = await strapi.db.query(LISTING_UID).findOne({
-        where: { documentId: id },
+        where: { documentId: id, ...PUBLISHED_ONLY },
       } as any);
       if (row) return row;
     } catch (_) {
@@ -91,7 +113,7 @@ export const findListingByAnyId = async (
     if (Number.isInteger(numeric) && numeric > 0) {
       try {
         const row = await strapi.db.query(LISTING_UID).findOne({
-          where: { listingNo: numeric },
+          where: { listingNo: numeric, ...PUBLISHED_ONLY },
         } as any);
         if (row) return row;
       } catch (_) {
