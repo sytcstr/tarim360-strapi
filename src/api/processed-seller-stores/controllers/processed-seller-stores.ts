@@ -1,4 +1,26 @@
 ﻿import { readIdentity } from '../../../utils/identity';
+import { isPremiumActiveFromProfile, loadPremiumProfile } from '../../../utils/premium-sync';
+
+/**
+ * PREMIUM_P1_TARGETED_FIX_REPORT.md BUG-PREM-003: same gap and same
+ * fix as processed-products.ts -- a seller store is part of the same
+ * premium-gated processed-products flow (Flutter auto-creates one via
+ * ensureCurrentSessionProcessedStoreProfile(), itself gated on
+ * currentSessionHasProcessedStoreAccess()), but the backend never
+ * checked premium status at all.
+ */
+const requireActivePremium = async (
+  strapi: any,
+  identity: { email: string; ownerId: string },
+  ctx: any,
+): Promise<boolean> => {
+  const profile = await loadPremiumProfile(strapi, identity);
+  if (!isPremiumActiveFromProfile(profile)) {
+    ctx.forbidden('Bu ozellik icin aktif Premium uyelik gerekir.');
+    return false;
+  }
+  return true;
+};
 
 const toMessage = (error: unknown, fallback: string) => {
   if (error instanceof Error && error.message.trim().length > 0) {
@@ -29,6 +51,7 @@ export default ({ strapi }: { strapi: any }) => ({
   async mine(ctx: any) {
     const identity = readIdentity(ctx);
     if (!identity) return ctx.unauthorized('Kimlik dogrulanamadi.');
+    if (!(await requireActivePremium(strapi, identity, ctx))) return;
 
     try {
       const store = await strapi
@@ -56,6 +79,7 @@ export default ({ strapi }: { strapi: any }) => ({
   async upsert(ctx: any) {
     const identity = readIdentity(ctx);
     if (!identity) return ctx.unauthorized('Kimlik dogrulanamadi.');
+    if (!(await requireActivePremium(strapi, identity, ctx))) return;
 
     try {
       const store = await strapi

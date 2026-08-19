@@ -1,7 +1,34 @@
 ﻿import { factories } from '@strapi/strapi';
 import { readIdentity } from '../../../utils/identity';
+import { isPremiumActiveFromProfile, loadPremiumProfile } from '../../../utils/premium-sync';
 
 const PRODUCT_UID = 'api::processed-product.processed-product';
+
+/**
+ * PREMIUM_P1_TARGETED_FIX_REPORT.md BUG-PREM-003: `GET
+ * /processed-products/mine` and `GET /processed-products/public` are
+ * registered at the IDENTICAL path by BOTH this content-type
+ * (`processed-product`, singular) and `processed-products` (plural) --
+ * confirmed live while writing this fix that Strapi routes real traffic
+ * to THIS controller, making the plural content-type's own `mine`/
+ * `publicList` actions dead/shadowed code for those two routes (the
+ * plural controller's `upsert`/`delete`, which have no path collision,
+ * are unaffected and remain the live write path). The premium gate
+ * therefore has to live here too, or it would protect only the
+ * unreachable duplicate.
+ */
+const requireActivePremium = async (
+  strapiRef: any,
+  identity: { email: string; ownerId: string },
+  ctx: any,
+): Promise<boolean> => {
+  const profile = await loadPremiumProfile(strapiRef, identity);
+  if (!isPremiumActiveFromProfile(profile)) {
+    ctx.forbidden('Bu ozellik icin aktif Premium uyelik gerekir.');
+    return false;
+  }
+  return true;
+};
 
 /**
  * Faz D5-B: likeCount/favoriteCount/viewCount (and the legacy aliases
@@ -72,6 +99,7 @@ export default factories.createCoreController(PRODUCT_UID as any, ({ strapi }) =
   async mine(ctx: any) {
     const identity = readIdentity(ctx);
     if (!identity) return ctx.unauthorized('Kimlik dogrulanamadi.');
+    if (!(await requireActivePremium(strapi, identity, ctx))) return;
 
     try {
       const products = await strapi
