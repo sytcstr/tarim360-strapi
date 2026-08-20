@@ -71,6 +71,18 @@ const authed = (jwt: string) => ({ authorization: `Bearer ${jwt}`, 'content-type
 const findUserById = (userId: number) =>
   strapiInstance.db.query('plugin::users-permissions.user').findOne({ where: { id: userId } } as any);
 
+async function createListingAs(jwt: string) {
+  const res = await fetch(`${BASE_URL}/listings`, {
+    method: 'POST',
+    headers: authed(jwt),
+    body: JSON.stringify({
+      data: { title: 'N2 Delete Test Ilani', mainType: 'bitkisel', mode: 'sell', location: 'Konya' },
+    }),
+  });
+  const json = await res.json();
+  return json.data;
+}
+
 test('an authenticated user can delete their own account -> 200, user row removed, retention record created', async () => {
   const user = await registerAndLogin(`delacc-self-${randomUUID()}@test.local`);
   await strapiInstance.entityService.create('api::notification.notification', {
@@ -154,4 +166,158 @@ test('deleting one account does not remove another user\'s data', async () => {
     where: { receiverEmail: bystander.email },
   } as any);
   assert.equal(bystanderNotifs.length, 1, 'an unrelated user\'s notifications must survive another user\'s self-deletion');
+});
+
+// ---------------------------------------------------------------------
+// NOTIFICATION_N2_ACCOUNT_DELETION_FIX_REPORT.md — BUG-NOTIF-005.
+// N1's own new producers (offer.ts create/updateByOfferId,
+// notification.ts createDomainEvent) write targetEmail/targetProfileId,
+// which the pre-existing cleanup filter (ownerProfileId/receiverEmail/
+// requesterEmail) never covered -- these rows survived account deletion
+// as orphaned PII. These tests exercise the REAL producers directly
+// (not hand-crafted rows) to prove the fix reaches the actual shape
+// each one writes.
+// ---------------------------------------------------------------------
+
+test('a notification reachable only via targetEmail is removed on account deletion', async () => {
+  const user = await registerAndLogin(`delacc-target-email-${randomUUID()}@test.local`);
+  await strapiInstance.entityService.create('api::notification.notification', {
+    data: { notificationId: `n_${randomUUID()}`, targetEmail: user.email, isRead: false },
+  });
+
+  const res = await fetch(`${BASE_URL}/auth/account`, { method: 'DELETE', headers: authed(user.jwt) });
+  assert.equal(res.status, 200);
+
+  const rows = await strapiInstance.db.query('api::notification.notification').findMany({
+    where: { targetEmail: user.email },
+  } as any);
+  assert.equal(rows.length, 0, 'a targetEmail-only notification must be cleaned up');
+});
+
+test('a notification reachable only via targetProfileId is removed on account deletion', async () => {
+  const user = await registerAndLogin(`delacc-target-pid-${randomUUID()}@test.local`);
+  await strapiInstance.entityService.create('api::notification.notification', {
+    data: { notificationId: `n_${randomUUID()}`, targetProfileId: user.ownerId, isRead: false },
+  });
+
+  const res = await fetch(`${BASE_URL}/auth/account`, { method: 'DELETE', headers: authed(user.jwt) });
+  assert.equal(res.status, 200);
+
+  const rows = await strapiInstance.db.query('api::notification.notification').findMany({
+    where: { targetProfileId: user.ownerId },
+  } as any);
+  assert.equal(rows.length, 0, 'a targetProfileId-only notification must be cleaned up');
+});
+
+test('a real offer notification (offer.create, targetEmail-shaped) is removed when the receiver deletes their account', async () => {
+  const owner = await registerAndLogin(`delacc-offer-owner-${randomUUID()}@test.local`);
+  const buyer = await registerAndLogin(`delacc-offer-buyer-${randomUUID()}@test.local`);
+  const listing = await createListingAs(owner.jwt);
+
+  const offerId = `offer_${randomUUID()}`;
+  await fetch(`${BASE_URL}/offers`, {
+    method: 'POST',
+    headers: authed(buyer.jwt),
+    body: JSON.stringify({
+      data: { offerId, listingId: String(listing.documentId ?? listing.id), title: listing.title },
+    }),
+  });
+  const before = await strapiInstance.db.query('api::notification.notification').findMany({
+    where: { targetEmail: owner.email, source: 'offer' },
+  } as any);
+  assert.ok(before.length > 0, 'sanity check: offer.create must have produced a targetEmail-shaped notification for the owner');
+
+  const res = await fetch(`${BASE_URL}/auth/account`, { method: 'DELETE', headers: authed(owner.jwt) });
+  assert.equal(res.status, 200);
+
+  const after = await strapiInstance.db.query('api::notification.notification').findMany({
+    where: { targetEmail: owner.email, source: 'offer' },
+  } as any);
+  assert.equal(after.length, 0, 'the real offer notification must be cleaned up, not just a hand-crafted row');
+});
+
+test('a real domain-event notification (listing favorite) is removed when the target owner deletes their account', async () => {
+  const owner = await registerAndLogin(`delacc-domain-owner-${randomUUID()}@test.local`);
+  const fan = await registerAndLogin(`delacc-domain-fan-${randomUUID()}@test.local`);
+  const listing = await createListingAs(owner.jwt);
+
+  await fetch(`${BASE_URL}/notifications/domain-event`, {
+    method: 'POST',
+    headers: authed(fan.jwt),
+    body: JSON.stringify({
+      domain: 'listing',
+      entityId: String(listing.documentId ?? listing.id),
+      event: 'favorite',
+    }),
+  });
+  const before = await strapiInstance.db.query('api::notification.notification').findMany({
+    where: { targetEmail: owner.email, source: 'listing' },
+  } as any);
+  assert.ok(before.length > 0, 'sanity check: the domain-event action must have produced a targetEmail-shaped notification for the owner');
+
+  const res = await fetch(`${BASE_URL}/auth/account`, { method: 'DELETE', headers: authed(owner.jwt) });
+  assert.equal(res.status, 200);
+
+  const after = await strapiInstance.db.query('api::notification.notification').findMany({
+    where: { targetEmail: owner.email, source: 'listing' },
+  } as any);
+  assert.equal(after.length, 0, 'the real domain-event notification must be cleaned up');
+});
+
+test('a message-shaped notification (receiverEmail) cleanup behavior is unchanged by this fix', async () => {
+  const user = await registerAndLogin(`delacc-message-shape-${randomUUID()}@test.local`);
+  await strapiInstance.entityService.create('api::notification.notification', {
+    data: { notificationId: `n_${randomUUID()}`, receiverEmail: user.email, isRead: false },
+  });
+
+  const res = await fetch(`${BASE_URL}/auth/account`, { method: 'DELETE', headers: authed(user.jwt) });
+  assert.equal(res.status, 200);
+
+  const rows = await strapiInstance.db.query('api::notification.notification').findMany({
+    where: { receiverEmail: user.email },
+  } as any);
+  assert.equal(rows.length, 0, 'pre-existing receiverEmail-based cleanup must still work exactly as before');
+});
+
+test('another user\'s targetEmail/targetProfileId notification survives this account\'s deletion', async () => {
+  const toDelete = await registerAndLogin(`delacc-scope-a-${randomUUID()}@test.local`);
+  const bystander = await registerAndLogin(`delacc-scope-b-${randomUUID()}@test.local`);
+  await strapiInstance.entityService.create('api::notification.notification', {
+    data: {
+      notificationId: `n_${randomUUID()}`,
+      targetEmail: bystander.email,
+      targetProfileId: bystander.ownerId,
+      isRead: false,
+    },
+  });
+
+  const res = await fetch(`${BASE_URL}/auth/account`, { method: 'DELETE', headers: authed(toDelete.jwt) });
+  assert.equal(res.status, 200);
+
+  const rows = await strapiInstance.db.query('api::notification.notification').findMany({
+    where: { targetEmail: bystander.email },
+  } as any);
+  assert.equal(rows.length, 1, 'the new targetEmail/targetProfileId filter must not delete an unrelated user\'s notification');
+});
+
+test('an unrelated notification (no field referencing the deleted account at all) is left untouched', async () => {
+  const toDelete = await registerAndLogin(`delacc-unrelated-${randomUUID()}@test.local`);
+  const stranger = await registerAndLogin(`delacc-stranger-${randomUUID()}@test.local`);
+  await strapiInstance.entityService.create('api::notification.notification', {
+    data: {
+      notificationId: `n_${randomUUID()}`,
+      targetEmail: stranger.email,
+      targetProfileId: stranger.ownerId,
+      senderEmail: 'someone-else@test.local',
+      isRead: false,
+    },
+  });
+
+  const res = await fetch(`${BASE_URL}/auth/account`, { method: 'DELETE', headers: authed(toDelete.jwt) });
+  assert.equal(res.status, 200);
+
+  const rows = await strapiInstance.db.query('api::notification.notification').findMany({
+    where: { targetEmail: stranger.email },
+  } as any);
+  assert.equal(rows.length, 1, 'a notification with no field referencing the deleted account must be untouched');
 });

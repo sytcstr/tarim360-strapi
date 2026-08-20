@@ -332,10 +332,20 @@ export default {
       deleted.notification = await deleteByFilter(
         'api::notification.notification',
         {
+          // NOTIFICATION_N2_ACCOUNT_DELETION_FIX_REPORT.md BUG-NOTIF-005:
+          // targetEmail/targetProfileId are the fields the offer
+          // (offer.ts create/updateByOfferId) and domain-event
+          // (notification.ts createDomainEvent) producers actually write
+          // -- omitting them left those rows as orphaned PII surviving
+          // account deletion. Added alongside the pre-existing
+          // ownerProfileId/receiverEmail/requesterEmail (message,
+          // admin-broadcast) filters, not replacing them.
           $or: [
             { ownerProfileId: ownerId },
             { receiverEmail: email },
             { requesterEmail: email },
+            { targetEmail: email },
+            { targetProfileId: ownerId },
           ],
         },
       );
