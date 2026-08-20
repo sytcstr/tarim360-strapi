@@ -3,6 +3,7 @@
  */
 
 import { factories } from '@strapi/strapi';
+import { readIdentity } from '../../../utils/identity';
 
 const UID = 'api::hub-content.hub-content';
 
@@ -35,16 +36,33 @@ const stripEngagementFields = (data: Record<string, any>): Record<string, any> =
 
 export default factories.createCoreController(UID as any, ({ strapi }) => ({
   async create(ctx: any) {
+    // ENGAGEMENT_E1_TARGETED_FIX_REPORT.md BUG-ENG-001: ownerEmail/
+    // ownerProfileId are the row's real, canonical identity fields (added
+    // in this fix -- hub-content previously had no identity field at all,
+    // only a cosmetic authorName string). Always server-stamped from the
+    // authenticated session, never from client-supplied ownerId/
+    // ownerEmail/profileId/email/author-style fields, which are ignored
+    // for this purpose.
+    const identity = readIdentity(ctx);
+    if (!identity) return ctx.unauthorized('Kimlik dogrulanamadi.');
     const body = (ctx.request?.body ?? {}) as Record<string, any>;
     const input = (body.data && typeof body.data === 'object' ? body.data : body) as Record<string, any>;
-    ctx.request.body = { data: stripEngagementFields(input) };
+    const data = stripEngagementFields(input);
+    data.ownerEmail = identity.email;
+    data.ownerProfileId = identity.ownerId;
+    ctx.request.body = { data };
     return super.create(ctx);
   },
 
   async update(ctx: any) {
     const body = (ctx.request?.body ?? {}) as Record<string, any>;
     const input = (body.data && typeof body.data === 'object' ? body.data : body) as Record<string, any>;
-    ctx.request.body = { data: stripEngagementFields(input) };
+    const data = stripEngagementFields(input);
+    // Ownership is immutable once set at create time -- no update (by the
+    // owner or anyone else) may reassign a row's real owner.
+    delete data.ownerEmail;
+    delete data.ownerProfileId;
+    ctx.request.body = { data };
     return super.update(ctx);
   },
 }));

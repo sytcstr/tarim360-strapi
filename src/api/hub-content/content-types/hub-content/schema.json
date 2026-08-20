@@ -20,6 +20,12 @@
     "authorName": {
       "type": "string"
     },
+    "ownerEmail": {
+      "type": "string"
+    },
+    "ownerProfileId": {
+      "type": "string"
+    },
     "title": {
       "type": "string"
     },
