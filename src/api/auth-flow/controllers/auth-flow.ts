@@ -465,6 +465,56 @@ export default {
     const body = (ctx.request?.body ?? {}) as Record<string, unknown>;
     const token = String(body.token ?? '').trim();
     if (!token) return ctx.badRequest('Push token gerekli.');
+
+    const normalizeTokens = (raw: unknown): string[] => {
+      const bag = new Set<string>();
+      const visit = (value: unknown) => {
+        if (value == null) return;
+        if (Array.isArray(value)) {
+          for (const item of value) visit(item);
+          return;
+        }
+        const text = String(value).trim();
+        if (!text) return;
+        bag.add(text);
+      };
+      visit(raw);
+      return [...bag];
+    };
+
+    try {
+      // NOTIFICATION_N1_SECURITY_FIX_REPORT.md N1.4: a physical device's
+      // FCM token belongs to exactly one profile at a time -- server-
+      // authoritative ownership, corrected on every registration
+      // regardless of whether a prior logout's unregisterPushToken call
+      // actually reached the backend (see the disclosed logout race).
+      // Without this, "A logs out (unregister silently races/fails) -> B
+      // logs in on the same device" could leave the same token in both
+      // A's and B's fcmTokens, letting A's notifications keep pushing to
+      // the device B now uses.
+      const others = await strapi.entityService.findMany(
+        'api::profile-setting.profile-setting',
+        {
+          filters: { profileId: { $ne: profileId } },
+          fields: ['id', 'fcmTokens'],
+          limit: 2000,
+        },
+      );
+      for (const row of Array.isArray(others) ? others : []) {
+        const otherTokens = normalizeTokens((row as any).fcmTokens);
+        if (!otherTokens.includes(token)) continue;
+        await strapi.entityService.update(
+          'api::profile-setting.profile-setting',
+          (row as any).id,
+          { data: { fcmTokens: otherTokens.filter((t) => t !== token) } },
+        );
+      }
+    } catch (e) {
+      strapi.log.warn(
+        `registerPushToken cross-profile token eviction failed: ${String(e)}`,
+      );
+    }
+
     try {
       const matches = await strapi.entityService.findMany(
         'api::profile-setting.profile-setting',
@@ -474,22 +524,6 @@ export default {
         },
       );
       const existingProfile = Array.isArray(matches) ? matches[0] : null;
-
-      const normalizeTokens = (raw: unknown): string[] => {
-        const bag = new Set<string>();
-        const visit = (value: unknown) => {
-          if (value == null) return;
-          if (Array.isArray(value)) {
-            for (const item of value) visit(item);
-            return;
-          }
-          const text = String(value).trim();
-          if (!text) return;
-          bag.add(text);
-        };
-        visit(raw);
-        return [...bag];
-      };
 
       const current = normalizeTokens((existingProfile as any)?.fcmTokens);
       const next = [...new Set<string>([...current, token])];
