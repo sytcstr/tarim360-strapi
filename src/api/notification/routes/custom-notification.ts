@@ -6,5 +6,11 @@ export default {
       handler: 'notification.markRead',
       config: { auth: { scope: [] } },
     },
+    {
+      method: 'POST',
+      path: '/notifications/domain-event',
+      handler: 'notification.createDomainEvent',
+      config: { auth: { scope: [] } },
+    },
   ],
 };

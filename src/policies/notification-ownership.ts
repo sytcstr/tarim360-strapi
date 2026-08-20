@@ -1,4 +1,4 @@
-﻿import { denyNoIdentity, loadEntityByRouteId, mergeScopeOrFilter, normalizeEmail, readIdentity } from '../utils/identity';
+﻿import { denyForbidden, denyNoIdentity, loadEntityByRouteId, mergeScopeOrFilter, normalizeEmail, readIdentity } from '../utils/identity';
 
 const UID = 'api::notification.notification';
 
@@ -69,26 +69,41 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
   }
 
   if (method === 'POST') {
+    // NOTIFICATION_N1_SECURITY_FIX_REPORT.md BUG-NOTIF-001 (CRITICAL): this
+    // branch used to accept a client-supplied targetEmail/targetProfileId
+    // as-is whenever either was non-empty, only forcing the SENDER fields
+    // server-side -- letting any authenticated user create a notification
+    // (and, via this content-type's own afterCreate -> deliverPush, a real
+    // FCM push) addressed to an arbitrary victim. The generic, client-
+    // reachable create endpoint is now self-target-only: a client can only
+    // ever create a notification for themselves through this route. Every
+    // legitimate cross-user notification (message, offer, support-reply,
+    // admin broadcast, and the "social interaction" producers formerly
+    // routed through this same endpoint) is created by trusted backend
+    // code directly via entityService/db.query, or through the new,
+    // per-domain-verified api::notification.notification.createDomainEvent
+    // action (see notification.ts) -- never through this policy-gated
+    // public route.
     const body = (ctx.request?.body ?? {}) as Record<string, unknown>;
     const data = (body.data ?? {}) as Record<string, unknown>;
 
     if (isBroadcast(data)) {
-      ctx.forbidden('Toplu bildirim sadece yonetim tarafi gonderebilir.');
-      return false;
+      return denyForbidden(ctx, 'Toplu bildirim sadece yonetim tarafi gonderebilir.');
     }
 
-    let targetEmail = targetEmailOf(data);
-    let targetProfileId = targetProfileIdOf(data);
-
-    if (!targetEmail && !targetProfileId) {
-      targetEmail = identity.email;
-      targetProfileId = identity.ownerId;
+    const claimedEmail = targetEmailOf(data);
+    const claimedProfileId = targetProfileIdOf(data);
+    const claimsOther =
+      (claimedEmail && claimedEmail !== identity.email) ||
+      (claimedProfileId && claimedProfileId !== identity.ownerId);
+    if (claimsOther) {
+      return denyForbidden(ctx, 'Baska bir kullaniciya bildirim olusturamazsiniz.');
     }
 
-    data.targetEmail = targetEmail;
-    data.targetProfileId = targetProfileId;
-    if (targetEmail && !normalizeEmail(data.receiverEmail)) data.receiverEmail = targetEmail;
-    if (targetProfileId && !normalizeText(data.receiverProfileId)) data.receiverProfileId = targetProfileId;
+    data.targetEmail = identity.email;
+    data.targetProfileId = identity.ownerId;
+    data.receiverEmail = identity.email;
+    data.receiverProfileId = identity.ownerId;
     data.senderEmail = identity.email;
     data.senderProfileId = identity.ownerId;
     body.data = data;
@@ -114,20 +129,17 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
       'targetAudience',
     ]);
     if (!entity) {
-      ctx.forbidden('Bu bildirim kaydina erisim yetkin yok.');
-      return false;
+      return denyForbidden(ctx, 'Bu bildirim kaydina erisim yetkin yok.');
     }
     const mine = isMine(entity, identity.email, identity.ownerId);
 
     if (method === 'GET') {
       if (isBroadcast(entity) || mine) return true;
-      ctx.forbidden('Bu bildirim kaydina erisim yetkin yok.');
-      return false;
+      return denyForbidden(ctx, 'Bu bildirim kaydina erisim yetkin yok.');
     }
 
     if (!mine || isBroadcast(entity)) {
-      ctx.forbidden('Bu bildirim kaydini degistirme yetkin yok.');
-      return false;
+      return denyForbidden(ctx, 'Bu bildirim kaydini degistirme yetkin yok.');
     }
   }
 

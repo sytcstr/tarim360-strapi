@@ -264,6 +264,10 @@ const authenticatedActions: string[] = [
   // broadcast-bypass) check was already correct; only the permission
   // grant was missing.
   'api::notification.notification.markRead',
+  // NOTIFICATION_N1_SECURITY_FIX_REPORT.md BUG-NOTIF-001: the new
+  // per-domain-verified replacement for the social-interaction
+  // notifications formerly routed through the generic (spoofable) create.
+  'api::notification.notification.createDomainEvent',
 
   // Hub content
   'api::hub-content.hub-content.create',

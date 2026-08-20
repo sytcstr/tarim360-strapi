@@ -11,7 +11,7 @@
   },
   "pluginOptions": {},
   "attributes": {
-    "notificationId": { "type": "string" },
+    "notificationId": { "type": "string", "unique": true },
     "kind": { "type": "string" },
     "type": { "type": "string" },
     "title": { "type": "string" },

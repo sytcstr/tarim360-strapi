@@ -135,6 +135,110 @@ export const resolveListingOwnerByAnyId = async (
   return null;
 };
 
+/**
+ * NOTIFICATION_N1_SECURITY_FIX_REPORT.md BUG-NOTIF-001: server-side
+ * recipient resolvers for the "social interaction" notification producers
+ * (favorite/like on a listing or logistics load, a comment/favorite on a
+ * profile) that used to trust a client-supplied targetEmail/targetProfileId
+ * outright. Each resolver re-derives the real owner from the entity's own
+ * stored fields -- the client only ever supplies the entityId, never the
+ * recipient itself. Reuses resolveListingOwnerByAnyId as-is for listings.
+ */
+export type ResolvedOwnerIdentity = { email: string; ownerId: string } | null;
+
+/** logistics-load.ownerKey uses the same `id:`/`email:`-prefixed scheme
+ * documented on matchesOwnerKey above (SEMANTIC_CONTRACT_S1). */
+const parseOwnerKey = (rawKey: unknown): ResolvedOwnerIdentity => {
+  const raw = String(rawKey ?? '').trim();
+  if (!raw) return null;
+  if (raw.toLowerCase().startsWith('email:')) {
+    const email = normalizeEmail(raw.slice('email:'.length));
+    if (!email) return null;
+    return { email, ownerId: ownerIdFromEmail(email) };
+  }
+  const profileId = raw.startsWith('id:') ? raw.slice('id:'.length).trim() : raw;
+  if (!profileId || profileId === 'guest' || profileId.includes('@')) return null;
+  return { email: '', ownerId: profileId };
+};
+
+export const resolveLogisticsLoadOwnerByAnyId = async (
+  strapi: Core.Strapi,
+  rawLoadId: unknown,
+): Promise<ResolvedOwnerIdentity> => {
+  const candidates = idCandidates(rawLoadId);
+  if (candidates.length === 0) return null;
+  for (const candidate of candidates) {
+    try {
+      const row = await loadEntityByRouteId(
+        strapi,
+        'api::logistics-load.logistics-load',
+        candidate,
+        ['ownerKey'],
+      );
+      if (row) {
+        const owner = parseOwnerKey((row as Record<string, unknown>).ownerKey);
+        if (owner) return owner;
+      }
+    } catch (_) {
+      // continue
+    }
+  }
+  return null;
+};
+
+export const resolveProcessedProductOwnerByAnyId = async (
+  strapi: Core.Strapi,
+  rawProductId: unknown,
+): Promise<ResolvedOwnerIdentity> => {
+  const candidates = idCandidates(rawProductId);
+  if (candidates.length === 0) return null;
+  for (const candidate of candidates) {
+    try {
+      const row = await loadEntityByRouteId(
+        strapi,
+        'api::processed-product.processed-product',
+        candidate,
+        ['ownerId', 'ownerEmail'],
+      );
+      if (row) {
+        const map = row as Record<string, unknown>;
+        const email = normalizeEmail(map.ownerEmail);
+        const ownerId = normalizeOwnerId(map.ownerId) || ownerIdFromEmail(email);
+        if (email || ownerId) return { email, ownerId };
+      }
+    } catch (_) {
+      // continue
+    }
+  }
+  return null;
+};
+
+/** Confirms a profileId belongs to a REAL, existing profile-setting row --
+ * used for profile-comment/favorite-profile notifications, where anyone
+ * can legitimately be notified about their own public profile, but the
+ * claimed target must be a real registered profile, not an arbitrary
+ * client-supplied string. */
+export const resolveProfileOwnerIfExists = async (
+  strapi: Core.Strapi,
+  rawProfileId: unknown,
+): Promise<ResolvedOwnerIdentity> => {
+  const profileId = String(rawProfileId ?? '').trim();
+  if (!profileId) return null;
+  try {
+    const row = await strapi.db.query('api::profile-setting.profile-setting').findOne({
+      where: { profileId },
+      select: ['profileId', 'ownerEmail'],
+    } as any);
+    if (!row) return null;
+    const map = row as Record<string, unknown>;
+    const email = normalizeEmail(map.ownerEmail);
+    const ownerId = normalizeOwnerId(map.profileId) || profileId;
+    return { email, ownerId };
+  } catch (_) {
+    return null;
+  }
+};
+
 export const resolveThreadParticipantsByThreadId = async (
   strapi: Core.Strapi,
   rawThreadId: unknown,
