@@ -171,9 +171,19 @@ export default factories.createCoreController(UID, ({ strapi }) => ({
       }
 
       try {
+        // NOTIFICATION_N1_SECURITY_FIX_REPORT.md BUG-NOTIF-003: deterministic
+        // per-offer notificationId (not Date.now()) so a create-lock retry
+        // for the same offerId (see respondWithExisting above) hits the
+        // notification schema's unique constraint instead of creating a
+        // second "Yeni Teklif" row/push. Flutter no longer creates its own
+        // duplicate offer-created notification -- this is now the only one.
         const notifData: Record<string, unknown> = {
-          notificationId: `offer_${Date.now()}`,
+          notificationId: `offer_created_${offerId}`,
           kind: 'offer',
+          event: 'created',
+          source: 'offer',
+          offerId,
+          listingId: String(data.listingId ?? data.listingNo ?? ''),
           title: 'Yeni Teklif',
           message: `${String(data.title ?? 'Ilan')} icin yeni teklif aldiniz.`,
           isRead: false,
@@ -310,6 +320,59 @@ export default factories.createCoreController(UID, ({ strapi }) => ({
       entity.id as any,
       { data: updateData },
     );
+
+    // NOTIFICATION_N1_SECURITY_FIX_REPORT.md BUG-NOTIF-003: this is now the
+    // sole, server-authoritative source of accept/reject/counter
+    // notifications -- the recipient is always derived from THIS offer
+    // row's own requester/receiver fields (never client input), and is
+    // always "whichever participant did NOT make this call" (the caller
+    // is never notified about their own action). notificationId is
+    // deterministic per (offerId,status) so a retry of the same status
+    // update hits the notification schema's unique constraint on
+    // notificationId and is silently absorbed -- exactly one notification
+    // per real status change, not one per HTTP attempt.
+    if (status && status !== 'pending') {
+      try {
+        const recipientEmail = role.requester
+          ? normalizeEmail(entity.receiverEmail)
+          : normalizeEmail(entity.requesterEmail);
+        const recipientProfileId = role.requester
+          ? String(entity.receiverProfileId ?? '').trim()
+          : String(entity.requesterProfileId ?? '').trim();
+        if (recipientEmail || recipientProfileId) {
+          const titleByStatus: Record<string, string> = {
+            accepted: 'Teklif Kabul Edildi',
+            rejected: 'Teklif Reddedildi',
+            bargaining: 'Karsi Teklif',
+          };
+          const offerTitle = String(entity.title ?? 'Ilan').trim() || 'Ilan';
+          const notifData: Record<string, unknown> = {
+            notificationId: `offer_${status}_${entity.offerId}`,
+            kind: 'offer',
+            event: status,
+            source: 'offer',
+            offerId: String(entity.offerId ?? ''),
+            listingId: String(entity.listingId ?? ''),
+            title: titleByStatus[status] ?? 'Teklif Guncellendi',
+            message: `${offerTitle} teklifi guncellendi.`,
+            isRead: false,
+            createdAtClient: String(updateData.updatedAtClient ?? ''),
+          };
+          if (recipientEmail) notifData.targetEmail = recipientEmail;
+          if (recipientProfileId) notifData.targetProfileId = recipientProfileId;
+          await strapi.entityService.create(
+            'api::notification.notification' as any,
+            { data: notifData },
+          );
+        }
+      } catch (e) {
+        // Either a genuine failure (logged, non-fatal to the offer update
+        // itself) or a duplicate-status-update retry hitting the
+        // notificationId unique constraint (expected, not an error).
+        strapi.log.warn(`Offer status notification skipped: ${String(e)}`);
+      }
+    }
+
     ctx.body = { data: updated };
   },
 
