@@ -1,9 +1,9 @@
 import {
+  denyForbidden,
   denyNoIdentity,
   loadEntityByRouteId,
   matchesIdentity,
   mergeScopeOrFilter,
-  normalizeEmail,
   ownerIdFromEmail,
   readIdentity,
   resolveListingOwnerByAnyId,
@@ -34,14 +34,29 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
   }
 
   if (method === 'POST') {
+    // NOTIFICATION_N1_SECURITY_FIX_REPORT.md BUG-NOTIF-002: receiverEmail/
+    // receiverProfileId used to be taken from the client first and only
+    // DB-resolved as a fallback for whichever half was left empty -- and
+    // since requesterEmail always defaults to the caller's own identity,
+    // the old "participant contains me" check downstream was trivially
+    // satisfied regardless of what receiver the client claimed. The
+    // receiver is now ALWAYS the server-resolved thread participant (when
+    // threadId resolves to a real, existing thread the caller is actually
+    // part of) or the server-resolved listing owner (when no thread
+    // exists yet but the message references a real listing whose owner
+    // isn't the caller themselves) -- never the client-supplied value.
+    // If neither resolves, the receiver cannot be safely verified and the
+    // request is rejected rather than trusting an unverifiable client
+    // claim.
     const body = (ctx.request?.body ?? {}) as Record<string, unknown>;
     const data = (body.data ?? {}) as Record<string, unknown>;
 
     const threadId = String(data.threadId ?? '').trim();
-    let requesterEmail = normalizeEmail(data.requesterEmail);
-    let receiverEmail = normalizeEmail(data.receiverEmail);
-    let requesterProfileId = String(data.requesterProfileId ?? '').trim();
-    let receiverProfileId = String(data.receiverProfileId ?? '').trim();
+    const requesterEmail = identity.email;
+    const requesterProfileId = identity.ownerId;
+    let receiverEmail = '';
+    let receiverProfileId = '';
+    let receiverVerified = false;
 
     if (threadId) {
       const fromThread = await resolveThreadParticipantsByThreadId(
@@ -49,62 +64,47 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
         threadId,
       );
       if (fromThread) {
-        if (!requesterEmail && fromThread.requesterEmail) {
-          requesterEmail = fromThread.requesterEmail;
+        const callerIsRequester =
+          fromThread.requesterEmail === identity.email ||
+          fromThread.requesterProfileId === identity.ownerId;
+        const callerIsReceiver =
+          fromThread.receiverEmail === identity.email ||
+          fromThread.receiverProfileId === identity.ownerId;
+        if (!callerIsRequester && !callerIsReceiver) {
+          return denyForbidden(ctx, 'Bu konusmaya katilimci degilsiniz.');
         }
-        if (!requesterProfileId && fromThread.requesterProfileId) {
-          requesterProfileId = fromThread.requesterProfileId;
-        }
-        if (!receiverEmail && fromThread.receiverEmail) {
-          receiverEmail = fromThread.receiverEmail;
-        }
-        if (!receiverProfileId && fromThread.receiverProfileId) {
-          receiverProfileId = fromThread.receiverProfileId;
-        }
+        receiverEmail = callerIsRequester
+          ? fromThread.receiverEmail
+          : fromThread.requesterEmail;
+        receiverProfileId = callerIsRequester
+          ? fromThread.receiverProfileId
+          : fromThread.requesterProfileId;
+        receiverVerified = true;
       }
     }
 
-    if (!requesterEmail) requesterEmail = identity.email;
-    if (!requesterProfileId) requesterProfileId = identity.ownerId;
-
-    if (!receiverEmail || !receiverProfileId) {
+    if (!receiverVerified) {
       const owner = await resolveListingOwnerByAnyId(
         strapi,
         data.listingId ?? data.listingNo,
       );
-      if (!receiverEmail && owner?.email && owner.email !== identity.email) {
-        receiverEmail = owner.email;
-      }
       if (
-        !receiverProfileId &&
-        owner?.ownerId &&
-        owner.ownerId !== identity.ownerId
+        owner &&
+        owner.email !== identity.email &&
+        owner.ownerId !== identity.ownerId &&
+        (owner.email || owner.ownerId)
       ) {
+        receiverEmail = owner.email;
         receiverProfileId = owner.ownerId;
+        receiverVerified = true;
       }
     }
 
+    if (!receiverVerified) {
+      return denyForbidden(ctx, 'Mesaj alicisi dogrulanamadi.');
+    }
     if (!receiverProfileId && receiverEmail) {
       receiverProfileId = ownerIdFromEmail(receiverEmail);
-    }
-    if (!requesterProfileId && requesterEmail) {
-      requesterProfileId = ownerIdFromEmail(requesterEmail);
-    }
-
-    const emailParticipantSet = requesterEmail || receiverEmail;
-    const profileParticipantSet = requesterProfileId || receiverProfileId;
-    const emailContainsMe = requesterEmail === identity.email || receiverEmail === identity.email;
-    const profileContainsMe =
-      requesterProfileId === identity.ownerId || receiverProfileId === identity.ownerId;
-
-    if (!receiverEmail && !receiverProfileId) {
-      ctx.forbidden('Mesaj alicisi bulunamadi.');
-      return false;
-    }
-
-    if ((emailParticipantSet || profileParticipantSet) && !(emailContainsMe || profileContainsMe)) {
-      ctx.forbidden('Mesaj katilimci bilgileri aktif oturumla uyusmuyor.');
-      return false;
     }
 
     data.requesterEmail = requesterEmail;
@@ -122,8 +122,7 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
     const entity = await loadEntityByRouteId(strapi, UID, id, [...EMAIL_FIELDS, ...PROFILE_FIELDS]);
     const allowed = matchesIdentity(entity, identity, EMAIL_FIELDS, PROFILE_FIELDS);
     if (!allowed) {
-      ctx.forbidden('Bu mesaj kaydina erisim yetkin yok.');
-      return false;
+      return denyForbidden(ctx, 'Bu mesaj kaydina erisim yetkin yok.');
     }
   }
 

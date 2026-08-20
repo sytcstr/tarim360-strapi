@@ -6,6 +6,11 @@ const {
   fingerprintPayload,
   resolveOperation,
 } = require('../../../utils/operation-idempotency');
+const {
+  resolveListingOwnerByAnyId,
+  resolveLogisticsLoadOwnerByAnyId,
+  resolveProcessedProductOwnerByAnyId,
+} = require('../../../utils/identity');
 
 const THREAD_UID = 'api::thread.thread';
 const MESSAGE_UID = 'api::message.message';
@@ -214,29 +219,126 @@ const findThread = async (strapi, data, conversationKey, threadId) => {
   return null;
 };
 
+// MESSAGING M1 (participant-hijack prevention: a caller could supply a
+// real existing threadId belonging to two OTHER users plus a
+// self-consistent, fabricated requester/receiver pair matching their own
+// identity, and have upsertThread overwrite the real thread's
+// participants) is now folded into verifyAndCorrectReceiver below, which
+// performs the same "is current a real stored participant of this
+// thread" check and additionally corrects the receiver itself
+// (NOTIFICATION_N1_SECURITY_FIX_REPORT.md BUG-NOTIF-002).
+
 /**
- * MESSAGING M1 (found while building the mandate's own "A, participant
- * olmadigi conversation'a gonderir -> 403" test, disclosed here rather
- * than silently left): closing the sender-identity gap above is NOT
- * enough on its own. `sendMessage`/`upsert` used to derive "am I allowed"
- * (`senderIsParticipant`) from participants computed out of the CLIENT
- * PAYLOAD, not from the thread actually matched by conversationKey/
- * threadId. A caller could supply a real existing threadId belonging to
- * two OTHER users plus a self-consistent, fabricated requester/receiver
- * pair (matching their own real identity), pass `senderIsParticipant`
- * against their OWN fabrication, and have `upsertThread` then locate and
- * OVERWRITE the real, unrelated thread's participant fields. This checks
- * the caller against the thread's OWN, ALREADY-STORED participant
- * fields -- the only trustworthy source once a thread already exists.
- * Returns true when no thread exists yet (nothing to hijack; a brand
- * new conversation is being created).
+ * NOTIFICATION_N1_SECURITY_FIX_REPORT.md BUG-NOTIF-002: this is the REAL
+ * live message-send path -- StrapiService.sendMessage() posts here, and
+ * the generic api::message.message REST route (message-ownership.ts) is
+ * only a same-repo fallback reached if this endpoint 404s, which it
+ * never does against this backend. normalizeParticipants() above
+ * deliberately still trusts a client-supplied receiver for a brand-new
+ * conversation ("the backend has no other way to learn who a NEW
+ * conversation's other party is") -- true only when there really is no
+ * other way. When a thread already exists, the real receiver is now
+ * unconditionally the thread's OWN stored other-participant, never the
+ * client's claim -- closing the gap where a genuine participant of
+ * thread A-B could redirect a reply (and its resulting notification/
+ * push) to an arbitrary third party C simply by claiming
+ * receiverEmail=C while still passing the real threadId (isRealParticipantOfThread
+ * only checked "is current a participant," it never re-derived the
+ * receiver from the thread's own data). When no thread exists yet but
+ * the message references a real listing/logistics-load/processed-
+ * product, that entity's own real owner is used instead of the client's
+ * claim, reusing the same resolvers the domain-event notification action
+ * uses. A genuinely context-free brand-new conversation (no thread, no
+ * resolvable listing/load/product) still trusts the client-supplied
+ * receiver -- a disclosed, narrower version of the same limitation
+ * farmer_question notifications have.
  */
-const isRealParticipantOfThread = (thread, current) => {
-  if (!thread) return true;
-  return (
-    isSamePerson(current.profileId, current.email, thread.requesterProfileId, thread.requesterEmail) ||
-    isSamePerson(current.profileId, current.email, thread.receiverProfileId, thread.receiverEmail)
-  );
+const resolveContextOwner = async (strapi, data) => {
+  const contextType = inferContextType(data);
+  // Deliberately only an EXPLICIT listingId/productId -- never
+  // inferContextId()'s generic fallback (which can resolve to a bare
+  // threadId/contextId string). Those aren't real listing/load/product
+  // references, and resolveListingOwnerByAnyId's numeric-substring
+  // fallback (built for real Strapi ids) could otherwise coincidentally
+  // match an unrelated real entity whose numeric id happens to appear as
+  // a digit substring inside a thread hash -- a false-positive resolution
+  // risk discovered while testing this exact fix.
+  const listingLikeId = pick(data, ['listingId', 'productId']);
+  if (!listingLikeId) return null;
+  if (contextType === 'processed_product') {
+    return resolveProcessedProductOwnerByAnyId(strapi, listingLikeId);
+  }
+  if (contextType === 'logistics_load') {
+    return resolveLogisticsLoadOwnerByAnyId(strapi, listingLikeId);
+  }
+  return resolveListingOwnerByAnyId(strapi, listingLikeId);
+};
+
+const RECEIVER_ALIAS_FIELDS = [
+  'receiverEmail',
+  'targetEmail',
+  'messageReceiverEmail',
+  'ownerEmail',
+  'receiverProfileId',
+  'targetProfileId',
+  'messageReceiverProfileId',
+  'ownerProfileId',
+];
+
+/** Mutates `data` in place so every downstream normalizeParticipants()
+ * call (conversationKeyFor/normalizeThreadData/upsertThread each
+ * recompute it fresh from `data`) consistently picks up the verified
+ * receiver, rather than re-discovering the client's original claim
+ * through an alias field name this didn't explicitly clear. */
+const applyVerifiedReceiver = (data, owner) => {
+  for (const field of RECEIVER_ALIAS_FIELDS) delete data[field];
+  data.receiverEmail = owner.email || '';
+  data.receiverProfileId = owner.ownerId || '';
+};
+
+/** Returns { existingThread, forbidden }. On forbidden:true the caller
+ * must reject immediately -- current is not a real participant of the
+ * real, pre-existing thread being referenced. Otherwise `data` has
+ * already been corrected in place where a verified owner was found. */
+const verifyAndCorrectReceiver = async (strapi, data, user) => {
+  const current = actorForUser(user);
+  const conversationKey = conversationKeyFor(data, user);
+  const threadId = threadIdFor(data, conversationKey);
+  const existingThread = await findThread(strapi, data, conversationKey, threadId);
+
+  if (existingThread) {
+    const currentIsRequester = isSamePerson(
+      current.profileId,
+      current.email,
+      existingThread.requesterProfileId,
+      existingThread.requesterEmail,
+    );
+    const currentIsReceiver = isSamePerson(
+      current.profileId,
+      current.email,
+      existingThread.receiverProfileId,
+      existingThread.receiverEmail,
+    );
+    if (!currentIsRequester && !currentIsReceiver) {
+      return { existingThread, forbidden: true };
+    }
+    const owner = currentIsRequester
+      ? { email: existingThread.receiverEmail, ownerId: existingThread.receiverProfileId }
+      : { email: existingThread.requesterEmail, ownerId: existingThread.requesterProfileId };
+    applyVerifiedReceiver(data, owner);
+    return { existingThread, forbidden: false };
+  }
+
+  const owner = await resolveContextOwner(strapi, data);
+  if (
+    owner &&
+    (owner.email || owner.ownerId) &&
+    owner.email !== current.email &&
+    owner.ownerId !== current.profileId
+  ) {
+    applyVerifiedReceiver(data, owner);
+  }
+  return { existingThread: null, forbidden: false };
 };
 
 const normalizeThreadData = (data, user) => {
@@ -536,11 +638,9 @@ export default {
     const user = ctx.state.user;
     if (!user) return ctx.unauthorized('Giris gerekli.');
     const data = asData(ctx);
-    const current = actorForUser(user);
-    const conversationKey = conversationKeyFor(data, user);
-    const threadId = threadIdFor(data, conversationKey);
-    const existingThread = await findThread(strapi, data, conversationKey, threadId);
-    if (!isRealParticipantOfThread(existingThread, current)) {
+
+    const verified = await verifyAndCorrectReceiver(strapi, data, user);
+    if (verified.forbidden) {
       return ctx.forbidden('Bu sohbete erisim yetkin yok.');
     }
     const p = normalizeParticipants(data, user);
@@ -567,13 +667,14 @@ export default {
     const data = asData(ctx);
     const text = pick(data, ['message', 'text', 'body']);
     if (!text) return ctx.badRequest('Mesaj bos olamaz.');
-    const current = actorForUser(user);
-    const conversationKey = conversationKeyFor(data, user);
-    const threadId = threadIdFor(data, conversationKey);
-    const existingThread = await findThread(strapi, data, conversationKey, threadId);
-    if (!isRealParticipantOfThread(existingThread, current)) {
+
+    const verified = await verifyAndCorrectReceiver(strapi, data, user);
+    if (verified.forbidden) {
       return ctx.forbidden('Bu sohbete erisim yetkin yok.');
     }
+    const conversationKey = conversationKeyFor(data, user);
+    const threadId = threadIdFor(data, conversationKey);
+    const existingThread = verified.existingThread;
     const p = normalizeParticipants(data, user);
     if (
       isSamePerson(
@@ -653,16 +754,15 @@ export default {
       receiverEmail: p.receiverEmail,
       receiverProfileId: p.receiverProfileId,
       receiverName: p.receiverName,
-      targetEmail: cleanEmail(pick(data, ['targetEmail', 'messageReceiverEmail'])),
-      targetProfileId: cleanId(
-        pick(data, ['targetProfileId', 'messageReceiverProfileId']),
-      ),
-      messageReceiverEmail: cleanEmail(
-        pick(data, ['messageReceiverEmail', 'targetEmail']),
-      ),
-      messageReceiverProfileId: cleanId(
-        pick(data, ['messageReceiverProfileId', 'targetProfileId']),
-      ),
+      // NOTIFICATION_N1_SECURITY_FIX_REPORT.md BUG-NOTIF-002: these alias
+      // fields used to be re-picked from raw client `data` independently
+      // of `p` (which verifyAndCorrectReceiver now corrects) -- always
+      // mirror the same verified receiver p carries, not a second,
+      // still-client-controlled copy of it.
+      targetEmail: p.receiverEmail,
+      targetProfileId: p.receiverProfileId,
+      messageReceiverEmail: p.receiverEmail,
+      messageReceiverProfileId: p.receiverProfileId,
       sentAt,
       metadata: messageMetadataFor(data),
     };
