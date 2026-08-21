@@ -274,7 +274,7 @@ const pushSupportReplyNotification = async (
   const text = normalizeText(row.message) || normalizeText(row.text);
   if (!text) return;
 
-  const title = 'Destek Yaniti';
+  const title = 'Destek Yanıtı';
   const body = ticketNo ? `${ticketNo}: ${text}` : text;
   const nowIso = new Date().toISOString();
   const baseId = normalizeText(row.id) || nowIso;

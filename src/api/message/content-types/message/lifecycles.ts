@@ -2,7 +2,7 @@ const normalizeText = (value: unknown): string => String(value ?? '').trim();
 
 const normalizePreview = (value: string): string => {
   const text = normalizeText(value);
-  if (!text) return 'Yeni mesaj alindi.';
+  if (!text) return 'Yeni mesaj alındı.';
   if (text.length <= 220) return text;
   return `${text.substring(0, 217)}...`;
 };
@@ -36,7 +36,7 @@ const pushMessageNotification = async (
 
   const messageText = normalizeText(row.message) || normalizeText(row.text);
   const body = normalizePreview(messageText);
-  const senderName = normalizeText(row.senderName) || 'Bir kullanici';
+  const senderName = normalizeText(row.senderName) || 'Bir kullanıcı';
   const threadId = normalizeText(row.threadId);
   const listingId = normalizeText(row.listingId);
   const baseId =

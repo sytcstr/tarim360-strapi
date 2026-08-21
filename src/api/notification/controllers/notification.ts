@@ -33,26 +33,26 @@ const DOMAIN_EVENTS: Record<
 > = {
   listing: {
     events: {
-      favorite: { kind: 'favorite', title: 'Ilanin Favorilendi', message: 'ilanini favorilerine ekledi.' },
-      like: { kind: 'like', title: 'Ilanin Begenildi', message: 'ilanini begendi.' },
+      favorite: { kind: 'favorite', title: 'İlanın Favorilendi', message: 'ilanını favorilerine ekledi.' },
+      like: { kind: 'like', title: 'İlanın Beğenildi', message: 'ilanını beğendi.' },
     },
   },
   logistics_load: {
     events: {
-      favorite: { kind: 'favorite', title: 'Yuk Ilanin Favorilendi', message: 'yuk ilanini favorilerine ekledi.' },
-      like: { kind: 'like', title: 'Yuk Ilanin Begenildi', message: 'yuk ilanini begendi.' },
+      favorite: { kind: 'favorite', title: 'Yük İlanın Favorilendi', message: 'yük ilanını favorilerine ekledi.' },
+      like: { kind: 'like', title: 'Yük İlanın Beğenildi', message: 'yük ilanını beğendi.' },
     },
   },
   processed_product: {
     events: {
-      favorite: { kind: 'favorite', title: 'Urunun Favorilendi', message: 'urununu favorilerine ekledi.' },
-      like: { kind: 'like', title: 'Urunun Begenildi', message: 'urununu begendi.' },
+      favorite: { kind: 'favorite', title: 'Ürünün Favorilendi', message: 'ürününü favorilerine ekledi.' },
+      like: { kind: 'like', title: 'Ürünün Beğenildi', message: 'ürününü beğendi.' },
     },
   },
   profile: {
     events: {
       favorite: { kind: 'favorite', title: 'Profilin Favorilendi', message: 'profilini favorilerine ekledi.' },
-      comment: { kind: 'comment', title: 'Profiline Yeni Yorum', message: 'profiline yorum yapti.' },
+      comment: { kind: 'comment', title: 'Profiline Yeni Yorum', message: 'profiline yorum yaptı.' },
     },
   },
 };
@@ -104,7 +104,7 @@ export default factories.createCoreController(UID, ({ strapi }) => ({
       return;
     }
 
-    const senderLabel = identity.email.split('@')[0] || 'Bir kullanici';
+    const senderLabel = identity.email.split('@')[0] || 'Bir kullanıcı';
     const notifData: Record<string, unknown> = {
       notificationId: `${domain}_${event}_${entityId}_${identity.ownerId}`,
       kind: eventConfig.kind,

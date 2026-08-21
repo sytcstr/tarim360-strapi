@@ -185,7 +185,7 @@ export default factories.createCoreController(UID, ({ strapi }) => ({
           offerId,
           listingId: String(data.listingId ?? data.listingNo ?? ''),
           title: 'Yeni Teklif',
-          message: `${String(data.title ?? 'Ilan')} icin yeni teklif aldiniz.`,
+          message: `${String(data.title ?? 'İlan')} için yeni teklif aldınız.`,
           isRead: false,
           createdAtClient: nowIso,
         };
@@ -343,9 +343,9 @@ export default factories.createCoreController(UID, ({ strapi }) => ({
           const titleByStatus: Record<string, string> = {
             accepted: 'Teklif Kabul Edildi',
             rejected: 'Teklif Reddedildi',
-            bargaining: 'Karsi Teklif',
+            bargaining: 'Karşı Teklif',
           };
-          const offerTitle = String(entity.title ?? 'Ilan').trim() || 'Ilan';
+          const offerTitle = String(entity.title ?? 'İlan').trim() || 'İlan';
           const notifData: Record<string, unknown> = {
             notificationId: `offer_${status}_${entity.offerId}`,
             kind: 'offer',
@@ -353,8 +353,8 @@ export default factories.createCoreController(UID, ({ strapi }) => ({
             source: 'offer',
             offerId: String(entity.offerId ?? ''),
             listingId: String(entity.listingId ?? ''),
-            title: titleByStatus[status] ?? 'Teklif Guncellendi',
-            message: `${offerTitle} teklifi guncellendi.`,
+            title: titleByStatus[status] ?? 'Teklif Güncellendi',
+            message: `${offerTitle} teklifi güncellendi.`,
             isRead: false,
             createdAtClient: String(updateData.updatedAtClient ?? ''),
           };
