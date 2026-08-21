@@ -176,3 +176,104 @@ test('regression: an unauthenticated GET list is still rejected', async () => {
   });
   assert.equal(res.status, 403);
 });
+
+// ---------------------------------------------------------------------
+// ENGAGEMENT_E2_TARGETED_FIX_REPORT.md BUG-ENG-007: viewCount/
+// engagementVersion must never be settable through the generic create/
+// update actions -- the canonical POST /engagements/view flow is the
+// only real source of truth. Self-serving metric inflation, not a
+// cross-user issue (the ownership policy already scopes writes to the
+// caller's own row).
+// ---------------------------------------------------------------------
+
+test('BUG-ENG-007: a normal profile-setting update cannot spoof its own viewCount', async () => {
+  const jwt = await registerAndLogin(`sec-viewcount-${randomUUID()}@test.local`);
+  const own = await createOwnProfileSetting(jwt);
+  assert.equal(own.viewCount ?? 0, 0);
+
+  const res = await fetch(`${BASE_URL}/profile-settings/${own.documentId}`, {
+    method: 'PUT',
+    headers: authed(jwt),
+    body: JSON.stringify({ data: { viewCount: 999999 } }),
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.notEqual(body.data.viewCount, 999999, 'a client-supplied viewCount must never be written');
+  assert.equal(body.data.viewCount ?? 0, 0);
+});
+
+test('BUG-ENG-007: engagementVersion cannot be spoofed through the same update', async () => {
+  const jwt = await registerAndLogin(`sec-engversion-${randomUUID()}@test.local`);
+  const own = await createOwnProfileSetting(jwt);
+
+  const res = await fetch(`${BASE_URL}/profile-settings/${own.documentId}`, {
+    method: 'PUT',
+    headers: authed(jwt),
+    body: JSON.stringify({ data: { engagementVersion: 999999, displayName: 'Yeni Isim' } }),
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.notEqual(body.data.engagementVersion, 999999);
+  assert.equal(body.data.displayName, 'Yeni Isim', 'the rest of a legitimate update must still go through');
+});
+
+test('BUG-ENG-007: a legitimate bio/avatar/profile field update still works normally', async () => {
+  const jwt = await registerAndLogin(`sec-legit-update-${randomUUID()}@test.local`);
+  const own = await createOwnProfileSetting(jwt);
+
+  const res = await fetch(`${BASE_URL}/profile-settings/${own.documentId}`, {
+    method: 'PUT',
+    headers: authed(jwt),
+    body: JSON.stringify({ data: { bio: 'Yeni bio metni', city: 'Konya' } }),
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.data.bio, 'Yeni bio metni');
+  assert.equal(body.data.city, 'Konya');
+});
+
+test('BUG-ENG-007: viewCount cannot be spoofed on create either', async () => {
+  const jwt = await registerAndLogin(`sec-create-spoof-${randomUUID()}@test.local`);
+  const res = await fetch(`${BASE_URL}/profile-settings`, {
+    method: 'POST',
+    headers: authed(jwt),
+    body: JSON.stringify({ data: { displayName: 'Yeni Profil', viewCount: 500, engagementVersion: 500 } }),
+  });
+  assert.equal(res.status, 201);
+  const body = await res.json();
+  assert.equal(body.data.viewCount ?? 0, 0);
+  assert.equal(body.data.engagementVersion ?? 0, 0);
+});
+
+test('BUG-ENG-007 regression: the canonical POST /engagements/view flow still increments a profile\'s real viewCount', async () => {
+  const targetJwt = await registerAndLogin(`sec-view-target-${randomUUID()}@test.local`);
+  const target = await createOwnProfileSetting(targetJwt);
+  const visitorJwt = await registerAndLogin(`sec-view-visitor-${randomUUID()}@test.local`);
+
+  // engagement-v1's 'profile' target is resolved by the row's own
+  // id/documentId (see engagement-core.ts's resolveTargetRow), not by the
+  // profileId custom field -- that field is only used internally for the
+  // self-view identity comparison below.
+  const res = await fetch(`${BASE_URL}/engagements/view`, {
+    method: 'POST',
+    headers: authed(visitorJwt),
+    body: JSON.stringify({ targetType: 'profile', targetId: target.documentId }),
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.data?.count ?? body.count, 1, 'a real visitor view must still increment the profile viewCount');
+});
+
+test('BUG-ENG-007 regression: a self-view does not increment the profile\'s own viewCount', async () => {
+  const ownerJwt = await registerAndLogin(`sec-selfview-${randomUUID()}@test.local`);
+  const own = await createOwnProfileSetting(ownerJwt);
+
+  const res = await fetch(`${BASE_URL}/engagements/view`, {
+    method: 'POST',
+    headers: authed(ownerJwt),
+    body: JSON.stringify({ targetType: 'profile', targetId: own.documentId }),
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.data?.count ?? body.count, 0, 'viewing your own profile must not inflate your own count');
+});

@@ -83,6 +83,25 @@ async function createListingAs(jwt: string) {
   return json.data;
 }
 
+async function createListingCommentAs(jwt: string, listingId: string, text = 'Test yorumu') {
+  const operationId = randomUUID();
+  const res = await fetch(`${BASE_URL}/listing-comments`, {
+    method: 'POST',
+    headers: authed(jwt),
+    body: JSON.stringify({
+      data: { listingId, body: text, operationId },
+    }),
+  });
+  if (res.status !== 201) throw new Error(`listing-comment create failed: ${res.status}`);
+  // The route's sanitizeOutput strips the response body down to {} for the
+  // authenticated role (a separate, pre-existing response-shape quirk, not
+  // part of this fix) -- look the real row up directly instead of trusting
+  // the HTTP response body.
+  return strapiInstance.db
+    .query('api::listing-comment.listing-comment')
+    .findOne({ where: { operationId } } as any);
+}
+
 test('an authenticated user can delete their own account -> 200, user row removed, retention record created', async () => {
   const user = await registerAndLogin(`delacc-self-${randomUUID()}@test.local`);
   await strapiInstance.entityService.create('api::notification.notification', {
@@ -320,4 +339,109 @@ test('an unrelated notification (no field referencing the deleted account at all
     where: { targetEmail: stranger.email },
   } as any);
   assert.equal(rows.length, 1, 'a notification with no field referencing the deleted account must be untouched');
+});
+
+// ---------------------------------------------------------------------
+// ENGAGEMENT_E2_TARGETED_FIX_REPORT.md BUG-ENG-013: listing-comment rows
+// were never part of this cleanup cascade, leaving a deleted user's
+// ownerEmail (PII) orphaned on their comments indefinitely -- same class
+// of gap as the notification PII retention fix above.
+// ---------------------------------------------------------------------
+
+test('BUG-ENG-013: A comments on a listing, then deletes their account -> the comment row is removed', async () => {
+  const owner = await registerAndLogin(`delacc-comment-owner-${randomUUID()}@test.local`);
+  const listing = await createListingAs(owner.jwt);
+  const commenter = await registerAndLogin(`delacc-comment-a-${randomUUID()}@test.local`);
+  const comment = await createListingCommentAs(commenter.jwt, listing.listingNo ?? listing.id);
+
+  const res = await fetch(`${BASE_URL}/auth/account`, { method: 'DELETE', headers: authed(commenter.jwt) });
+  assert.equal(res.status, 200);
+
+  const row = await strapiInstance.db.query('api::listing-comment.listing-comment').findOne({
+    where: { id: comment.id },
+  } as any);
+  assert.equal(row, null, 'the deleted user\'s comment row must be gone, not just soft-marked');
+});
+
+test('BUG-ENG-013: B\'s comment on the same listing survives A\'s account deletion', async () => {
+  const owner = await registerAndLogin(`delacc-comment-owner2-${randomUUID()}@test.local`);
+  const listing = await createListingAs(owner.jwt);
+  const a = await registerAndLogin(`delacc-comment-a2-${randomUUID()}@test.local`);
+  const b = await registerAndLogin(`delacc-comment-b2-${randomUUID()}@test.local`);
+  await createListingCommentAs(a.jwt, listing.listingNo ?? listing.id, 'A yorumu');
+  const bComment = await createListingCommentAs(b.jwt, listing.listingNo ?? listing.id, 'B yorumu');
+
+  const res = await fetch(`${BASE_URL}/auth/account`, { method: 'DELETE', headers: authed(a.jwt) });
+  assert.equal(res.status, 200);
+
+  const row = await strapiInstance.db.query('api::listing-comment.listing-comment').findOne({
+    where: { id: bComment.id },
+  } as any);
+  assert.ok(row, 'B\'s comment must survive A\'s account deletion');
+  assert.equal(row.body, 'B yorumu');
+});
+
+test('BUG-ENG-013: an unrelated comment on a different listing by a different owner is untouched', async () => {
+  const owner1 = await registerAndLogin(`delacc-comment-owner3-${randomUUID()}@test.local`);
+  const listing1 = await createListingAs(owner1.jwt);
+  const a = await registerAndLogin(`delacc-comment-a3-${randomUUID()}@test.local`);
+  await createListingCommentAs(a.jwt, listing1.listingNo ?? listing1.id, 'A yorumu');
+
+  const owner2 = await registerAndLogin(`delacc-comment-owner4-${randomUUID()}@test.local`);
+  const listing2 = await createListingAs(owner2.jwt);
+  const stranger = await registerAndLogin(`delacc-comment-stranger-${randomUUID()}@test.local`);
+  const strangerComment = await createListingCommentAs(stranger.jwt, listing2.listingNo ?? listing2.id, 'Alakasiz yorum');
+
+  const res = await fetch(`${BASE_URL}/auth/account`, { method: 'DELETE', headers: authed(a.jwt) });
+  assert.equal(res.status, 200);
+
+  const row = await strapiInstance.db.query('api::listing-comment.listing-comment').findOne({
+    where: { id: strangerComment.id },
+  } as any);
+  assert.ok(row, 'a comment from an entirely unrelated user/listing must be untouched');
+});
+
+test('BUG-ENG-013: after cleanup, only the remaining (non-deleted-owner) comment row is left for that listing', async () => {
+  const owner = await registerAndLogin(`delacc-comment-owner5-${randomUUID()}@test.local`);
+  const listing = await createListingAs(owner.jwt);
+  const a = await registerAndLogin(`delacc-comment-a5-${randomUUID()}@test.local`);
+  const b = await registerAndLogin(`delacc-comment-b5-${randomUUID()}@test.local`);
+  const aComment = await createListingCommentAs(a.jwt, listing.listingNo ?? listing.id, 'A yorumu');
+  const bComment = await createListingCommentAs(b.jwt, listing.listingNo ?? listing.id, 'B yorumu');
+
+  const res = await fetch(`${BASE_URL}/auth/account`, { method: 'DELETE', headers: authed(a.jwt) });
+  assert.equal(res.status, 200);
+
+  const remaining = await strapiInstance.db.query('api::listing-comment.listing-comment').findMany({
+    where: { listingId: aComment.listingId },
+  } as any);
+  assert.equal(remaining.length, 1, 'exactly one comment (B\'s) must remain for this listing after A\'s cleanup');
+  assert.equal(remaining[0].id, bComment.id);
+});
+
+test('BUG-ENG-013 regression: notification cleanup still works correctly alongside the new listing-comment cleanup', async () => {
+  const user = await registerAndLogin(`delacc-comment-notif-${randomUUID()}@test.local`);
+  await strapiInstance.entityService.create('api::notification.notification', {
+    data: { notificationId: `n_${randomUUID()}`, receiverEmail: user.email, isRead: false },
+  });
+  const listing = await createListingAs(user.jwt);
+  await createListingCommentAs(user.jwt, listing.listingNo ?? listing.id);
+
+  const res = await fetch(`${BASE_URL}/auth/account`, { method: 'DELETE', headers: authed(user.jwt) });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.ok, true);
+
+  const notifRows = await strapiInstance.db.query('api::notification.notification').findMany({
+    where: { receiverEmail: user.email },
+  } as any);
+  assert.equal(notifRows.length, 0, 'notification cleanup must be unaffected by the listing-comment cleanup addition');
+});
+
+test('BUG-ENG-013 regression: account deletion permission still works end-to-end (no permission regression)', async () => {
+  const user = await registerAndLogin(`delacc-comment-perm-${randomUUID()}@test.local`);
+  const res = await fetch(`${BASE_URL}/auth/account`, { method: 'DELETE', headers: authed(user.jwt) });
+  assert.equal(res.status, 200, 'permission-gap fix (PERM-N2) must remain intact after the listing-comment cleanup addition');
+  const userRow = await findUserById(user.userId);
+  assert.equal(userRow, null);
 });

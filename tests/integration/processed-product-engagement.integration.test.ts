@@ -414,3 +414,83 @@ test('generic create ignores a client-supplied likeCount/favoriteCount/viewCount
   assert.equal(created.favoriteCount ?? 0, 0);
   assert.equal(created.viewCount ?? 0, 0);
 });
+
+// ---------------------------------------------------------------------
+// ENGAGEMENT_E2_TARGETED_FIX_REPORT.md BUG-ENG-004: GET /processed-products/
+// public and /mine must actually project likeCount/favoriteCount/viewCount/
+// engagementVersion -- before this fix these list responses omitted the
+// fields entirely, so ProcessedProductInsightsStore.seedCounts (fed only by
+// this response, via ProcessedProductItem.fromMap) always received null and
+// the seller-center stats sheet / card seeds were frozen.
+// ---------------------------------------------------------------------
+
+async function grantPremium(ownerId: string, email: string) {
+  await strapiInstance.entityService.create('api::profile-setting.profile-setting', {
+    data: {
+      profileId: ownerId,
+      ownerEmail: email,
+      displayName: 'Premium Test',
+      activePremium: { endsAt: null },
+    },
+  } as any);
+}
+
+test('GET /processed-products/public returns the real, current likeCount/favoriteCount/viewCount/engagementVersion', async () => {
+  const jwt = await registerAndLogin(`pp-list-public-${randomUUID()}@test.local`);
+  const store = await createSellerStore({ ownerId: `pub-list-owner-${randomUUID()}` });
+  const product = await createProduct({ ownerId: store.ownerId, store: store.id });
+
+  await fetch(`${BASE_URL}/engagements/like`, {
+    method: 'PUT',
+    headers: authed(jwt),
+    body: JSON.stringify({ targetType: 'processed-product', targetId: product.id }),
+  });
+  await fetch(`${BASE_URL}/engagements/favorite`, {
+    method: 'PUT',
+    headers: authed(jwt),
+    body: JSON.stringify({ targetType: 'processed-product', targetId: product.id }),
+  });
+  await fetch(`${BASE_URL}/engagements/view`, {
+    method: 'POST',
+    headers: authed(jwt),
+    body: JSON.stringify({ targetType: 'processed-product', targetId: product.id }),
+  });
+
+  const res = await fetch(`${BASE_URL}/processed-products/public`);
+  const body = await res.json();
+  const found = (body.products as any[]).find((p) => String(p.id) === String(product.localProductId));
+  assert.ok(found, 'the product must be present in the public list');
+  assert.equal(found.likeCount, 1, 'public list must reflect the real, current likeCount');
+  assert.equal(found.favoriteCount, 1, 'public list must reflect the real, current favoriteCount');
+  assert.equal(found.viewCount, 1, 'public list must reflect the real, current viewCount');
+  assert.ok(typeof found.engagementVersion === 'number' && found.engagementVersion > 0);
+});
+
+test('GET /processed-products/mine returns the same real counts as /public for the owner\'s own product', async () => {
+  const ownerEmail = `pp-list-mine-${randomUUID()}@test.local`;
+  const ownerJwt = await registerAndLogin(ownerEmail);
+  const ownerId = `u_${ownerEmail.trim().toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
+  await grantPremium(ownerId, ownerEmail);
+
+  const store = await createSellerStore({ ownerId });
+  const product = await createProduct({ ownerId: store.ownerId, store: store.id });
+
+  const liker = await registerAndLogin(`pp-list-mine-liker-${randomUUID()}@test.local`);
+  await fetch(`${BASE_URL}/engagements/like`, {
+    method: 'PUT',
+    headers: authed(liker),
+    body: JSON.stringify({ targetType: 'processed-product', targetId: product.id }),
+  });
+
+  const mineRes = await fetch(`${BASE_URL}/processed-products/mine`, { headers: authed(ownerJwt) });
+  assert.equal(mineRes.status, 200);
+  const mineBody = await mineRes.json();
+  const mineFound = (mineBody.products as any[]).find((p) => String(p.id) === String(product.localProductId));
+  assert.ok(mineFound, 'the product must be present in the owner\'s own list');
+  assert.equal(mineFound.likeCount, 1);
+
+  const publicRes = await fetch(`${BASE_URL}/processed-products/public`);
+  const publicBody = await publicRes.json();
+  const publicFound = (publicBody.products as any[]).find((p) => String(p.id) === String(product.localProductId));
+  assert.equal(publicFound.likeCount, mineFound.likeCount, 'mine and public must agree on the same real count');
+});
