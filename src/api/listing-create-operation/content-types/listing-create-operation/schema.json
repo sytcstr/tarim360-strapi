@@ -1,0 +1,31 @@
+{
+  "kind": "collectionType",
+  "collectionName": "listing_create_operations",
+  "info": {
+    "singularName": "listing-create-operation",
+    "pluralName": "listing-create-operations",
+    "displayName": "Listing Create Operation"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "operationId": {
+      "type": "string",
+      "required": true,
+      "unique": true
+    },
+    "payloadFingerprint": {
+      "type": "string",
+      "required": true
+    },
+    "ownerProfileId": {
+      "type": "string",
+      "required": true
+    },
+    "listingDocumentId": {
+      "type": "string"
+    }
+  }
+}

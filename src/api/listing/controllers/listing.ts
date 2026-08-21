@@ -12,6 +12,8 @@ const LISTING_UID = 'api::listing.listing';
 const PROFILE_UID = 'api::profile-setting.profile-setting';
 const PURCHASE_EVENT_UID = 'api::purchase-event.purchase-event';
 const ROCKET_ACTIVATION_UID = 'api::rocket-activation.rocket-activation';
+const LISTING_CREATE_OPERATION_UID =
+  'api::listing-create-operation.listing-create-operation';
 
 const ROCKET_PRODUCT_BY_DAYS: Record<number, string> = {
   7: 'doping_7_189',
@@ -112,12 +114,118 @@ const findProfileForIdentity = async (
 export default factories.createCoreController(
   LISTING_UID,
   ({ strapi }) => ({
+    /**
+     * PRE_UAT_F1_TARGETED_FUNCTIONAL_FIX_REPORT.md F1.6: createListing()
+     * had no idempotency key at all. If a create request actually reached
+     * and was processed by the server but the client timed out waiting
+     * for the response (a realistic scenario on the flaky rural
+     * connections this app's actual users have), the client believed the
+     * submit failed, queued a brand-new local-only id for offline retry,
+     * and that retry (via engagement.ts's syncOfflineListing) had no way
+     * to recognize the already-created row -- producing a genuine
+     * duplicate listing.
+     *
+     * Fixed with the exact atomic-claim ledger pattern
+     * activateRocket already uses (see the comment there): `listing`
+     * has draftAndPublish:true, which makes storing an operationId
+     * directly on the listing row itself unsafe (entityService.create
+     * with publishedAt set creates TWO physical rows sharing one
+     * documentId -- see findListingByAnyId's own comment), so a separate
+     * listing-create-operation ledger content-type claims the
+     * operationId FIRST (its unique constraint is what actually
+     * serializes concurrent identical requests), and only a request that
+     * wins that claim goes on to create the real listing. A retry with
+     * the same operationId + same payload returns the already-created
+     * listing instead of creating a new one; the same operationId with a
+     * DIFFERENT payload is rejected as a conflict.
+     */
     async create(ctx) {
       const identity = readIdentity(ctx);
       if (!identity) return ctx.unauthorized('Oturum gerekli.');
 
       const body = (ctx.request?.body ?? {}) as Record<string, unknown>;
       const input = (body.data ?? body) as Record<string, unknown>;
+
+      const operationId = String(input.operationId ?? '').trim();
+      if (!isValidOperationId(operationId)) {
+        return ctx.badRequest('operationId zorunlu ve UUID formatinda olmali.');
+      }
+
+      const clientPayload = stripIdentifierFields(
+        stripClientProtectedFields(input),
+      );
+      delete (clientPayload as any).operationId;
+      const fingerprint = fingerprintPayload({
+        ...clientPayload,
+        ownerKey: identity.ownerId,
+      });
+
+      // Resolves a ledger row (from either the resolveOperation lookup or
+      // a lost creation race) to the real, already-created listing and
+      // writes the response, OR -- if the ledger row is stale (claimed
+      // but never linked to a real listing, e.g. a prior validation
+      // failure) -- deletes it and returns false so the caller falls
+      // through to a fresh create attempt instead of being stuck forever.
+      const respondWithLedgeredListing = async (
+        ledgerRow: any,
+      ): Promise<boolean> => {
+        const documentId = String(ledgerRow?.listingDocumentId ?? '').trim();
+        if (!documentId) {
+          await strapi.db
+            .query(LISTING_CREATE_OPERATION_UID)
+            .delete({ where: { id: ledgerRow.id } } as any);
+          return false;
+        }
+        const minimal = await findListingByAnyId(strapi, documentId, ['id']);
+        if (!minimal?.id) {
+          await strapi.db
+            .query(LISTING_CREATE_OPERATION_UID)
+            .delete({ where: { id: ledgerRow.id } } as any);
+          return false;
+        }
+        const full = await strapi.entityService.findOne(
+          LISTING_UID as any,
+          minimal.id as any,
+          {},
+        );
+        if (!full) {
+          await strapi.db
+            .query(LISTING_CREATE_OPERATION_UID)
+            .delete({ where: { id: ledgerRow.id } } as any);
+          return false;
+        }
+        // Deliberately not this.sanitizeOutput/transformResponse here --
+        // confirmed live those returned an empty {} body for this action
+        // (a POST route's output-sanitization context behaves differently
+        // than the GET actions it's normally exercised through elsewhere
+        // in this codebase). This response shape matches exactly what
+        // super.create's own resolved value looks like (see the
+        // createResult capture below).
+        ctx.status = 200;
+        ctx.body = { data: full, meta: {} };
+        return true;
+      };
+
+      const resolution = await resolveOperation(
+        strapi,
+        LISTING_CREATE_OPERATION_UID,
+        operationId,
+        fingerprint,
+      );
+      if (resolution.status === 'conflict') {
+        return ctx.conflict(
+          'Bu islem kimligi farkli bir ilan gonderimi icin kullanilmis.',
+        );
+      }
+      if (resolution.status === 'duplicate') {
+        const responded = await respondWithLedgeredListing(
+          resolution.existing,
+        );
+        if (responded) return;
+        // Stale claim -- respondWithLedgeredListing already deleted it;
+        // fall through to a fresh attempt below.
+      }
+
       const profile = await findProfileForIdentity(
         strapi,
         identity.email,
@@ -131,9 +239,36 @@ export default factories.createCoreController(
       const isPremium = hasActivePremiumExpiry(profile);
       const publishedAt = new Date().toISOString();
 
+      // The ledger create is the atomic claim: operationId's unique
+      // constraint means only one concurrent request with the same
+      // operationId can ever win this insert -- the loser re-reads the
+      // winner's result instead of separately creating a listing.
+      let raced = false;
+      try {
+        await strapi.entityService.create(LISTING_CREATE_OPERATION_UID as any, {
+          data: {
+            operationId,
+            payloadFingerprint: fingerprint,
+            ownerProfileId,
+          },
+        });
+      } catch (_e) {
+        raced = true;
+      }
+      if (raced) {
+        const existing = await strapi.db
+          .query(LISTING_CREATE_OPERATION_UID)
+          .findOne({ where: { operationId } } as any);
+        if (existing) {
+          const responded = await respondWithLedgeredListing(existing);
+          if (responded) return;
+        }
+        return ctx.internalServerError('Ilan gonderim kaydi dogrulanamadi.');
+      }
+
       ctx.request.body = {
         data: {
-          ...stripIdentifierFields(stripClientProtectedFields(input)),
+          ...clientPayload,
           ownerProfileId,
           ownerId: ownerProfileId,
           ownerEmail: normalizeEmail(identity.email),
@@ -148,7 +283,37 @@ export default factories.createCoreController(
         status: 'published',
       };
 
-      return super.create(ctx);
+      // super.create(ctx) resolves to the response body itself (it does
+      // NOT set ctx.body as a side effect -- confirmed live while writing
+      // this fix: awaiting it without using its return value left ctx.body
+      // undefined and Koa fell back to a plain "Created" text response).
+      // Must both capture and return this so Strapi's own dispatcher still
+      // sends the real JSON response.
+      const createResult = await super.create(ctx);
+
+      // Link the ledger claim to the real created row so a later retry
+      // (a genuine duplicate hit) can resolve to it. A genuine super.create
+      // failure (validation error etc.) throws before reaching here, so
+      // the claim is deliberately left unlinked in that case -- the next
+      // retry with the same operationId will find it stale (no linked
+      // listing) and self-heal by deleting it and trying again, rather
+      // than being permanently stuck.
+      try {
+        const createdData = (createResult as any)?.data;
+        const createdDocumentId = createdData?.documentId ?? createdData?.id;
+        if (createdDocumentId) {
+          await strapi.db.query(LISTING_CREATE_OPERATION_UID).update({
+            where: { operationId },
+            data: { listingDocumentId: String(createdDocumentId) },
+          } as any);
+        }
+      } catch (e) {
+        strapi.log.warn(
+          `Listing create operation ledger link failed: ${String(e)}`,
+        );
+      }
+
+      return createResult;
     },
 
     async update(ctx) {

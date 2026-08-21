@@ -9,6 +9,8 @@ import { stripListingProtectedFields } from '../../../utils/listing-metrics';
 
 const PROFILE_SETTING_UID = 'api::profile-setting.profile-setting';
 const LISTING_UID = 'api::listing.listing';
+const LISTING_CREATE_OPERATION_UID =
+  'api::listing-create-operation.listing-create-operation';
 
 const asString = (value: unknown): string => String(value ?? '').trim();
 const asBool = (value: unknown, fallback = false): boolean => {
@@ -510,6 +512,33 @@ export default {
       });
       ctx.body = { data: { ok: true, operation: 'update', listing: entity } };
       return;
+    }
+
+    // PRE_UAT_F1_TARGETED_FUNCTIONAL_FIX_REPORT.md F1.6: this is the
+    // offline-retry path -- the client's local id will never match a
+    // listing that was actually already created by a prior POST /listings
+    // call the client only THOUGHT had failed (a client-side timeout with
+    // no response, not a real server-side failure). Before creating a
+    // second, duplicate listing, check the same listing-create-operation
+    // ledger listing.ts's create() already writes to, keyed by the same
+    // operationId the client is required to carry through this retry.
+    if (operation === 'create') {
+      const operationId = asString(listing.operationId);
+      if (operationId) {
+        const ledger = await strapi.db
+          .query(LISTING_CREATE_OPERATION_UID)
+          .findOne({ where: { operationId } } as any);
+        const linkedDocumentId = asString(ledger?.listingDocumentId);
+        if (linkedDocumentId) {
+          const alreadyCreated = await findListingByAnyId(strapi, linkedDocumentId);
+          if (alreadyCreated?.id) {
+            ctx.body = {
+              data: { ok: true, operation: 'create', listing: alreadyCreated, idempotent: true },
+            };
+            return;
+          }
+        }
+      }
     }
 
     const entity = await strapi.entityService.create(LISTING_UID as any, {
