@@ -38,6 +38,21 @@ const asPositiveInt = (value: unknown): number | null => {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 };
 
+/**
+ * ENGAGEMENT_E2_TARGETED_FIX_REPORT.md BUG-ENG-004: getMine/listPublic
+ * never projected these fields at all, so ProcessedProductInsightsStore's
+ * seedCounts() (fed exclusively by this response, via
+ * ProcessedProductItem.fromMap) always received null and could never
+ * refresh -- the seller-center stats sheet and every card's initial
+ * engagement seed were frozen at whatever was last cached locally.
+ * engagement-core (setMembership/registerView) remains the only writer
+ * of these counters; this is a read-projection fix only.
+ */
+const asCount = (value: unknown): number => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.trunc(parsed) : 0;
+};
+
 const normalizeProductNo = (value: unknown): string =>
   asString(value)
     .replace(/^#/, '')
@@ -135,6 +150,10 @@ const mapProduct = (entity: any) => {
     sortOrder: typeof entity.sortOrder === 'number' ? entity.sortOrder : 0,
     createdAtIso: asString(entity.createdAt),
     updatedAtIso: asString(entity.updatedAt),
+    likeCount: asCount(entity.likeCount),
+    favoriteCount: asCount(entity.favoriteCount),
+    viewCount: asCount(entity.viewCount),
+    engagementVersion: asCount(entity.engagementVersion),
   };
 };
 
@@ -256,6 +275,10 @@ export default ({ strapi }: { strapi: any }) => ({
         'isActive',
         'createdAt',
         'updatedAt',
+        'likeCount',
+        'favoriteCount',
+        'viewCount',
+        'engagementVersion',
       ],
       orderBy: { updatedAt: 'desc' },
       populate: ['cover'],
@@ -289,6 +312,10 @@ export default ({ strapi }: { strapi: any }) => ({
         'isActive',
         'createdAt',
         'updatedAt',
+        'likeCount',
+        'favoriteCount',
+        'viewCount',
+        'engagementVersion',
       ],
       orderBy: { updatedAt: 'desc' },
       populate: ['cover'],
