@@ -6,6 +6,7 @@ import {
 import { isPremiumActiveFromProfile } from '../../../utils/premium-sync';
 import { normalizeFcmTokenList } from '../../../utils/fcm';
 import { cleanupOwnerEmbeddedHubContent } from '../../../utils/account-cleanup';
+import { recountListingComments } from '../../../utils/listing-metrics';
 
 const normalizeEmail = (v: unknown) => String(v ?? '').trim().toLowerCase();
 const normalizeUsername = (v: unknown) => String(v ?? '').trim().toLowerCase();
@@ -402,6 +403,36 @@ export default {
         'api::seller-store.seller-store',
         { $or: [{ ownerId }, { ownerEmail: email }] },
       );
+
+      // ENGAGEMENT_E2_TARGETED_FIX_REPORT.md BUG-ENG-013: listing-comment
+      // rows were never part of this cleanup cascade, leaving a deleted
+      // user's ownerEmail (PII) orphaned on their comments indefinitely --
+      // same class of gap as BUG-NOTIF-005 (notification PII retention),
+      // already closed. listingId is collected BEFORE the delete so the
+      // affected listings' cached commentCount can be recounted afterward
+      // (setListingCounter safely no-ops if that listing was also deleted
+      // in this same pass).
+      const ownedListingComments = await strapi.db
+        .query('api::listing-comment.listing-comment')
+        .findMany({
+          where: { $or: [{ ownerId }, { ownerEmail: email }] },
+          select: ['id', 'listingId'],
+        } as any);
+      const affectedCommentListingIds = Array.from(
+        new Set(
+          (Array.isArray(ownedListingComments) ? ownedListingComments : [])
+            .map((row: any) => String(row?.listingId ?? '').trim())
+            .filter((id: string) => id.length > 0),
+        ),
+      );
+      deleted['listing-comment'] = await deleteByFilter(
+        'api::listing-comment.listing-comment',
+        { $or: [{ ownerId }, { ownerEmail: email }] },
+      );
+      for (const listingId of affectedCommentListingIds) {
+        await recountListingComments(strapi, listingId);
+      }
+
       deleted.ad = await deleteByFilter('api::ad.ad', {
         ownerProfileId: ownerId,
       });
