@@ -67,6 +67,7 @@ async function createListing(jwt: string, overrides: Record<string, unknown> = {
         mainType: 'bitkisel',
         mode: 'sell',
         location: 'Konya',
+        operationId: randomUUID(),
         ...overrides,
       },
     }),

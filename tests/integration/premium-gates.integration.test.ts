@@ -221,6 +221,7 @@ async function createListingAs(jwt: string) {
         mainType: 'bitkisel',
         mode: 'sell',
         location: 'Konya',
+        operationId: randomUUID(),
       },
     }),
   });

@@ -64,7 +64,7 @@ async function createListingAs(jwt: string) {
     method: 'POST',
     headers: authed(jwt),
     body: JSON.stringify({
-      data: { title: 'O1 Test Ilani', mainType: 'bitkisel', mode: 'sell', location: 'Konya' },
+      data: { title: 'O1 Test Ilani', mainType: 'bitkisel', mode: 'sell', location: 'Konya', operationId: randomUUID() },
     }),
   });
   const json = await res.json();

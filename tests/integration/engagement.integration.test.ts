@@ -95,6 +95,7 @@ async function createListingOwnedByStranger(overrides: Record<string, unknown> =
         mode: 'sell',
         mainType: 'urun',
         ownerEmail: 'owner@example.com',
+        operationId: randomUUID(),
         ...overrides,
       },
     }),

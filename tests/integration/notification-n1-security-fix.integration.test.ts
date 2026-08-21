@@ -154,7 +154,7 @@ async function createListingAs(jwt: string) {
     method: 'POST',
     headers: authed(jwt),
     body: JSON.stringify({
-      data: { title: 'N1 Test Ilani', mainType: 'bitkisel', mode: 'sell', location: 'Konya' },
+      data: { title: 'N1 Test Ilani', mainType: 'bitkisel', mode: 'sell', location: 'Konya', operationId: randomUUID() },
     }),
   });
   const json = await res.json();
@@ -190,6 +190,29 @@ test('domain-event: favoriting a real listing notifies its real owner (not a cli
     (r: any) => Boolean(r),
   );
   assert.equal(row.senderEmail, fan.email);
+});
+
+test('PRE_UAT_F1_TARGETED_FUNCTIONAL_FIX_REPORT.md F1.3: a listing domain-event notification stores listingId, so the client can navigate to the real listing on tap', async () => {
+  const owner = await registerAndLogin(`n1-listing-owner-listingid-${randomUUID()}@test.local`);
+  const fan = await registerAndLogin(`n1-listing-fan-listingid-${randomUUID()}@test.local`);
+  const listing = await createListingAs(owner.jwt);
+  const listingId = String(listing.documentId ?? listing.id);
+
+  const { status } = await domainEvent(fan.jwt, {
+    domain: 'listing',
+    entityId: listingId,
+    event: 'like',
+  });
+  assert.equal(status, 200);
+
+  const row = await waitForRow(
+    () =>
+      strapiInstance.db.query('api::notification.notification').findOne({
+        where: { targetEmail: owner.email, event: 'like', source: 'listing' },
+      } as any),
+    (r: any) => Boolean(r),
+  );
+  assert.equal(row.listingId, listingId, 'listingId must be stored so the Flutter client can deep-link to the real listing');
 });
 
 test('domain-event: a spoofed targetEmail in the request body is ignored (recipient is server-derived)', async () => {
