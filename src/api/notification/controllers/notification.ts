@@ -119,6 +119,14 @@ export default factories.createCoreController(UID, ({ strapi }) => ({
     };
     if (owner.email) notifData.targetEmail = owner.email;
     if (owner.ownerId) notifData.targetProfileId = owner.ownerId;
+    // PRE_UAT_F1_TARGETED_FUNCTIONAL_FIX_REPORT.md F1.3: the entityId was
+    // only ever used to resolve the owner, then discarded -- tapping a
+    // listing favorite/like notification had no way to recover which
+    // listing it was about. Stored under the same `listingId` field the
+    // message/offer notification producers already use, so the Flutter
+    // client's notification-tap navigation can treat all three the same
+    // way.
+    if (domain === 'listing') notifData.listingId = entityId;
 
     try {
       await strapi.entityService.create(UID as any, { data: notifData });
