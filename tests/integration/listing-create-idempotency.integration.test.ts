@@ -260,3 +260,135 @@ test('offline-sync retry with no matching operationId still creates normally (ge
   assert.notEqual(json.data.idempotent, true);
   assert.equal(await countListingsByTitle(title), 1);
 });
+
+// ---------------------------------------------------------------------
+// FINAL_R1_TARGETED_RELEASE_FIX_REPORT.md R1.2 (FINAL-BUG-002, HIGH):
+// the free-tier listing quota (5 free, then +5 per purchased "Normal
+// Hesap Ilan Hakki" pack) used to be enforced ONLY by the Flutter UI;
+// a direct POST /listings bypassing the app hit no limit at all. Both
+// real creation paths (listing.ts's own create(), and the offline-sync
+// queue's create branch) now enforce the same server-side quota.
+// ---------------------------------------------------------------------
+
+async function grantVerifiedListingQuotaPack(owner: { ownerId: string; email: string }) {
+  return strapiInstance.entityService.create('api::purchase-event.purchase-event', {
+    data: {
+      transactionId: `tx_${randomUUID()}`,
+      ownerProfileId: owner.ownerId,
+      ownerEmail: owner.email,
+      provider: 'google_play',
+      productId: 'normal_listing_5_399',
+      categoryTitle: 'Normal Hesap İlan Hakkı',
+      planTitle: '5 İlan Hakkı',
+      priceTl: 399,
+      isSubscription: false,
+      status: 'verified',
+      verifiedAt: new Date().toISOString(),
+    },
+  });
+}
+
+async function grantPremium(owner: { ownerId: string; email: string }) {
+  const premium = { planTitle: 'Eco Premium', endsAt: null };
+  return strapiInstance.entityService.create('api::profile-setting.profile-setting', {
+    data: {
+      profileId: owner.ownerId,
+      ownerEmail: owner.email,
+      activePremium: premium,
+      activePremiumSubscription: premium,
+    },
+  });
+}
+
+test('FINAL-BUG-002: a free-tier account can create exactly 5 listings, the 6th is rejected server-side', async () => {
+  const user = await registerAndLogin(`r12-quota-free-${randomUUID()}@test.local`);
+  for (let i = 0; i < 5; i++) {
+    const res = await createListing(user.jwt, randomUUID(), { title: `R1.2 Free ${i}-${randomUUID()}` });
+    assert.equal(res.status, 201, `listing #${i + 1} (within the free quota) must succeed`);
+  }
+  const sixth = await createListing(user.jwt, randomUUID(), { title: `R1.2 Free 6th ${randomUUID()}` });
+  assert.equal(sixth.status, 403, 'the 6th listing must be rejected -- there is no server-side quota enforcement otherwise');
+});
+
+test('FINAL-BUG-002: a premium account is exempt from the quota entirely', async () => {
+  const email = `r12-quota-premium-${randomUUID()}@test.local`;
+  const user = await registerAndLogin(email);
+  await grantPremium(user);
+  for (let i = 0; i < 6; i++) {
+    const res = await createListing(user.jwt, randomUUID(), { title: `R1.2 Premium ${i}-${randomUUID()}` });
+    assert.equal(res.status, 201, `premium listing #${i + 1} must succeed -- premium accounts are exempt from the quota`);
+  }
+});
+
+test('FINAL-BUG-002: a verified quota-pack purchase raises the real allowed count by 5', async () => {
+  const email = `r12-quota-purchased-${randomUUID()}@test.local`;
+  const user = await registerAndLogin(email);
+  for (let i = 0; i < 5; i++) {
+    const res = await createListing(user.jwt, randomUUID(), { title: `R1.2 Purchased Free ${i}-${randomUUID()}` });
+    assert.equal(res.status, 201);
+  }
+  const beforePurchase = await createListing(user.jwt, randomUUID(), { title: `R1.2 Purchased Blocked ${randomUUID()}` });
+  assert.equal(beforePurchase.status, 403, 'the 6th must still be blocked before any quota pack purchase');
+
+  await grantVerifiedListingQuotaPack(user);
+
+  for (let i = 0; i < 5; i++) {
+    const res = await createListing(user.jwt, randomUUID(), { title: `R1.2 Purchased After ${i}-${randomUUID()}` });
+    assert.equal(res.status, 201, `listing #${6 + i} must now succeed -- one verified quota pack allows 5 more`);
+  }
+  const eleventh = await createListing(user.jwt, randomUUID(), { title: `R1.2 Purchased 11th ${randomUUID()}` });
+  assert.equal(eleventh.status, 403, 'the 11th listing (past 5 free + 5 purchased) must still be rejected');
+});
+
+test('FINAL-BUG-002: retrying the same operationId at the quota boundary never double-consumes the quota', async () => {
+  const user = await registerAndLogin(`r12-quota-retry-${randomUUID()}@test.local`);
+  let lastOpId = '';
+  const lastTitle = `R1.2 Retry Last ${randomUUID()}`;
+  for (let i = 0; i < 5; i++) {
+    lastOpId = randomUUID();
+    const title = i === 4 ? lastTitle : `R1.2 Retry ${i}-${randomUUID()}`;
+    const res = await createListing(user.jwt, lastOpId, { title });
+    assert.equal(res.status, 201);
+  }
+
+  // Retry the 5th (already-succeeded) create with the SAME operationId --
+  // must resolve to the existing listing, not count as a fresh attempt.
+  // A resolved duplicate returns 200 (respondWithLedgeredListing), not
+  // 201 -- matching this file's own earlier offline-sync-retry test.
+  const retry = await createListing(user.jwt, lastOpId, { title: lastTitle });
+  assert.equal(retry.status, 200);
+  assert.equal(await countListingsByTitle(lastTitle), 1, 'the retry must not create a second real listing');
+
+  const sixth = await createListing(user.jwt, randomUUID(), { title: `R1.2 Retry 6th ${randomUUID()}` });
+  assert.equal(sixth.status, 403, 'a genuinely new 6th create must still be blocked -- the retry must not have silently raised the used count');
+});
+
+test('FINAL-BUG-002: the offline-sync create path enforces the exact same quota, not just POST /listings', async () => {
+  const user = await registerAndLogin(`r12-quota-offline-${randomUUID()}@test.local`);
+  for (let i = 0; i < 5; i++) {
+    const res = await createListing(user.jwt, randomUUID(), { title: `R1.2 Offline Free ${i}-${randomUUID()}` });
+    assert.equal(res.status, 201);
+  }
+
+  const title = `R1.2 Offline Blocked ${randomUUID()}`;
+  const res = await fetch(`${BASE_URL}/offline-sync/listings`, {
+    method: 'POST',
+    headers: authed(user.jwt),
+    body: JSON.stringify({
+      data: {
+        operation: 'create',
+        listing: {
+          id: `l_${Date.now()}`,
+          operationId: randomUUID(),
+          ...listingPayload({ title }),
+        },
+      },
+    }),
+  });
+  assert.equal(
+    res.status,
+    403,
+    'the offline-sync create path must enforce the same quota -- otherwise the POST /listings gate is trivially bypassed',
+  );
+  assert.equal(await countListingsByTitle(title), 0, 'the over-quota listing must never actually be created');
+});

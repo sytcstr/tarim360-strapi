@@ -726,12 +726,14 @@ export default {
 
     const tempPassword = generateTemporaryPassword();
 
-    await strapi.entityService.update(
-      'plugin::users-permissions.user',
-      user.id,
-      { data: { password: tempPassword } },
-    );
-
+    // FINAL_R1_TARGETED_RELEASE_FIX_REPORT.md R1.5 (FINAL-BUG-005, HIGH):
+    // the password used to be persisted BEFORE the email send attempt, so
+    // an SMTP failure (timeout/outage/bad credentials/rate limit) left the
+    // user's real password silently overwritten while they saw only a
+    // generic "gonderilemedi" failure -- locked out with no way to know
+    // their credentials had changed. Send first; only persist the new
+    // password once delivery has actually succeeded, so a failed send
+    // leaves the account's real password completely untouched.
     try {
       await sendTemporaryPasswordEmail({
         to: identifier,
@@ -742,6 +744,12 @@ export default {
         `Sifre e-postasi gonderilemedi: ${String(e).replace('Error: ', '')}`,
       );
     }
+
+    await strapi.entityService.update(
+      'plugin::users-permissions.user',
+      user.id,
+      { data: { password: tempPassword } },
+    );
 
     ctx.body = { ok: true, identifier };
   },

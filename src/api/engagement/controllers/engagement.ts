@@ -5,7 +5,13 @@ import {
 } from '../../logistics-load/controllers/logistics-load';
 import { requireAuthenticatedActorKey } from '../../../utils/engagement-contract';
 import { setMembership } from '../services/engagement-v1';
-import { stripListingProtectedFields } from '../../../utils/listing-metrics';
+import {
+  canCreateNextNormalListing,
+  NORMAL_LISTING_BLOCK_SIZE,
+  NORMAL_LISTING_FREE_COUNT,
+  stripListingProtectedFields,
+} from '../../../utils/listing-metrics';
+import { isPremiumActiveFromProfile, loadPremiumProfile } from '../../../utils/premium-sync';
 
 const PROFILE_SETTING_UID = 'api::profile-setting.profile-setting';
 const LISTING_UID = 'api::listing.listing';
@@ -537,6 +543,24 @@ export default {
             };
             return;
           }
+        }
+      }
+
+      // FINAL_R1_TARGETED_RELEASE_FIX_REPORT.md R1.2 (FINAL-BUG-002): this
+      // offline-queue create is a second real way to create a listing row,
+      // entirely separate from listing.ts's own create() -- it must
+      // enforce the exact same free-tier quota, or the quota gate there is
+      // trivially bypassed by simply calling this endpoint instead.
+      const premiumProfile = await loadPremiumProfile(strapi, identity);
+      if (!isPremiumActiveFromProfile(premiumProfile)) {
+        const canCreate = await canCreateNextNormalListing(
+          strapi,
+          identity.ownerId,
+        );
+        if (!canCreate) {
+          return ctx.forbidden(
+            `Normal hesapta ilk ${NORMAL_LISTING_FREE_COUNT} ilan ucretsizdir. Yeni ilan acmak icin ${NORMAL_LISTING_BLOCK_SIZE} ilan hakki paketi satin almalisin.`,
+          );
         }
       }
     }

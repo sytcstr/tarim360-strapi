@@ -178,8 +178,22 @@ const distanceKm = (lat1: number, lng1: number, lat2: number, lng2: number): num
 };
 
 export default factories.createCoreController(VEHICLE_UID as any, ({ strapi }) => ({
+  /**
+   * FINAL_R1_TARGETED_RELEASE_FIX_REPORT.md R1.4 (FINAL-BUG-004, HIGH):
+   * `transporterKey` used to pass straight through from stripEngagementFields
+   * (engagement counters only) -- any authenticated caller could set it to
+   * an arbitrary real person's identity string, impersonating them or
+   * later handing them unwanted edit/delete rights (canOwnVehicle trusts
+   * this same field). Now forced server-side from the JWT-derived
+   * identity, in the same `id:<ownerId>` format matchesOwnerKey/update's
+   * own `delete data.transporterKey` guard already assume.
+   */
   async create(ctx) {
+    const identity = readIdentity(ctx);
+    if (!identity) return ctx.unauthorized('Bu islem icin giris gerekli.');
+
     const data = stripEngagementFields({ ...asData(ctx) });
+    data.transporterKey = `id:${identity.ownerId}`;
     data.vehicleNo = normalizePublicNo(data.vehicleNo);
     if (!data.vehicleNo) {
       data.vehicleNo = await generatePublicNo(strapi, VEHICLE_UID, 'vehicleNo');

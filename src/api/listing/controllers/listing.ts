@@ -5,7 +5,13 @@
 import { factories } from '@strapi/strapi';
 import { matchesIdentity, normalizeEmail, ownerIdFromEmail, readIdentity } from '../../../utils/identity';
 import { isPremiumActiveFromProfile, loadPremiumProfile } from '../../../utils/premium-sync';
-import { findListingByAnyId, stripListingProtectedFields } from '../../../utils/listing-metrics';
+import {
+  canCreateNextNormalListing,
+  findListingByAnyId,
+  NORMAL_LISTING_BLOCK_SIZE,
+  NORMAL_LISTING_FREE_COUNT,
+  stripListingProtectedFields,
+} from '../../../utils/listing-metrics';
 import { fingerprintPayload, isValidOperationId, resolveOperation } from '../../../utils/operation-idempotency';
 
 const LISTING_UID = 'api::listing.listing';
@@ -238,6 +244,18 @@ export default factories.createCoreController(
         ownerIdFromEmail(identity.email);
       const isPremium = hasActivePremiumExpiry(profile);
       const publishedAt = new Date().toISOString();
+
+      if (!isPremium) {
+        const canCreate = await canCreateNextNormalListing(
+          strapi,
+          ownerProfileId,
+        );
+        if (!canCreate) {
+          return ctx.forbidden(
+            `Normal hesapta ilk ${NORMAL_LISTING_FREE_COUNT} ilan ucretsizdir. Yeni ilan acmak icin ${NORMAL_LISTING_BLOCK_SIZE} ilan hakki paketi satin almalisin.`,
+          );
+        }
+      }
 
       // The ledger create is the atomic claim: operationId's unique
       // constraint means only one concurrent request with the same

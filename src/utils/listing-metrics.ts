@@ -2,6 +2,55 @@ const LISTING_UID = 'api::listing.listing';
 const OFFER_UID = 'api::offer.offer';
 const COMMENT_UID = 'api::listing-comment.listing-comment';
 const SHARE_UID = 'api::listing-share.listing-share';
+const PURCHASE_EVENT_UID = 'api::purchase-event.purchase-event';
+
+/**
+ * FINAL_R1_TARGETED_RELEASE_FIX_REPORT.md R1.2 (FINAL-BUG-002, HIGH):
+ * mirrors lib/features/premium/premium_config.dart's kNormalListingFreeCount/
+ * kNormalListingBlockSize and purchase_coordinator.dart's
+ * PurchaseProductCatalog.normalListingQuota5. Shared between listing.ts's
+ * own create() and engagement.ts's syncOfflineListing (the offline-queue
+ * create path) -- both are real ways to create a listing row, so both
+ * must enforce the same quota, exactly the same reasoning as
+ * LISTING_CLIENT_PROTECTED_FIELDS above.
+ */
+export const NORMAL_LISTING_FREE_COUNT = 5;
+export const NORMAL_LISTING_BLOCK_SIZE = 5;
+export const NORMAL_LISTING_QUOTA_PRODUCT_ID = 'normal_listing_5_399';
+
+/**
+ * Server-authoritative mirror of NormalListingQuotaStatus.canCreateNext
+ * (purchase_store.dart). `usedCount` counts real listing rows owned by
+ * this profile (not a client-supplied count); `purchasedBlocks` counts
+ * real, verified purchase-event rows for the quota product (not
+ * client-trusted purchase history) -- both recomputed fresh from the DB
+ * on every call. Callers are expected to skip this entirely for premium/
+ * business-exempt owners (see isPremiumActiveFromProfile).
+ */
+export const canCreateNextNormalListing = async (
+  strapi: any,
+  ownerProfileId: string,
+): Promise<boolean> => {
+  // `listing` has draftAndPublish:true -- every real create leaves TWO
+  // physical rows sharing one documentId (a draft, publishedAt:null, and
+  // the published row that actually represents the listing). Counting
+  // without this filter double-counts every real listing toward the
+  // quota (confirmed live while writing this fix's own regression test:
+  // a free-tier account was rejected on its 4th listing, not its 6th).
+  const usedCount = await strapi.db.query(LISTING_UID).count({
+    where: { ownerProfileId, publishedAt: { $notNull: true } },
+  } as any);
+  const purchasedBlocks = await strapi.db.query(PURCHASE_EVENT_UID).count({
+    where: {
+      ownerProfileId,
+      productId: NORMAL_LISTING_QUOTA_PRODUCT_ID,
+      status: 'verified',
+    },
+  } as any);
+  const allowedCount =
+    NORMAL_LISTING_FREE_COUNT + purchasedBlocks * NORMAL_LISTING_BLOCK_SIZE;
+  return usedCount < allowedCount;
+};
 
 type ListingCounterField =
   | 'viewCount'

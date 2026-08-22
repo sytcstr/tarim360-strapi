@@ -277,3 +277,210 @@ test('BUG-ENG-007 regression: a self-view does not increment the profile\'s own 
   const body = await res.json();
   assert.equal(body.data?.count ?? body.count, 0, 'viewing your own profile must not inflate your own count');
 });
+
+// ---------------------------------------------------------------------
+// FINAL_R1_TARGETED_RELEASE_FIX_REPORT.md R1.1 (FINAL-BUG-001, CRITICAL):
+// activePremium/activePremiumSubscription/purchaseHistory/purchaseRecords/
+// purchaseUpdatedAt used to pass straight through this same generic
+// create/update controller (only viewCount/engagementVersion were
+// stripped) -- any authenticated user could self-grant real premium/
+// rocket/AI entitlements with a single PUT, zero purchase required. Mirrors
+// the exact BUG-ENG-007 test style already established above in this file
+// for the same controller.
+// ---------------------------------------------------------------------
+
+async function createOwnedListingFor(owner: { ownerId: string; email: string }) {
+  return strapiInstance.entityService.create('api::listing.listing', {
+    data: {
+      title: 'R1.1 Rocket Spoof Test Ilani',
+      mainType: 'Tahil',
+      price: 100,
+      ownerProfileId: owner.ownerId,
+      ownerId: owner.ownerId,
+      ownerEmail: owner.email,
+      status: 'active',
+      isDoping: false,
+      publishedAt: new Date().toISOString(),
+    },
+  });
+}
+
+test('FINAL-BUG-001: a spoofed activePremium is stripped on update, never persisted', async () => {
+  const jwt = await registerAndLogin(`r11-premium-spoof-a-${randomUUID()}@test.local`);
+  const own = await createOwnProfileSetting(jwt);
+
+  const res = await fetch(`${BASE_URL}/profile-settings/${own.documentId}`, {
+    method: 'PUT',
+    headers: authed(jwt),
+    body: JSON.stringify({
+      data: {
+        activePremium: {
+          planTitle: 'Forged Pro Premium',
+          endsAt: '2099-01-01T00:00:00.000Z',
+          rocketRemaining: 99,
+          rocketDays: 28,
+          hasAiAssistant: true,
+        },
+      },
+    }),
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.ok(
+    body.data.activePremium === null || body.data.activePremium === undefined,
+    `activePremium must never be settable via PUT, got: ${JSON.stringify(body.data.activePremium)}`,
+  );
+});
+
+test('FINAL-BUG-001: an endsAt:null ("unlimited") activePremium spoof is stripped the same way', async () => {
+  const jwt = await registerAndLogin(`r11-premium-spoof-b-${randomUUID()}@test.local`);
+  const own = await createOwnProfileSetting(jwt);
+
+  const res = await fetch(`${BASE_URL}/profile-settings/${own.documentId}`, {
+    method: 'PUT',
+    headers: authed(jwt),
+    body: JSON.stringify({
+      data: { activePremium: { planTitle: 'Forged Unlimited', endsAt: null } },
+    }),
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.ok(body.data.activePremium === null || body.data.activePremium === undefined);
+});
+
+test('FINAL-BUG-001: activePremiumSubscription is stripped independently of activePremium', async () => {
+  const jwt = await registerAndLogin(`r11-premium-spoof-c-${randomUUID()}@test.local`);
+  const own = await createOwnProfileSetting(jwt);
+
+  const res = await fetch(`${BASE_URL}/profile-settings/${own.documentId}`, {
+    method: 'PUT',
+    headers: authed(jwt),
+    body: JSON.stringify({
+      data: { activePremiumSubscription: { planTitle: 'Forged Sub', endsAt: null } },
+    }),
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.ok(
+    body.data.activePremiumSubscription === null || body.data.activePremiumSubscription === undefined,
+  );
+});
+
+test('FINAL-BUG-001: purchaseHistory/purchaseRecords/purchaseUpdatedAt are all stripped', async () => {
+  const jwt = await registerAndLogin(`r11-premium-spoof-d-${randomUUID()}@test.local`);
+  const own = await createOwnProfileSetting(jwt);
+
+  const forgedRecords = [{ productId: 'premium_pro_yearly_3599', priceTl: 3599 }];
+  const res = await fetch(`${BASE_URL}/profile-settings/${own.documentId}`, {
+    method: 'PUT',
+    headers: authed(jwt),
+    body: JSON.stringify({
+      data: {
+        purchaseHistory: forgedRecords,
+        purchaseRecords: forgedRecords,
+        purchaseUpdatedAt: '2099-01-01T00:00:00.000Z',
+      },
+    }),
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.ok(!body.data.purchaseHistory || body.data.purchaseHistory.length === 0);
+  assert.ok(!body.data.purchaseRecords || body.data.purchaseRecords.length === 0);
+  assert.notEqual(body.data.purchaseUpdatedAt, '2099-01-01T00:00:00.000Z');
+});
+
+test('FINAL-BUG-001: the same spoof is also stripped on create, not just update', async () => {
+  const jwt = await registerAndLogin(`r11-premium-spoof-create-${randomUUID()}@test.local`);
+  const res = await fetch(`${BASE_URL}/profile-settings`, {
+    method: 'POST',
+    headers: authed(jwt),
+    body: JSON.stringify({
+      data: {
+        displayName: 'Forged Create',
+        activePremium: { planTitle: 'Forged', endsAt: null, rocketRemaining: 50 },
+      },
+    }),
+  });
+  assert.equal(res.status, 201);
+  const body = await res.json();
+  assert.ok(body.data.activePremium === null || body.data.activePremium === undefined);
+});
+
+test('FINAL-BUG-001: a spoofed rocketRemaining does not grant a real rocket activation', async () => {
+  const email = `r11-rocket-spoof-${randomUUID()}@test.local`;
+  const jwt = await registerAndLogin(email);
+  const ownerId = `u_${email.trim().toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
+  const own = await createOwnProfileSetting(jwt);
+
+  // Attempt the exact spoof: forge a rocket credit via the generic PUT.
+  await fetch(`${BASE_URL}/profile-settings/${own.documentId}`, {
+    method: 'PUT',
+    headers: authed(jwt),
+    body: JSON.stringify({
+      data: { activePremium: { planTitle: 'Forged', endsAt: null, rocketRemaining: 99, rocketDays: 28 } },
+    }),
+  });
+
+  const listing = await createOwnedListingFor({ ownerId, email });
+  const res = await fetch(`${BASE_URL}/listings/${listing.documentId}/rocket/activate`, {
+    method: 'POST',
+    headers: authed(jwt),
+    body: JSON.stringify({ days: 28, operationId: randomUUID() }),
+  });
+  assert.notEqual(
+    res.status,
+    200,
+    'a forged rocketRemaining must never grant a real rocket activation -- the field was never actually persisted',
+  );
+});
+
+test('regression: a normal profile update (bio/city) still works in the same request as a stripped premium field', async () => {
+  const jwt = await registerAndLogin(`r11-normal-update-${randomUUID()}@test.local`);
+  const own = await createOwnProfileSetting(jwt);
+
+  const res = await fetch(`${BASE_URL}/profile-settings/${own.documentId}`, {
+    method: 'PUT',
+    headers: authed(jwt),
+    body: JSON.stringify({
+      data: {
+        bio: 'Gercek bio guncellemesi',
+        city: 'Konya',
+        activePremium: { planTitle: 'Forged', endsAt: null },
+      },
+    }),
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.data.bio, 'Gercek bio guncellemesi');
+  assert.equal(body.data.city, 'Konya');
+  assert.ok(body.data.activePremium === null || body.data.activePremium === undefined);
+});
+
+test('regression: the real, internal premium-sync write path (bypassing this HTTP controller) is unaffected by the strip', async () => {
+  const email = `r11-real-premium-${randomUUID()}@test.local`;
+  const jwt = await registerAndLogin(email);
+  const ownerId = `u_${email.trim().toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
+
+  // Mirrors exactly what src/api/purchase/lib/persistence.ts does on a
+  // real verified purchase: a direct entityService write, never through
+  // this controller -- confirming the R1.1 fix cannot break real premium
+  // sync.
+  const premium = { planTitle: 'Real Eco Premium', endsAt: null, rocketRemaining: 3, rocketDays: 7 };
+  await strapiInstance.entityService.create('api::profile-setting.profile-setting', {
+    data: {
+      profileId: ownerId,
+      ownerEmail: email,
+      activePremium: premium,
+      activePremiumSubscription: premium,
+    },
+  });
+
+  const res = await fetch(`${BASE_URL}/profile-settings?filters[profileId][\$eq]=${encodeURIComponent(ownerId)}`, {
+    headers: authed(jwt),
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.data.length, 1);
+  assert.equal(body.data[0].activePremium?.planTitle, 'Real Eco Premium');
+  assert.equal(body.data[0].activePremium?.rocketRemaining, 3);
+});

@@ -324,8 +324,24 @@ const distanceKm = (lat1: number, lng1: number, lat2: number, lng2: number): num
 };
 
 export default factories.createCoreController(UID as any, ({ strapi }) => ({
+  /**
+   * FINAL_R1_TARGETED_RELEASE_FIX_REPORT.md R1.4 (FINAL-BUG-004, HIGH):
+   * `ownerKey` used to pass straight through from `sanitizeCreateData`
+   * (which only zeroed engagement counters) -- any authenticated caller
+   * could set it to an arbitrary real person's identity string, either
+   * impersonating that person's listing or later handing them unwanted
+   * edit/delete rights over content they never created (canOwnLoad trusts
+   * this same field). Now forced server-side from the JWT-derived
+   * identity, in the exact `id:<ownerId>` format matchesOwnerKey/
+   * Flutter's own `_currentLogisticsActorKey` already expect -- the S1
+   * canonical identity/matchesOwnerKey comparison itself is unchanged.
+   */
   async create(ctx) {
+    const identity = readIdentity(ctx);
+    if (!identity) return ctx.unauthorized('Bu islem icin giris gerekli.');
+
     const data = sanitizeCreateData(asData(ctx));
+    data.ownerKey = `id:${identity.ownerId}`;
     data.loadNo = normalizePublicNo(data.loadNo);
     if (!data.loadNo) {
       data.loadNo = await generatePublicNo(strapi, UID, 'loadNo');

@@ -170,15 +170,29 @@ test('favorite: non-existent vehicle returns NOT_FOUND', async () => {
 });
 
 test('generic update ignores a client-supplied favoriteCount/viewCount/engagementVersion for logistics-vehicle', async () => {
-  // Owner identity must genuinely match canOwnVehicle's actorKeyFor (based
-  // on the real Strapi user id) so the update actually reaches
-  // stripEngagementFields instead of being rejected by the ownership
-  // check first -- a stranger's PUT would 403 before ever exercising the
-  // strip logic, which would prove nothing about it.
+  // FINAL_R1_TARGETED_RELEASE_FIX_REPORT.md R1.4 (FINAL-BUG-004): create()
+  // now always stamps transporterKey from the REAL caller's JWT identity
+  // (never a client-supplied override -- that was exactly the spoof this
+  // fix closes), so the vehicle must be created by ownerJwt itself, not
+  // by createVehicleOwnedByStranger's own internal throwaway registrant
+  // with an injected transporterKey override (that override is now
+  // correctly ignored, which is what broke this test's old setup).
   const ownerJwt = await registerAndLogin(`veh-spoof-owner-${randomUUID()}@test.local`);
-  const meRes = await fetch(`${BASE_URL}/users/me`, { headers: authed(ownerJwt) });
-  const me = await meRes.json();
-  const vehicle = await createVehicleOwnedByStranger({ transporterKey: `profile:${me.id}` });
+  const createRes = await fetch(`${BASE_URL}/logistics-vehicles`, {
+    method: 'POST',
+    headers: authed(ownerJwt),
+    body: JSON.stringify({
+      data: {
+        transporterName: 'Test Nakliyeci',
+        vehicleType: 'Kamyon',
+        capacity: 10,
+        currentCity: 'Konya',
+        latitude: 37.87,
+        longitude: 32.48,
+      },
+    }),
+  });
+  const vehicle = (await createRes.json()).data;
 
   const stranger = await registerAndLogin(`veh-spoof-fan-${randomUUID()}@test.local`);
   await fetch(`${BASE_URL}/engagements/favorite`, {
