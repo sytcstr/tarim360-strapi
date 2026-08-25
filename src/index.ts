@@ -8,6 +8,7 @@ import {
 } from './utils/account-cleanup';
 import { runOfferIdDedupeOnce } from './utils/offer-id-dedupe';
 import { hasUniqueIndex } from './utils/engagement-index-support';
+import { runListingNoBackfillOnce } from './utils/listing-number-backfill';
 
 /**
  * Faz B-V: reliable, idempotent composite-unique-index creation for the
@@ -72,6 +73,65 @@ export const ensureEngagementUniqueIndexes = async (strapi: Core.Strapi) => {
       );
       throw e;
     }
+  }
+};
+
+/**
+ * LISTING_L3_LISTING_TYPE_AND_PUBLIC_NUMBER_REPORT.md L3.5/L3.6: same
+ * idempotent, every-boot pattern as ensureEngagementUniqueIndexes, for the
+ * listing content-type's `listing_no` column. MUST run after
+ * runListingNoBackfillOnce (see the bootstrap() call order below) --
+ * creating this index before the backfill would fail outright against any
+ * pre-existing null/duplicate listingNo values from the old
+ * client-derived numbering scheme.
+ *
+ * This is a PARTIAL index (`WHERE published_at IS NOT NULL`), not a plain
+ * column-wide unique index -- `listing` has draftAndPublish:true, so every
+ * real listing is TWO physical rows (a draft, published_at:null, and the
+ * published row) that must carry the IDENTICAL listingNo (confirmed live
+ * while writing this fix: a normal PUT edit re-syncs the published row's
+ * content from the draft, so a listingNo that only ever existed on the
+ * published side gets silently wiped back to null by the very next
+ * unrelated edit -- both rows must have it). A plain unique index would
+ * reject a row's own draft/published pair for sharing that number; scoping
+ * to published-only rows means only genuinely different listings compete
+ * for uniqueness, while a row's own draft sibling (excluded from the
+ * index because its published_at is null) never conflicts with it.
+ *
+ * `WHERE`-scoped partial unique indexes are supported identically by both
+ * dialects this project actually runs (SQLite for tests/dev, PostgreSQL on
+ * Strapi Cloud production -- confirmed via config/database.ts's
+ * connections map) via raw `CREATE UNIQUE INDEX ... WHERE ...`, which is
+ * why this uses knex.raw rather than the portable
+ * dialect.schemaInspector/alterTable API `ensureEngagementUniqueIndexes`
+ * uses (that API has no partial-index option). If this project's
+ * DATABASE_CLIENT is ever switched to mysql (also listed in
+ * config/database.ts but not evidenced as actually deployed anywhere),
+ * this specific statement would need revisiting -- older MySQL has no
+ * native partial/filtered unique index support.
+ */
+export const ensureListingNoUniqueIndex = async (strapi: Core.Strapi) => {
+  const table = 'listings';
+  const name = 'listings_listing_no_unique';
+  const knex = (strapi.db as any).connection;
+  try {
+    const hasTable = await knex.schema.hasTable(table);
+    if (!hasTable) {
+      throw new Error(`Table "${table}" does not exist after schema sync.`);
+    }
+    if (await hasUniqueIndex(strapi.db as any, table, name)) {
+      strapi.log.info(`[listing bootstrap] ${name} already present on ${table}.`);
+      return;
+    }
+    await knex.raw(
+      `CREATE UNIQUE INDEX ${name} ON ${table} (listing_no) WHERE published_at IS NOT NULL`,
+    );
+    strapi.log.info(`[listing bootstrap] Created unique index ${name} on ${table}.`);
+  } catch (e) {
+    strapi.log.error(
+      `[listing bootstrap] FAILED to ensure unique index ${name} on ${table}: ${e}`,
+    );
+    throw e;
   }
 };
 
@@ -825,6 +885,12 @@ export default {
 
   async bootstrap({ strapi }: { strapi: Core.Strapi }) {
     await ensureEngagementUniqueIndexes(strapi);
+    // Order matters: the backfill must assign a real, unique listingNo to
+    // every existing row BEFORE the unique index is created, or index
+    // creation would fail against pre-existing nulls/duplicates from the
+    // old client-derived numbering scheme.
+    await runListingNoBackfillOnce(strapi);
+    await ensureListingNoUniqueIndex(strapi);
     registerUserDeleteCleanupLifecycle(strapi);
     await syncUsersPermissionsRoleConfig(strapi);
     const cleanupEnabled =

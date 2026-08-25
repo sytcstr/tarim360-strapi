@@ -18,7 +18,11 @@
       "type": "text"
     },
     "mode": {
-      "type": "string"
+      "type": "enumeration",
+      "enum": [
+        "sell",
+        "buy"
+      ]
     },
     "status": {
       "type": "enumeration",

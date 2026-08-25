@@ -52,6 +52,32 @@ export const canCreateNextNormalListing = async (
   return usedCount < allowedCount;
 };
 
+/**
+ * LISTING_L3_LISTING_TYPE_AND_PUBLIC_NUMBER_REPORT.md L3.5: the smallest
+ * safe server-authoritative scheme this DB/Strapi setup supports without a
+ * new content-type or dialect-specific raw SQL sequence -- next number is
+ * MAX(listingNo)+1 over published rows (see the draftAndPublish comment on
+ * canCreateNextNormalListing for why published-only; a draft/published
+ * pair sharing one create always gets the SAME listingNo value since it's
+ * part of the one `data` object passed to entityService.create, so it
+ * never inflates the max). The real concurrency guarantee is the
+ * `listing_no` unique DB index (ensureListingNoUniqueIndex, src/index.ts) --
+ * this function only picks a candidate; callers must retry with a freshly
+ * computed candidate if the insert using it fails (mirrors the exact
+ * try/catch-and-retry shape listing.ts's own create() already uses for its
+ * operationId ledger claim race).
+ */
+export const nextListingNo = async (strapi: any): Promise<number> => {
+  const rows = await strapi.db.query(LISTING_UID).findMany({
+    where: { publishedAt: { $notNull: true } },
+    orderBy: { listingNo: 'desc' },
+    limit: 1,
+    select: ['listingNo'],
+  } as any);
+  const current = Array.isArray(rows) && rows[0] ? Number(rows[0].listingNo) || 0 : 0;
+  return current + 1;
+};
+
 type ListingCounterField =
   | 'viewCount'
   | 'favoriteCount'
@@ -85,6 +111,13 @@ export const LISTING_CLIENT_PROTECTED_FIELDS = [
   'isPremiumOwner',
   'isDoping',
   'rocketEndsAt',
+  // LISTING_L3_LISTING_TYPE_AND_PUBLIC_NUMBER_REPORT.md L3.7: the
+  // user-facing "T360-XXXXX" number is server-generated at create() and
+  // must be immutable afterward -- a client sending its own listingNo
+  // (create()'s previous behavior: the Flutter client sent a
+  // timestamp-derived guess) must never overwrite another listing's real
+  // number, on create, update, or the offline-sync equivalents of either.
+  'listingNo',
 ] as const;
 
 export const stripListingProtectedFields = (

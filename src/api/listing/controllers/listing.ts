@@ -8,6 +8,7 @@ import { isPremiumActiveFromProfile, loadPremiumProfile } from '../../../utils/p
 import {
   canCreateNextNormalListing,
   findListingByAnyId,
+  nextListingNo,
   NORMAL_LISTING_BLOCK_SIZE,
   NORMAL_LISTING_FREE_COUNT,
   stripListingProtectedFields,
@@ -284,30 +285,68 @@ export default factories.createCoreController(
         return ctx.internalServerError('Ilan gonderim kaydi dogrulanamadi.');
       }
 
-      ctx.request.body = {
-        data: {
-          ...clientPayload,
-          ownerProfileId,
-          ownerId: ownerProfileId,
-          ownerEmail: normalizeEmail(identity.email),
-          isPremium,
-          isPremiumOwner: isPremium,
-          status: 'active',
-          publishedAt,
-        },
-      };
       ctx.query = {
         ...(ctx.query ?? {}),
         status: 'published',
       };
 
-      // super.create(ctx) resolves to the response body itself (it does
-      // NOT set ctx.body as a side effect -- confirmed live while writing
-      // this fix: awaiting it without using its return value left ctx.body
-      // undefined and Koa fell back to a plain "Created" text response).
-      // Must both capture and return this so Strapi's own dispatcher still
-      // sends the real JSON response.
-      const createResult = await super.create(ctx);
+      // LISTING_L3_LISTING_TYPE_AND_PUBLIC_NUMBER_REPORT.md L3.5/L3.7: the
+      // public listing number is server-generated here -- any
+      // client-supplied listingNo in clientPayload was already stripped by
+      // stripClientProtectedFields above, and this assignment overwrites
+      // whatever remained regardless.
+      //
+      // Both physical rows this one super.create call produces
+      // (draftAndPublish:true means a draft, publishedAt:null, and the
+      // published row) get the SAME listingNo, same as every other field
+      // -- confirmed necessary live while writing this fix: a plain PUT
+      // update (the normal edit path) re-syncs the published row's
+      // content from the draft, so a listingNo that only ever existed on
+      // the published side gets silently wiped back to null by the very
+      // next unrelated edit. Concurrency safety therefore can't be a
+      // plain single-column unique index (that would reject a row's own
+      // draft/published pair for sharing the same number) -- it's a
+      // PARTIAL unique index scoped to `WHERE published_at IS NOT NULL`
+      // (ensureListingNoUniqueIndex, src/index.ts), so only published
+      // rows compete for uniqueness and a row's own draft sibling never
+      // conflicts with it. A genuine collision between two DIFFERENT
+      // published rows still throws from super.create, and this loop
+      // recomputes MAX+1 and retries -- the identical catch-and-retry
+      // shape the ledger claim above already uses for its own race.
+      const MAX_LISTING_NO_ATTEMPTS = 5;
+      let createResult: any;
+      let lastCreateError: unknown = null;
+      for (let attempt = 0; attempt < MAX_LISTING_NO_ATTEMPTS; attempt++) {
+        const listingNo = await nextListingNo(strapi);
+        ctx.request.body = {
+          data: {
+            ...clientPayload,
+            ownerProfileId,
+            ownerId: ownerProfileId,
+            ownerEmail: normalizeEmail(identity.email),
+            isPremium,
+            isPremiumOwner: isPremium,
+            status: 'active',
+            publishedAt,
+            listingNo,
+          },
+        };
+        try {
+          // super.create(ctx) resolves to the response body itself (it
+          // does NOT set ctx.body as a side effect -- confirmed live
+          // while writing this fix: awaiting it without using its return
+          // value left ctx.body undefined and Koa fell back to a plain
+          // "Created" text response). Must both capture and return this
+          // so Strapi's own dispatcher still sends the real JSON
+          // response.
+          createResult = await super.create(ctx);
+          lastCreateError = null;
+          break;
+        } catch (e) {
+          lastCreateError = e;
+        }
+      }
+      if (lastCreateError) throw lastCreateError;
 
       // Link the ledger claim to the real created row so a later retry
       // (a genuine duplicate hit) can resolve to it. A genuine super.create

@@ -992,7 +992,7 @@ export interface ApiListingListing extends Struct.CollectionTypeSchema {
     maxBudget: Schema.Attribute.Decimal;
     minOrder: Schema.Attribute.Decimal;
     minOrderUnit: Schema.Attribute.String;
-    mode: Schema.Attribute.String;
+    mode: Schema.Attribute.Enumeration<['sell', 'buy']>;
     moisture: Schema.Attribute.Decimal;
     ownerCity: Schema.Attribute.String;
     ownerEmail: Schema.Attribute.Email;

@@ -7,6 +7,7 @@ import { requireAuthenticatedActorKey } from '../../../utils/engagement-contract
 import { setMembership } from '../services/engagement-v1';
 import {
   canCreateNextNormalListing,
+  nextListingNo,
   NORMAL_LISTING_BLOCK_SIZE,
   NORMAL_LISTING_FREE_COUNT,
   stripListingProtectedFields,
@@ -565,9 +566,28 @@ export default {
       }
     }
 
-    const entity = await strapi.entityService.create(LISTING_UID as any, {
-      data: safeListing,
-    });
+    // LISTING_L3_LISTING_TYPE_AND_PUBLIC_NUMBER_REPORT.md L3.5/L3.7: this
+    // offline-queue create is a second real creation path, exactly the
+    // same reasoning as the quota check above -- it must also assign a
+    // real server-generated listingNo, not trust whatever (if anything)
+    // the client queued. Same bounded-retry-on-collision shape as
+    // listing.ts's own create().
+    const MAX_LISTING_NO_ATTEMPTS = 5;
+    let entity: any;
+    let lastCreateError: unknown = null;
+    for (let attempt = 0; attempt < MAX_LISTING_NO_ATTEMPTS; attempt++) {
+      const listingNo = await nextListingNo(strapi);
+      try {
+        entity = await strapi.entityService.create(LISTING_UID as any, {
+          data: { ...safeListing, listingNo },
+        });
+        lastCreateError = null;
+        break;
+      } catch (e) {
+        lastCreateError = e;
+      }
+    }
+    if (lastCreateError) throw lastCreateError;
     ctx.body = { data: { ok: true, operation: 'create', listing: entity } };
   },
 };
