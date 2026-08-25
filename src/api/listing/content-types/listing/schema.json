@@ -83,6 +83,21 @@
     "minOrderUnit": {
       "type": "string"
     },
+    "animalAge": {
+      "type": "string"
+    },
+    "animalWeight": {
+      "type": "string"
+    },
+    "equipCondition": {
+      "type": "string"
+    },
+    "equipWorkHour": {
+      "type": "string"
+    },
+    "equipModelYear": {
+      "type": "integer"
+    },
     "location": {
       "type": "json"
     },

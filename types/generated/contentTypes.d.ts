@@ -960,6 +960,8 @@ export interface ApiListingListing extends Struct.CollectionTypeSchema {
   };
   attributes: {
     analysisNote: Schema.Attribute.Text;
+    animalAge: Schema.Attribute.String;
+    animalWeight: Schema.Attribute.String;
     certificateType: Schema.Attribute.String;
     createdAt: Schema.Attribute.DateTime;
     createdAtClient: Schema.Attribute.DateTime;
@@ -968,6 +970,9 @@ export interface ApiListingListing extends Struct.CollectionTypeSchema {
     delivery: Schema.Attribute.String;
     demandAmount: Schema.Attribute.Decimal;
     description: Schema.Attribute.Text;
+    equipCondition: Schema.Attribute.String;
+    equipModelYear: Schema.Attribute.Integer;
+    equipWorkHour: Schema.Attribute.String;
     favoriteCount: Schema.Attribute.Integer & Schema.Attribute.DefaultTo<0>;
     hasatDate: Schema.Attribute.String;
     hasatYear: Schema.Attribute.Integer;
