@@ -12,6 +12,7 @@ import {
   NORMAL_LISTING_FREE_COUNT,
   stripListingProtectedFields,
 } from '../../../utils/listing-metrics';
+import { computeListingSearchFields } from '../../../utils/listing-search-fields';
 import { isPremiumActiveFromProfile, loadPremiumProfile } from '../../../utils/premium-sync';
 
 const PROFILE_SETTING_UID = 'api::profile-setting.profile-setting';
@@ -514,8 +515,22 @@ export default {
       );
       if (!isOwner) return ctx.forbidden('Bu ilan size ait degil.');
 
+      // LISTING_L6_SERVER_SEARCH_FILTER_SORT_REPORT.md L6.4/L6.7: this is
+      // a second real listing-update path (the offline-sync equivalent of
+      // listing.ts's update()) -- must recompute city/searchNormalized
+      // from the merged (existing + this edit's changes) state the same
+      // way, or a listing synced only through this path would silently
+      // never become server-searchable/city-filterable.
+      const searchFields = computeListingSearchFields({
+        title: safeListing.title ?? existing.title,
+        description: safeListing.description ?? existing.description,
+        mainType: safeListing.mainType ?? existing.mainType,
+        subType: safeListing.subType ?? existing.subType,
+        location: safeListing.location ?? existing.location,
+        ownerCity: safeListing.ownerCity ?? existing.ownerCity,
+      });
       const entity = await strapi.entityService.update(LISTING_UID as any, existing.id, {
-        data: safeListing,
+        data: { ...safeListing, ...searchFields },
       });
       ctx.body = { data: { ok: true, operation: 'update', listing: entity } };
       return;
@@ -575,11 +590,19 @@ export default {
     const MAX_LISTING_NO_ATTEMPTS = 5;
     let entity: any;
     let lastCreateError: unknown = null;
+    const searchFields = computeListingSearchFields({
+      title: safeListing.title,
+      description: safeListing.description,
+      mainType: safeListing.mainType,
+      subType: safeListing.subType,
+      location: safeListing.location,
+      ownerCity: safeListing.ownerCity,
+    });
     for (let attempt = 0; attempt < MAX_LISTING_NO_ATTEMPTS; attempt++) {
       const listingNo = await nextListingNo(strapi);
       try {
         entity = await strapi.entityService.create(LISTING_UID as any, {
-          data: { ...safeListing, listingNo },
+          data: { ...safeListing, listingNo, ...searchFields },
         });
         lastCreateError = null;
         break;

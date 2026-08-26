@@ -963,6 +963,8 @@ export interface ApiListingListing extends Struct.CollectionTypeSchema {
     animalAge: Schema.Attribute.String;
     animalWeight: Schema.Attribute.String;
     certificateType: Schema.Attribute.String;
+    city: Schema.Attribute.String;
+    cityNormalized: Schema.Attribute.String;
     createdAt: Schema.Attribute.DateTime;
     createdAtClient: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
@@ -970,6 +972,7 @@ export interface ApiListingListing extends Struct.CollectionTypeSchema {
     delivery: Schema.Attribute.String;
     demandAmount: Schema.Attribute.Decimal;
     description: Schema.Attribute.Text;
+    district: Schema.Attribute.String;
     equipCondition: Schema.Attribute.String;
     equipModelYear: Schema.Attribute.Integer;
     equipWorkHour: Schema.Attribute.String;
@@ -1010,6 +1013,7 @@ export interface ApiListingListing extends Struct.CollectionTypeSchema {
     publishedAt: Schema.Attribute.DateTime;
     qualityGrade: Schema.Attribute.String;
     rocketEndsAt: Schema.Attribute.DateTime;
+    searchNormalized: Schema.Attribute.Text;
     status: Schema.Attribute.Enumeration<['pending', 'active', 'rejected']> &
       Schema.Attribute.DefaultTo<'active'>;
     storage: Schema.Attribute.String;

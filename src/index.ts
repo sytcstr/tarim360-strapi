@@ -9,6 +9,7 @@ import {
 import { runOfferIdDedupeOnce } from './utils/offer-id-dedupe';
 import { hasUniqueIndex } from './utils/engagement-index-support';
 import { runListingNoBackfillOnce } from './utils/listing-number-backfill';
+import { runListingSearchFieldsBackfillOnce } from './utils/listing-search-fields-backfill';
 
 /**
  * Faz B-V: reliable, idempotent composite-unique-index creation for the
@@ -132,6 +133,68 @@ export const ensureListingNoUniqueIndex = async (strapi: Core.Strapi) => {
       `[listing bootstrap] FAILED to ensure unique index ${name} on ${table}: ${e}`,
     );
     throw e;
+  }
+};
+
+/**
+ * LISTING_L6_SERVER_SEARCH_FILTER_SORT_REPORT.md L6.15: plain (non-
+ * unique) indexes for the fields the new whitelisted find() override
+ * actually filters/sorts by. These are a performance concern, not a
+ * correctness one -- the DB query is already correct without them, this
+ * just keeps it from degrading to a full table scan as the catalog
+ * grows past a few thousand rows. `listing_no` already has its own
+ * PARTIAL unique index (ensureListingNoUniqueIndex) -- not duplicated
+ * here. Deliberately minimal: one plain index per filtered/sorted
+ * column, not a hand-tuned composite index per query shape (a
+ * meaningfully larger, riskier undertaking than this phase's "server-
+ * authoritative filtering foundation" scope calls for).
+ */
+export const LISTING_DISCOVERY_INDEXES: Array<{
+  table: string;
+  name: string;
+  columns: string[];
+}> = [
+  { table: 'listings', name: 'listings_mode_index', columns: ['mode'] },
+  {
+    table: 'listings',
+    name: 'listings_main_type_index',
+    columns: ['main_type'],
+  },
+  { table: 'listings', name: 'listings_price_index', columns: ['price'] },
+  {
+    table: 'listings',
+    name: 'listings_city_normalized_index',
+    columns: ['city_normalized'],
+  },
+  {
+    table: 'listings',
+    name: 'listings_created_at_index',
+    columns: ['created_at'],
+  },
+];
+
+export const ensureListingDiscoveryIndexes = async (strapi: Core.Strapi) => {
+  const knex = (strapi.db as any).connection;
+  for (const { table, name, columns } of LISTING_DISCOVERY_INDEXES) {
+    try {
+      const hasTable = await knex.schema.hasTable(table);
+      if (!hasTable) {
+        throw new Error(`Table "${table}" does not exist after schema sync.`);
+      }
+      if (await hasUniqueIndex(strapi.db as any, table, name)) {
+        strapi.log.info(`[listing bootstrap] ${name} already present on ${table}.`);
+        continue;
+      }
+      await knex.schema.alterTable(table, (t: any) => {
+        t.index(columns, name);
+      });
+      strapi.log.info(`[listing bootstrap] Created index ${name} on ${table}.`);
+    } catch (e) {
+      strapi.log.error(
+        `[listing bootstrap] FAILED to ensure index ${name} on ${table}: ${e}`,
+      );
+      throw e;
+    }
   }
 };
 
@@ -891,6 +954,14 @@ export default {
     // old client-derived numbering scheme.
     await runListingNoBackfillOnce(strapi);
     await ensureListingNoUniqueIndex(strapi);
+    // LISTING_L6_SERVER_SEARCH_FILTER_SORT_REPORT.md L6.4/L6.7/L6.15: the
+    // search-fields backfill has no ordering dependency on an index (it's
+    // a plain, non-unique index -- no pre-existing null/duplicate data
+    // can make CREATE INDEX fail the way a unique index would), but it
+    // still runs first so newly-indexed columns are never queried before
+    // every existing row has a real (non-null) value in them.
+    await runListingSearchFieldsBackfillOnce(strapi);
+    await ensureListingDiscoveryIndexes(strapi);
     registerUserDeleteCleanupLifecycle(strapi);
     await syncUsersPermissionsRoleConfig(strapi);
     const cleanupEnabled =

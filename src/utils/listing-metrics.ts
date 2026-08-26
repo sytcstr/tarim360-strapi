@@ -118,6 +118,17 @@ export const LISTING_CLIENT_PROTECTED_FIELDS = [
   // timestamp-derived guess) must never overwrite another listing's real
   // number, on create, update, or the offline-sync equivalents of either.
   'listingNo',
+  // LISTING_L6_SERVER_SEARCH_FILTER_SORT_REPORT.md L6.4/L6.7:
+  // computeListingSearchFields (listing-search-fields.ts) is the only
+  // legitimate writer of these four -- they're derived from `location`/
+  // title/description/mainType/subType on every create/update, never
+  // taken directly from client input (a client sending a pre-normalized
+  // `cityNormalized`/`searchNormalized` could otherwise make a listing
+  // match searches/filters its real content doesn't match).
+  'city',
+  'district',
+  'cityNormalized',
+  'searchNormalized',
 ] as const;
 
 export const stripListingProtectedFields = (

@@ -105,6 +105,18 @@
     "location": {
       "type": "json"
     },
+    "city": {
+      "type": "string"
+    },
+    "district": {
+      "type": "string"
+    },
+    "cityNormalized": {
+      "type": "string"
+    },
+    "searchNormalized": {
+      "type": "text"
+    },
     "ownerProfileId": {
       "type": "string"
     },

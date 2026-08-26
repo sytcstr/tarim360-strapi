@@ -13,6 +13,8 @@ import {
   NORMAL_LISTING_FREE_COUNT,
   stripListingProtectedFields,
 } from '../../../utils/listing-metrics';
+import { computeListingSearchFields } from '../../../utils/listing-search-fields';
+import { buildListingDiscoveryQuery } from '../../../utils/listing-query';
 import { fingerprintPayload, isValidOperationId, resolveOperation } from '../../../utils/operation-idempotency';
 
 const LISTING_UID = 'api::listing.listing';
@@ -121,6 +123,49 @@ const findProfileForIdentity = async (
 export default factories.createCoreController(
   LISTING_UID,
   ({ strapi }) => ({
+    /**
+     * LISTING_L6_SERVER_SEARCH_FILTER_SORT_REPORT.md L6.2/L6.14/L6.16:
+     * `find` was previously unoverridden -- the stock core action already
+     * applies whatever `filters`/`sort`/`pagination` a client sends at the
+     * real DB/query level (confirmed live: a pre-existing integration
+     * test already proves server-side `mode` filtering works). That's
+     * correct, but gives a client free rein to send ANY Strapi filter/
+     * sort expression on ANY field, including ones never meant to be
+     * client-queryable. This override only activates when the request
+     * uses the NEW whitelisted param names (`search`/`listingNo`/
+     * `mainType`/`subType`/`mode`/`city`/`district`/`minPrice`/`maxPrice`/
+     * `sortBy`/`page`/`pageSize`) -- in that case it REPLACES `ctx.query`
+     * with a query built ONLY from those whitelisted fields/operators
+     * (any raw `filters[...]`/`sort` also present in the same request is
+     * discarded, never merged, so the two styles can't be combined to
+     * smuggle an unwhitelisted expression through). If NONE of the new
+     * param names are present -- true for every existing/legacy caller,
+     * including older app builds that never send them -- `ctx.query` is
+     * left completely untouched and `super.find(ctx)` runs exactly as
+     * before this phase.
+     */
+    async find(ctx) {
+      const discoveryQuery = buildListingDiscoveryQuery(
+        (ctx.query ?? {}) as Record<string, unknown>,
+      );
+      if (discoveryQuery) {
+        const previous = (ctx.query ?? {}) as Record<string, unknown>;
+        ctx.query = {
+          filters: discoveryQuery.filters,
+          sort: discoveryQuery.sort,
+          pagination: discoveryQuery.pagination,
+          // Structural/response-shape params are safe to pass through
+          // verbatim -- they don't select which rows match, only how
+          // each matched row is serialized.
+          ...(previous.populate !== undefined
+            ? { populate: previous.populate }
+            : {}),
+          ...(previous.fields !== undefined ? { fields: previous.fields } : {}),
+        } as any;
+      }
+      return super.find(ctx);
+    },
+
     /**
      * PRE_UAT_F1_TARGETED_FUNCTIONAL_FIX_REPORT.md F1.6: createListing()
      * had no idempotency key at all. If a create request actually reached
@@ -316,6 +361,14 @@ export default factories.createCoreController(
       const MAX_LISTING_NO_ATTEMPTS = 5;
       let createResult: any;
       let lastCreateError: unknown = null;
+      const searchFields = computeListingSearchFields({
+        title: clientPayload.title,
+        description: clientPayload.description,
+        mainType: clientPayload.mainType,
+        subType: clientPayload.subType,
+        location: clientPayload.location,
+        ownerCity: clientPayload.ownerCity,
+      });
       for (let attempt = 0; attempt < MAX_LISTING_NO_ATTEMPTS; attempt++) {
         const listingNo = await nextListingNo(strapi);
         ctx.request.body = {
@@ -329,6 +382,7 @@ export default factories.createCoreController(
             status: 'active',
             publishedAt,
             listingNo,
+            ...searchFields,
           },
         };
         try {
@@ -390,12 +444,38 @@ export default factories.createCoreController(
       // own listing's ownership to an arbitrary identity. Forcing these
       // from `identity` here is safe: the policy has already proven
       // `identity` is the row's rightful owner by the time this runs.
+      const cleanInput = stripIdentifierFields(stripClientProtectedFields(input));
+
+      // LISTING_L6_SERVER_SEARCH_FILTER_SORT_REPORT.md L6.4/L6.7: a normal
+      // edit (e.g. title-only) must not blank city/searchNormalized for
+      // fields it never touched -- read the current row first and
+      // recompute from the MERGED state (existing values overridden by
+      // whatever this edit actually changes), the same "real value wins"
+      // rule L1 established for category-field edit hydration.
+      const existing = await findListingByAnyId(strapi, ctx.params?.id, [
+        'title',
+        'description',
+        'mainType',
+        'subType',
+        'location',
+        'ownerCity',
+      ]);
+      const searchFields = computeListingSearchFields({
+        title: cleanInput.title ?? existing?.title,
+        description: cleanInput.description ?? existing?.description,
+        mainType: cleanInput.mainType ?? existing?.mainType,
+        subType: cleanInput.subType ?? existing?.subType,
+        location: cleanInput.location ?? existing?.location,
+        ownerCity: cleanInput.ownerCity ?? existing?.ownerCity,
+      });
+
       ctx.request.body = {
         data: {
-          ...stripIdentifierFields(stripClientProtectedFields(input)),
+          ...cleanInput,
           ownerProfileId: identity.ownerId,
           ownerId: identity.ownerId,
           ownerEmail: normalizeEmail(identity.email),
+          ...searchFields,
         },
       };
       return super.update(ctx);
