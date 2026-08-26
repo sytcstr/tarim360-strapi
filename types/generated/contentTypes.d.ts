@@ -1506,6 +1506,8 @@ export interface ApiProfileSettingProfileSetting
     businessModules: Schema.Attribute.JSON;
     businessModulesUpdatedAt: Schema.Attribute.DateTime;
     city: Schema.Attribute.String;
+    contactPhoneVisible: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
+    contactWhatsappVisible: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     coverImage: Schema.Attribute.Media<'images' | 'files'>;
     coverUrl: Schema.Attribute.String;
     createdAt: Schema.Attribute.DateTime;

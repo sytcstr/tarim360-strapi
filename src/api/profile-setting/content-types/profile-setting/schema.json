@@ -251,6 +251,14 @@
                        "whatsapp":  {
                                         "type":  "string"
                                     },
+                       "contactPhoneVisible":  {
+                                        "type":  "boolean",
+                                        "default":  false
+                                    },
+                       "contactWhatsappVisible":  {
+                                        "type":  "boolean",
+                                        "default":  false
+                                    },
                        "district":  {
                                         "type":  "string"
                                     },

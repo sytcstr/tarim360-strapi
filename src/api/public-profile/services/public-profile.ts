@@ -23,11 +23,20 @@
  *   read only in the `!_isOwnerView` branch), and a computed rating
  *   average/count (never the raw per-viewer vote map).
  *
- * Deliberately EXCLUDED even though the app currently reads them for
+ * birthDate stays EXCLUDED even though the app currently reads it for
  * ANY viewer (a pre-SEC-1 side effect of the same bypass, not a
- * considered public/private decision): phone, whatsapp, birthDate.
- * These are personal contact/PII fields; exposing them to any caller
- * who knows/guesses an ownerId is not something this phase reintroduces.
+ * considered public/private decision) -- a personal PII field with no
+ * opt-in visibility control, not something this phase reintroduces.
+ *
+ * LISTING_L7_SELLER_CONTACT_PRIVACY_REPORT.md L7.3/L7.4: phone/whatsapp
+ * used to be excluded unconditionally too, for the same reason. They are
+ * now included ONLY when the owner has explicitly opted in via
+ * `contactPhoneVisible`/`contactWhatsappVisible` (both default false --
+ * a profile that has never touched this setting stays exactly as
+ * private as before this phase). The raw phone/whatsapp column is never
+ * selected/spread when the corresponding flag is off; there is no
+ * client-facing distinction between "no phone on file" and "has a phone
+ * but chose not to show it" -- both simply omit the field.
  * Also excluded: activeModules/businessModules/disabledBusinessModules
  * (their availability computation is entangled with activePremium/
  * activePremiumSubscription, which must stay private) -- business-
@@ -66,6 +75,10 @@ const SELECT_FIELDS = [
   'accountType',
   'avatarUrl',
   'coverUrl',
+  'phone',
+  'whatsapp',
+  'contactPhoneVisible',
+  'contactWhatsappVisible',
   'profileMediaSettings',
   'showcasePinnedIds',
   'showcasePinnedOrder',
@@ -93,6 +106,8 @@ export interface PublicProfileFields {
   accountType: string;
   avatarUrl: string;
   coverUrl: string;
+  phone?: string;
+  whatsapp?: string;
   coverFocusY: number;
   avatarZoom: number;
   showcasePinnedIds: string[];
@@ -162,6 +177,8 @@ export const resolvePublicProfile = async (
   const mediaSettingsRaw = row.profileMediaSettings;
   const mediaSettings = mediaSettingsRaw && typeof mediaSettingsRaw === 'object' ? mediaSettingsRaw : {};
   const { average, count } = computeRating(row);
+  const phone = str(row.phone);
+  const whatsapp = str(row.whatsapp);
 
   return {
     found: true,
@@ -178,6 +195,12 @@ export const resolvePublicProfile = async (
       accountType: str(row.accountType) || 'standard',
       avatarUrl: str(row.avatarUrl),
       coverUrl: str(row.coverUrl),
+      // Omitted entirely (not an empty string) unless the owner opted in
+      // AND actually has a value on file -- a caller must never be able
+      // to distinguish "opted out" from "no number on file" from the
+      // response shape, both just omit the key.
+      ...(row.contactPhoneVisible === true && phone ? { phone } : {}),
+      ...(row.contactWhatsappVisible === true && whatsapp ? { whatsapp } : {}),
       coverFocusY: num(mediaSettings.coverFocusY, 0),
       avatarZoom: num(mediaSettings.avatarZoom, 1),
       showcasePinnedIds: Array.isArray(row.showcasePinnedIds)
