@@ -237,6 +237,69 @@ test('phone, email, and other private fields never leak into the response', asyn
   assert.ok(!raw.includes('do-not-leak'), 'notification/app settings must never leak');
 });
 
+// ---------------------------------------------------------------------
+// LISTING_L7_SELLER_CONTACT_PRIVACY_REPORT.md L7.3/L7.4: phone/whatsapp
+// opt-in visibility. The default-off case is already covered by "phone,
+// email, and other private fields never leak into the response" above
+// (unmodified by this phase) -- these cover the new opt-in path.
+// ---------------------------------------------------------------------
+
+test('phone appears in the response only when contactPhoneVisible is explicitly true', async () => {
+  const { profile } = await setupProfile(`pub-phone-visible-${randomUUID()}@test.local`, {
+    phone: '05551234567',
+    contactPhoneVisible: true,
+  });
+  const res = await fetch(`${BASE_URL}/public-profiles/${profile.profileId}`);
+  const body = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(body.profile.phone, '05551234567');
+});
+
+test('whatsapp appears in the response only when contactWhatsappVisible is explicitly true', async () => {
+  const { profile } = await setupProfile(`pub-whatsapp-visible-${randomUUID()}@test.local`, {
+    whatsapp: '905551234567',
+    contactWhatsappVisible: true,
+  });
+  const res = await fetch(`${BASE_URL}/public-profiles/${profile.profileId}`);
+  const body = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(body.profile.whatsapp, '905551234567');
+});
+
+test('contactPhoneVisible:true with no phone on file omits the key rather than an empty string', async () => {
+  const { profile } = await setupProfile(`pub-phone-empty-${randomUUID()}@test.local`, {
+    contactPhoneVisible: true,
+  });
+  const res = await fetch(`${BASE_URL}/public-profiles/${profile.profileId}`);
+  const body = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(body.profile.phone, undefined);
+});
+
+test('an explicit contactPhoneVisible:false still hides a real phone value (opt-out is safe, not just default)', async () => {
+  const { profile } = await setupProfile(`pub-phone-explicit-off-${randomUUID()}@test.local`, {
+    phone: '05559876543',
+    contactPhoneVisible: false,
+  });
+  const res = await fetch(`${BASE_URL}/public-profiles/${profile.profileId}`);
+  const raw = await res.text();
+  assert.equal(res.status, 200);
+  assert.ok(!raw.includes('05559876543'));
+});
+
+test('phone visibility and whatsapp visibility are independent toggles', async () => {
+  const { profile } = await setupProfile(`pub-independent-${randomUUID()}@test.local`, {
+    phone: '05551112233',
+    whatsapp: '905551112233',
+    contactPhoneVisible: true,
+    contactWhatsappVisible: false,
+  });
+  const res = await fetch(`${BASE_URL}/public-profiles/${profile.profileId}`);
+  const body = await res.json();
+  assert.equal(body.profile.phone, '05551112233');
+  assert.equal(body.profile.whatsapp, undefined);
+});
+
 test('rating average/count is computed from base + dynamic votes, never the raw vote map', async () => {
   const targetJwt = await registerAndLogin(`pub-rating-target-${randomUUID()}@test.local`);
   const target = await createOwnProfileSetting(targetJwt);
