@@ -7,7 +7,7 @@ const {
   resolveOperation,
 } = require('../../../utils/operation-idempotency');
 const {
-  resolveListingOwnerByAnyId,
+  resolveListingContextByAnyId,
   resolveLogisticsLoadOwnerByAnyId,
   resolveProcessedProductOwnerByAnyId,
 } = require('../../../utils/identity');
@@ -164,6 +164,11 @@ const isSamePerson = (aProfile, aEmail, bProfile, bEmail) => {
   return !!ae && !!be && ae === be;
 };
 
+const REJECTION_MESSAGES: Record<string, string> = {
+  listing_not_active: 'Bu ilan artik aktif degil, yeni mesaj gonderilemez.',
+  seller_unavailable: 'Saticinin hesabina su anda ulasilamiyor.',
+};
+
 const senderIsParticipant = (participants) =>
   isSamePerson(
     participants.senderProfileId,
@@ -271,7 +276,14 @@ const resolveContextOwner = async (strapi, data) => {
   if (contextType === 'logistics_load') {
     return resolveLogisticsLoadOwnerByAnyId(strapi, listingLikeId);
   }
-  return resolveListingOwnerByAnyId(strapi, listingLikeId);
+  // LISTING_L7_SELLER_CONTACT_PRIVACY_REPORT.md L7.7/L7.10: the richer
+  // resolver also carries the listing's own real title/status, used
+  // right below (in verifyAndCorrectReceiver) to canonicalize the
+  // message-thread's display title and to reject starting a BRAND-NEW
+  // conversation about a listing that isn't active. Existing threads
+  // are untouched either way -- this only runs on the "no thread found
+  // yet" path.
+  return resolveListingContextByAnyId(strapi, listingLikeId);
 };
 
 const RECEIVER_ALIAS_FIELDS = [
@@ -296,10 +308,17 @@ const applyVerifiedReceiver = (data, owner) => {
   data.receiverProfileId = owner.ownerId || '';
 };
 
-/** Returns { existingThread, forbidden }. On forbidden:true the caller
- * must reject immediately -- current is not a real participant of the
- * real, pre-existing thread being referenced. Otherwise `data` has
- * already been corrected in place where a verified owner was found. */
+/** Returns { existingThread, forbidden, rejected }. On forbidden:true the
+ * caller must reject immediately -- current is not a real participant of
+ * the real, pre-existing thread being referenced. On rejected (a string
+ * reason), the caller must reject a brand-new, listing-context
+ * conversation attempt -- see the two LISTING_L7 checks below, which
+ * only ever run on the "no existing thread yet" path so a conversation
+ * that already exists is never retroactively broken by its listing
+ * later going inactive or its owner account later disappearing.
+ * Otherwise `data` has already been corrected in place where a verified
+ * owner (and, for a real listing context, its canonical title) was
+ * found. */
 const verifyAndCorrectReceiver = async (strapi, data, user) => {
   const current = actorForUser(user);
   const conversationKey = conversationKeyFor(data, user);
@@ -320,13 +339,13 @@ const verifyAndCorrectReceiver = async (strapi, data, user) => {
       existingThread.receiverEmail,
     );
     if (!currentIsRequester && !currentIsReceiver) {
-      return { existingThread, forbidden: true };
+      return { existingThread, forbidden: true, rejected: null };
     }
     const owner = currentIsRequester
       ? { email: existingThread.receiverEmail, ownerId: existingThread.receiverProfileId }
       : { email: existingThread.requesterEmail, ownerId: existingThread.requesterProfileId };
     applyVerifiedReceiver(data, owner);
-    return { existingThread, forbidden: false };
+    return { existingThread, forbidden: false, rejected: null };
   }
 
   const owner = await resolveContextOwner(strapi, data);
@@ -338,7 +357,60 @@ const verifyAndCorrectReceiver = async (strapi, data, user) => {
   ) {
     applyVerifiedReceiver(data, owner);
   }
-  return { existingThread: null, forbidden: false };
+
+  // LISTING_L7_SELLER_CONTACT_PRIVACY_REPORT.md L7.7/L7.9/L7.10: a real,
+  // RESOLVED listing context gets two extra checks a brand-new
+  // conversation about a listing/logistics-load/processed-product-
+  // that-isn't-a-listing doesn't need. Deliberately does NOT reject when
+  // a listingId-shaped value fails to resolve to any real listing row at
+  // all (`owner` stays null) -- confirmed live while writing this fix
+  // that this codebase's own conversation tests (and, by the same
+  // reasoning, potentially real production callers) legitimately use a
+  // `listing-<uuid>`-shaped string purely as a generic context-grouping
+  // key, not always a literal reference to a real `listing` row;
+  // rejecting that case outright broke every one of those pre-existing
+  // tests. A non-resolving listing context therefore falls through to
+  // the exact SAME pre-existing behavior as before this phase (trusts
+  // whatever receiver the client supplied) -- a deliberate, disclosed
+  // "defined fallback matching existing product behavior" rather than a
+  // hard block, per the mandate's own explicit alternative for this
+  // case. Also deliberately does NOT separately verify the seller's
+  // profile-setting row exists for a listing that DOES resolve: account
+  // deletion (auth-flow.ts's deleteAccount) already cascades to delete
+  // the owner's OWN listings along with their profile-setting/threads/
+  // messages, so "the listing still resolves, with an active status" is
+  // both necessary and sufficient proof the owning account hasn't been
+  // deleted -- a separate profile-setting-existence check would instead
+  // incorrectly reject any real, un-deleted seller who simply hasn't
+  // created a profile-setting row yet (also confirmed live: registration
+  // alone never creates one, and nothing requires it before creating a
+  // listing).
+  const listingLikeId = pick(data, ['listingId', 'productId']);
+  const isListingContext = inferContextType(data) === 'listing' && !!listingLikeId;
+  if (isListingContext && owner) {
+    if (owner.status && owner.status !== 'active') {
+      return { existingThread: null, forbidden: false, rejected: 'listing_not_active' };
+    }
+    if (owner.title) {
+      data.listingTitle = owner.title;
+    }
+    // Self-referencing listing (current user IS the resolved owner): the
+    // outer applyVerifiedReceiver call above deliberately skips this case
+    // (there's no real "other side" to correct the receiver to), which
+    // otherwise left receiverEmail/receiverProfileId exactly as the
+    // client sent them -- empty if the client never supplied one, which
+    // is exactly what a self-message attempt against your own listing
+    // looks like when no receiver is (legitimately) known client-side.
+    // Populate it to the owner's own identity so the existing
+    // isSamePerson self-message check downstream (upsert/sendMessage)
+    // can actually see and reject it, instead of silently creating a
+    // thread with no real receiver at all.
+    if (owner.email === current.email || owner.ownerId === current.profileId) {
+      applyVerifiedReceiver(data, owner);
+    }
+  }
+
+  return { existingThread: null, forbidden: false, rejected: null };
 };
 
 const normalizeThreadData = (data, user) => {
@@ -643,6 +715,9 @@ export default {
     if (verified.forbidden) {
       return ctx.forbidden('Bu sohbete erisim yetkin yok.');
     }
+    if (verified.rejected) {
+      return ctx.badRequest(REJECTION_MESSAGES[verified.rejected] || 'Istek reddedildi.');
+    }
     const p = normalizeParticipants(data, user);
     if (
       isSamePerson(
@@ -671,6 +746,9 @@ export default {
     const verified = await verifyAndCorrectReceiver(strapi, data, user);
     if (verified.forbidden) {
       return ctx.forbidden('Bu sohbete erisim yetkin yok.');
+    }
+    if (verified.rejected) {
+      return ctx.badRequest(REJECTION_MESSAGES[verified.rejected] || 'Istek reddedildi.');
     }
     const conversationKey = conversationKeyFor(data, user);
     const threadId = threadIdFor(data, conversationKey);

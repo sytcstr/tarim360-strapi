@@ -43,10 +43,22 @@ const idCandidates = (raw: unknown): string[] => {
   return [...set];
 };
 
-export const resolveListingOwnerByAnyId = async (
+/**
+ * LISTING_L7_SELLER_CONTACT_PRIVACY_REPORT.md L7.7/L7.9/L7.10: shared
+ * candidate-lookup core extracted out of resolveListingOwnerByAnyId
+ * (behavior-preserving -- same 4-strategy fallback: entityService by
+ * route id, db.query by numeric id, db.query by listingNo, db.query by
+ * documentId, tried per id-candidate in the same order) so
+ * resolveListingContextByAnyId can reuse it with a richer field
+ * selection (title/status, for canonical message context and the
+ * inactive-listing guard) instead of duplicating ~90 lines of fallback
+ * logic for a second, wider field set.
+ */
+const findListingRowByAnyId = async (
   strapi: Core.Strapi,
   rawListingId: unknown,
-): Promise<ListingOwnerIdentity | null> => {
+  fields: string[],
+): Promise<Record<string, unknown> | null> => {
   const candidates = idCandidates(rawListingId);
   if (candidates.length === 0) return null;
 
@@ -55,19 +67,9 @@ export const resolveListingOwnerByAnyId = async (
       const entity = await strapi.entityService.findOne(
         'api::listing.listing' as any,
         candidate as any,
-        {
-          fields: ['ownerEmail', 'ownerProfileId', 'ownerId', 'listingNo'],
-        },
+        { fields },
       );
-      if (entity && typeof entity === 'object') {
-        const map = entity as Record<string, unknown>;
-        const email = normalizeEmail(map.ownerEmail);
-        const ownerId =
-          normalizeOwnerId(map.ownerProfileId) ||
-          normalizeOwnerId(map.ownerId) ||
-          ownerIdFromEmail(email);
-        if (email || ownerId) return { email, ownerId };
-      }
+      if (entity && typeof entity === 'object') return entity as Record<string, unknown>;
     } catch (_) {
       // continue
     }
@@ -77,17 +79,9 @@ export const resolveListingOwnerByAnyId = async (
       try {
         const row = await strapi.db.query('api::listing.listing').findOne({
           where: { id: numeric },
-          select: ['ownerEmail', 'ownerProfileId', 'ownerId'],
+          select: fields,
         } as any);
-        if (row && typeof row === 'object') {
-          const map = row as Record<string, unknown>;
-          const email = normalizeEmail(map.ownerEmail);
-          const ownerId =
-            normalizeOwnerId(map.ownerProfileId) ||
-            normalizeOwnerId(map.ownerId) ||
-            ownerIdFromEmail(email);
-          if (email || ownerId) return { email, ownerId };
-        }
+        if (row && typeof row === 'object') return row as Record<string, unknown>;
       } catch (_) {
         // continue
       }
@@ -95,19 +89,11 @@ export const resolveListingOwnerByAnyId = async (
       try {
         const rows = await strapi.db.query('api::listing.listing').findMany({
           where: { listingNo: numeric },
-          select: ['ownerEmail', 'ownerProfileId', 'ownerId'],
+          select: fields,
           limit: 1,
         } as any);
         const row = Array.isArray(rows) ? rows[0] : null;
-        if (row && typeof row === 'object') {
-          const map = row as Record<string, unknown>;
-          const email = normalizeEmail(map.ownerEmail);
-          const ownerId =
-            normalizeOwnerId(map.ownerProfileId) ||
-            normalizeOwnerId(map.ownerId) ||
-            ownerIdFromEmail(email);
-          if (email || ownerId) return { email, ownerId };
-        }
+        if (row && typeof row === 'object') return row as Record<string, unknown>;
       } catch (_) {
         // continue
       }
@@ -116,23 +102,81 @@ export const resolveListingOwnerByAnyId = async (
     try {
       const row = await strapi.db.query('api::listing.listing').findOne({
         where: { documentId: candidate },
-        select: ['ownerEmail', 'ownerProfileId', 'ownerId'],
+        select: fields,
       } as any);
-      if (row && typeof row === 'object') {
-        const map = row as Record<string, unknown>;
-        const email = normalizeEmail(map.ownerEmail);
-        const ownerId =
-          normalizeOwnerId(map.ownerProfileId) ||
-          normalizeOwnerId(map.ownerId) ||
-          ownerIdFromEmail(email);
-        if (email || ownerId) return { email, ownerId };
-      }
+      if (row && typeof row === 'object') return row as Record<string, unknown>;
     } catch (_) {
       // continue
     }
   }
 
   return null;
+};
+
+const ownerIdentityFromListingRow = (
+  row: Record<string, unknown>,
+): ListingOwnerIdentity => {
+  const email = normalizeEmail(row.ownerEmail);
+  const ownerId =
+    normalizeOwnerId(row.ownerProfileId) ||
+    normalizeOwnerId(row.ownerId) ||
+    ownerIdFromEmail(email);
+  return { email, ownerId };
+};
+
+export const resolveListingOwnerByAnyId = async (
+  strapi: Core.Strapi,
+  rawListingId: unknown,
+): Promise<ListingOwnerIdentity | null> => {
+  const row = await findListingRowByAnyId(strapi, rawListingId, [
+    'ownerEmail',
+    'ownerProfileId',
+    'ownerId',
+    'listingNo',
+  ]);
+  if (!row) return null;
+  const identity = ownerIdentityFromListingRow(row);
+  return identity.email || identity.ownerId ? identity : null;
+};
+
+export type ListingContextIdentity = ListingOwnerIdentity & {
+  title: string;
+  status: string;
+};
+
+/**
+ * LISTING_L7_SELLER_CONTACT_PRIVACY_REPORT.md L7.7/L7.10: the richer
+ * sibling of resolveListingOwnerByAnyId -- same owner resolution, plus
+ * the listing's own real `title` (so a new listing-context conversation
+ * can be seeded with the CANONICAL title rather than trusting whatever
+ * string the client sends alongside `listingId`) and `status` (so a
+ * conversation can't be started fresh against a listing that isn't
+ * `active`). Deliberately does not resolve/populate `photos` here --
+ * media population is a meaningfully larger, separate concern than this
+ * phase's "seller contact + privacy" scope calls for; the display image
+ * for a listing-context conversation keeps coming from whatever the
+ * client already supplies, exactly as before this phase.
+ */
+export const resolveListingContextByAnyId = async (
+  strapi: Core.Strapi,
+  rawListingId: unknown,
+): Promise<ListingContextIdentity | null> => {
+  const row = await findListingRowByAnyId(strapi, rawListingId, [
+    'ownerEmail',
+    'ownerProfileId',
+    'ownerId',
+    'listingNo',
+    'title',
+    'status',
+  ]);
+  if (!row) return null;
+  const identity = ownerIdentityFromListingRow(row);
+  if (!identity.email && !identity.ownerId) return null;
+  return {
+    ...identity,
+    title: String(row.title ?? '').trim(),
+    status: String(row.status ?? '').trim().toLowerCase(),
+  };
 };
 
 /**
