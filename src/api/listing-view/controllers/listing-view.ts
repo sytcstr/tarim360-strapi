@@ -1,7 +1,9 @@
 import { factories } from '@strapi/strapi';
 import { registerView } from '../../engagement/services/engagement-view-service';
+import { loadEntityByRouteId, matchesIdentity, readIdentity } from '../../../utils/identity';
 
 const UID = 'api::listing-view.listing-view';
+const LISTING_UID = 'api::listing.listing';
 
 const asString = (value: unknown): string => String(value ?? '').trim();
 
@@ -37,17 +39,41 @@ export default factories.createCoreController(UID as any, ({ strapi }) => ({
     });
 
     try {
-      const email = asString(data.email).toLowerCase();
-      const ownerId = asString(data.ownerId);
-      const jwtEmail = (ctx?.state?.user?.email ?? '').toString().trim().toLowerCase();
-      const actorKey = jwtEmail
-        ? `user:${jwtEmail}`
-        : email
-          ? `user:${email}`
-          : ownerId
-            ? `owner:${ownerId}`
-            : `ip:${ctx.request?.ip ?? ctx.ip ?? 'unknown'}`;
-      await registerView(strapi, actorKey, 'listing', listingId);
+      // LISTING_L9_OWNER_BUYER_ACTION_POLICY_REPORT.md L9.9: same
+      // self-view exclusion as POST /engagements/view (engagement-v1.ts),
+      // applied here too since this legacy route independently calls
+      // registerView and would otherwise let an owner inflate their own
+      // listing's view count through this path even after that fix.
+      // Uses the JWT-derived identity (readIdentity), never the
+      // client-supplied `data.email`/`data.ownerId` fields below, which
+      // remain only for actor-key/dedup purposes on genuine (non-self)
+      // views.
+      const identity = readIdentity(ctx);
+      const isSelfView =
+        !!identity &&
+        matchesIdentity(
+          await loadEntityByRouteId(strapi, LISTING_UID, listingId, [
+            'ownerEmail',
+            'ownerProfileId',
+            'ownerId',
+          ]),
+          identity,
+          ['ownerEmail'],
+          ['ownerProfileId', 'ownerId'],
+        );
+      if (!isSelfView) {
+        const email = asString(data.email).toLowerCase();
+        const ownerId = asString(data.ownerId);
+        const jwtEmail = (ctx?.state?.user?.email ?? '').toString().trim().toLowerCase();
+        const actorKey = jwtEmail
+          ? `user:${jwtEmail}`
+          : email
+            ? `user:${email}`
+            : ownerId
+              ? `owner:${ownerId}`
+              : `ip:${ctx.request?.ip ?? ctx.ip ?? 'unknown'}`;
+        await registerView(strapi, actorKey, 'listing', listingId);
+      }
     } catch (e) {
       strapi.log.warn(`Listing view counter update failed: ${String(e)}`);
     }

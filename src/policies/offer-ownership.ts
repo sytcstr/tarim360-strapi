@@ -6,7 +6,7 @@ import {
   mergeScopeOrFilter,
   ownerIdFromEmail,
   readIdentity,
-  resolveListingOwnerByAnyId,
+  resolveListingContextByAnyId,
 } from '../utils/identity';
 
 const UID = 'api::offer.offer';
@@ -52,7 +52,7 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
     // re-derives the same fields -- the resolved listing owner always
     // wins over client-supplied receiver fields now, not just when both
     // are empty.
-    const owner = await resolveListingOwnerByAnyId(
+    const owner = await resolveListingContextByAnyId(
       strapi,
       data.listingId ?? data.listingNo,
     );
@@ -67,6 +67,16 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
 
     if (!receiverEmail && !receiverProfileId) {
       return denyForbidden(ctx, 'Teklif alicisi bulunamadi. Ilan sahibi bilgisi eksik.');
+    }
+
+    // LISTING_L9_OWNER_BUYER_ACTION_POLICY_REPORT.md L9.10: mirrors
+    // conversation.ts's existing listing_not_active guard for new
+    // message threads. Only rejects when the listing genuinely resolves
+    // AND is not active -- a non-resolving listingId (e.g. a legacy/
+    // synthetic context key with no real listing row) falls through
+    // unchanged, matching that same established precedent.
+    if (owner && owner.status && owner.status !== 'active') {
+      return denyForbidden(ctx, 'Bu ilan artik aktif degil.');
     }
 
     if (

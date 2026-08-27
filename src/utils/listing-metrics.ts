@@ -129,6 +129,15 @@ export const LISTING_CLIENT_PROTECTED_FIELDS = [
   'district',
   'cityNormalized',
   'searchNormalized',
+  // LISTING_L9_OWNER_BUYER_ACTION_POLICY_REPORT.md L9.10: `status` is the
+  // only lifecycle field a normal client PUT could still freely set
+  // (enum-bounded to pending/active/rejected, but nothing legitimate in
+  // the app sends it today -- create() always stamps 'active' and there
+  // is no owner-facing publish/unpublish feature yet). Protecting it now
+  // matches every other lifecycle/counter field's trust model and closes
+  // a self-sabotage/inconsistency gap before any future lifecycle
+  // feature (e.g. a later "Pasife Al" phase) has to reason about it.
+  'status',
 ] as const;
 
 export const stripListingProtectedFields = (

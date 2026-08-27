@@ -124,21 +124,29 @@ export default {
       );
     }
 
-    // Faz D8-V-B.3: a profile's own owner must never inflate their own
-    // view count. Flutter's HesabimPage already skips recording a view for
-    // its own owner, but that is a display-layer courtesy, not a security
+    // Faz D8-V-B.3 (profile) / LISTING_L9_OWNER_BUYER_ACTION_POLICY_REPORT.md
+    // L9.9 (listing): an owner must never inflate their own target's view
+    // count. Flutter already skips recording a view for a listing/profile's
+    // own owner, but that is a display-layer courtesy, not a security
     // boundary -- a modified or replayed client could otherwise self-view
-    // without limit. This check is deliberately scoped to targetType
-    // 'profile' only; no other domain in this contract has an "owner views
-    // their own target" concept, and registerView/setMembership stay
-    // completely untouched (self-view never becomes a case they need to
-    // know about).
-    if (targetType === 'profile') {
+    // without limit. Scoped to 'profile' and 'listing' only, since those are
+    // the only two domains with a real "owner views their own target"
+    // concept found in this codebase (forensic confirmed likes/favorites
+    // already have an equivalent isOwnListingTarget guard for listings;
+    // views did not, until now). registerView/setMembership stay completely
+    // untouched otherwise (self-view never becomes a case they need to know
+    // about).
+    if (targetType === 'profile' || targetType === 'listing') {
       const identity = readIdentity(ctx);
       if (identity) {
-        const target = await resolveTargetRow(strapi, 'profile', targetId);
-        const countField = VIEW_COUNT_FIELD.profile;
-        if (target && countField && String(target.profileId ?? '').trim() === identity.ownerId) {
+        const target = await resolveTargetRow(strapi, targetType, targetId);
+        const countField = VIEW_COUNT_FIELD[targetType];
+        const isSelfView =
+          !!target &&
+          (targetType === 'profile'
+            ? String(target.profileId ?? '').trim() === identity.ownerId
+            : matchesIdentity(target, identity, ['ownerEmail'], ['ownerProfileId', 'ownerId']));
+        if (target && countField && isSelfView) {
           ctx.body = buildViewBody({
             incremented: false,
             count: Math.max(0, Number(target[countField] ?? 0)),
