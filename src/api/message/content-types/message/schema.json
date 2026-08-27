@@ -78,6 +78,9 @@
                        "listingTitle":  {
                                             "type":  "string"
                                         },
+                       "listingNo":  {
+                                         "type":  "integer"
+                                     },
                        "requesterName":  {
                                              "type":  "string"
                                          },

@@ -1235,6 +1235,7 @@ export interface ApiMessageMessage extends Struct.CollectionTypeSchema {
       Schema.Attribute.Private;
     direction: Schema.Attribute.String;
     listingId: Schema.Attribute.String;
+    listingNo: Schema.Attribute.Integer;
     listingTitle: Schema.Attribute.String;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<
@@ -2132,6 +2133,9 @@ export interface ApiThreadThread extends Struct.CollectionTypeSchema {
     lastSenderProfileId: Schema.Attribute.String;
     lastTimeText: Schema.Attribute.String;
     listingId: Schema.Attribute.String;
+    listingMode: Schema.Attribute.Enumeration<['sell', 'buy']>;
+    listingNo: Schema.Attribute.Integer;
+    listingPriceText: Schema.Attribute.String;
     listingQtyText: Schema.Attribute.String;
     listingTitle: Schema.Attribute.String;
     locale: Schema.Attribute.String & Schema.Attribute.Private;

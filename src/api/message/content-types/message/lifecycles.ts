@@ -44,11 +44,25 @@ const pushMessageNotification = async (
     normalizeText(row.documentId) ||
     String(Date.now());
 
+  // LISTING_L8_MESSAGING_LISTING_CONTEXT_REPORT.md L8.9: `row.listingNo`
+  // is the message's own server-canonicalized snapshot (copied from the
+  // thread's write-once, server-verified listingNo -- never
+  // client-supplied, see conversation.ts's normalizeThreadData/
+  // updateExistingThread) -- safe to surface in the push title as-is.
+  // Absent for non-listing conversations (general/processed_product/
+  // logistics_load) or a listingId-shaped context that never resolved to
+  // a real listing -- falls back to the original plain title unchanged.
+  const listingNo = Number(row.listingNo);
+  const title =
+    Number.isInteger(listingNo) && listingNo > 0
+      ? `Yeni Mesaj — T360-${listingNo}`
+      : 'Yeni Mesaj';
+
   await strapiRef.entityService.create('api::notification.notification' as any, {
     data: {
       notificationId: `message_${baseId}`,
       kind: 'message',
-      title: 'Yeni Mesaj',
+      title,
       message: `${senderName}: ${body}`,
       isRead: false,
       targetEmail: receiverEmail,

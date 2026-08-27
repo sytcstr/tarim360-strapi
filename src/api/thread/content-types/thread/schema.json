@@ -35,6 +35,19 @@
                        "imageUrl":  {
                                         "type":  "string"
                                     },
+                       "listingNo":  {
+                                         "type":  "integer"
+                                     },
+                       "listingMode":  {
+                                           "type":  "enumeration",
+                                           "enum":  [
+                                                        "sell",
+                                                        "buy"
+                                                    ]
+                                       },
+                       "listingPriceText":  {
+                                                 "type":  "string"
+                                             },
                        "personAvatarUrl":  {
                                                "type":  "string"
                                            },

@@ -142,20 +142,33 @@ export const resolveListingOwnerByAnyId = async (
 export type ListingContextIdentity = ListingOwnerIdentity & {
   title: string;
   status: string;
+  listingNo: number | null;
+  mode: string;
+};
+
+const numOrNull = (value: unknown): number | null => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
 };
 
 /**
- * LISTING_L7_SELLER_CONTACT_PRIVACY_REPORT.md L7.7/L7.10: the richer
- * sibling of resolveListingOwnerByAnyId -- same owner resolution, plus
- * the listing's own real `title` (so a new listing-context conversation
- * can be seeded with the CANONICAL title rather than trusting whatever
- * string the client sends alongside `listingId`) and `status` (so a
- * conversation can't be started fresh against a listing that isn't
- * `active`). Deliberately does not resolve/populate `photos` here --
- * media population is a meaningfully larger, separate concern than this
- * phase's "seller contact + privacy" scope calls for; the display image
- * for a listing-context conversation keeps coming from whatever the
- * client already supplies, exactly as before this phase.
+ * LISTING_L7_SELLER_CONTACT_PRIVACY_REPORT.md L7.7/L7.10 /
+ * LISTING_L8_MESSAGING_LISTING_CONTEXT_REPORT.md L8.2/L8.4/L8.7: the
+ * richer sibling of resolveListingOwnerByAnyId -- same owner
+ * resolution, plus the listing's own real `title`/`status` (L7) and now
+ * `listingNo`/`mode` (L8) -- all read straight from the listing's own
+ * stored row, never trusted from client input, so a brand-new listing-
+ * context conversation can be seeded with the CANONICAL public listing
+ * number and sell/buy mode rather than whatever a client claims. Price
+ * is deliberately NOT canonicalized here: Flutter's `ProfileProduct` has
+ * no raw price/priceUnit/demandAmount/maxBudget fields to compare
+ * against in the first place (only the already-formatted L5
+ * `priceText`), so there is nothing meaningful to verify a client-
+ * supplied price against server-side; it is treated the same as
+ * `imageUrl` (L7's own precedent) -- a client-trusted, display-only
+ * snapshot, not a security/identity-relevant field. Deliberately does
+ * not resolve/populate `photos` either, for the same "meaningfully
+ * larger, separate concern" reason L7 already disclosed.
  */
 export const resolveListingContextByAnyId = async (
   strapi: Core.Strapi,
@@ -168,6 +181,7 @@ export const resolveListingContextByAnyId = async (
     'listingNo',
     'title',
     'status',
+    'mode',
   ]);
   if (!row) return null;
   const identity = ownerIdentityFromListingRow(row);
@@ -176,6 +190,8 @@ export const resolveListingContextByAnyId = async (
     ...identity,
     title: String(row.title ?? '').trim(),
     status: String(row.status ?? '').trim().toLowerCase(),
+    listingNo: numOrNull(row.listingNo),
+    mode: String(row.mode ?? '').trim().toLowerCase(),
   };
 };
 

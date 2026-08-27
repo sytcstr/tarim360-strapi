@@ -394,6 +394,14 @@ const verifyAndCorrectReceiver = async (strapi, data, user) => {
     if (owner.title) {
       data.listingTitle = owner.title;
     }
+    // LISTING_L8_MESSAGING_LISTING_CONTEXT_REPORT.md L8.2/L8.7: same
+    // canonicalization as listingTitle above -- the public listing
+    // number and sell/buy mode are resolved from the real listing,
+    // never trusted from client input (see identity.ts's
+    // resolveListingContextByAnyId doc comment for why price is
+    // deliberately NOT canonicalized the same way).
+    if (owner.listingNo != null) data.listingNo = owner.listingNo;
+    if (owner.mode === 'sell' || owner.mode === 'buy') data.listingMode = owner.mode;
     // Self-referencing listing (current user IS the resolved owner): the
     // outer applyVerifiedReceiver call above deliberately skips this case
     // (there's no real "other side" to correct the receiver to), which
@@ -429,6 +437,16 @@ const normalizeThreadData = (data, user) => {
     listingTitle: pick(data, ['listingTitle', 'title']),
     listingQtyText: pick(data, ['listingQtyText', 'qtyText']),
     imageUrl: pick(data, ['imageUrl', 'photoUrl', 'mediaUrl']),
+    listingNo: (() => {
+      const n = Number(data.listingNo);
+      return Number.isFinite(n) && n > 0 ? n : null;
+    })(),
+    listingMode: data.listingMode === 'sell' || data.listingMode === 'buy' ? data.listingMode : null,
+    // Client-trusted, display-only -- same precedent as imageUrl (L7):
+    // Flutter has no raw price fields to canonicalize this against (only
+    // the already-formatted L5 priceText), so there is nothing more
+    // trustworthy to resolve it from server-side.
+    listingPriceText: pick(data, ['listingPriceText']),
     personName: pick(data, ['personName', 'counterpartyName']) || p.receiverName || p.requesterName,
     personCity: pick(data, ['personCity', 'city']),
     personAvatarUrl: pick(data, ['personAvatarUrl', 'avatarUrl']),
@@ -454,14 +472,66 @@ const normalizeThreadData = (data, user) => {
   };
 };
 
-const updateExistingThread = (strapi, existing, normalized) =>
-  strapi.entityService.update(THREAD_UID, existing.id, {
+// LISTING_L8_MESSAGING_LISTING_CONTEXT_REPORT.md L8.3/L8.4: a thread's
+// canonical listing reference is write-once, pinned here exactly like
+// threadId/conversationKey already were. Confirmed live while building
+// this fix that WITHOUT this list, a client resending a thread's real
+// threadId alongside a DIFFERENT listing's listingId (e.g. the exact
+// shape a listing-context-unaware local thread-id scheme would
+// produce -- see the paired Flutter fix) silently overwrote the
+// thread's listingId/listingTitle/contextId with the new listing's
+// data while conversationKey stayed pinned to the OLD listing, leaving
+// the row internally inconsistent (its own conversationKey hash still
+// encoding the original listing, its listingId/listingTitle columns
+// now describing a different one) -- and every later message in the
+// same thread would snapshot whichever listing happened to be sent
+// last, corrupting the conversation's history. A conversation that
+// starts about one listing stays about that listing for its entire
+// life; a genuinely different listing gets its own thread (a
+// different conversationKey/threadId), never a mutation of this one.
+// Fields that were ALREADY only ever client-supplied, never verified
+// against a real listing, for every context type other than a resolved
+// 'listing' (processed_product/logistics_load/general never canonicalize
+// these at all) -- allowed to backfill from the client payload on an
+// existing thread ONLY when the stored value is genuinely missing
+// (pre-L8 row, or a context type that never had it), never once a real
+// value is already stored.
+const THREAD_CLIENT_TRUSTED_CONTEXT_FIELDS = [
+  'contextType',
+  'contextId',
+  'listingId',
+  'listingTitle',
+  'listingQtyText',
+  'imageUrl',
+  'listingPriceText',
+];
+
+// Fields canonicalized server-side ONLY from a verified real listing
+// (identity.ts's resolveListingContextByAnyId, see verifyAndCorrectReceiver
+// above) -- an existing thread's stored value is authoritative, full
+// stop. Never falls back to client-supplied input even when missing
+// (a pre-L8 row with no listingNo yet simply has no listingNo until a
+// dedicated backfill re-resolves it server-side; a client must never be
+// able to fill in a "missing" canonical field with its own claimed
+// value).
+const THREAD_SERVER_CANONICAL_CONTEXT_FIELDS = ['listingNo', 'listingMode'];
+
+const updateExistingThread = (strapi, existing, normalized) => {
+  const pinned = { ...normalized };
+  for (const field of THREAD_CLIENT_TRUSTED_CONTEXT_FIELDS) {
+    pinned[field] = existing[field] ?? normalized[field];
+  }
+  for (const field of THREAD_SERVER_CANONICAL_CONTEXT_FIELDS) {
+    pinned[field] = existing[field] ?? null;
+  }
+  return strapi.entityService.update(THREAD_UID, existing.id, {
     data: {
-      ...normalized,
+      ...pinned,
       threadId: existing.threadId || normalized.threadId,
       conversationKey: existing.conversationKey || normalized.conversationKey,
     },
   });
+};
 
 /**
  * MESSAGING M5 (MESSAGING_M1_M3_CORE_FIX_REPORT.md): `thread.conversationKey`
@@ -820,6 +890,7 @@ export default {
       contextId: thread.contextId,
       listingId: thread.listingId,
       listingTitle: thread.listingTitle,
+      listingNo: thread.listingNo ?? null,
       message: text,
       text,
       direction: pick(data, ['direction']),
