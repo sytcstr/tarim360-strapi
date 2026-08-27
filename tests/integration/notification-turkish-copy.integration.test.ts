@@ -216,7 +216,7 @@ test('offer countered (bargaining): the notified participant sees "Karşı Tekli
   assert.ok(row.message.endsWith('teklifi güncellendi.'), `unexpected message: ${row.message}`);
 });
 
-test('a real chat message notification title is "Yeni Mesaj" and the body carries the message text with its diacritics intact', async () => {
+test('a real chat message notification title carries the listing\'s canonical T360 number, and the body carries the message text with its diacritics intact', async () => {
   const owner = await registerAndLogin(`f25-msg-owner-${randomUUID()}@test.local`);
   const buyer = await registerAndLogin(`f25-msg-buyer-${randomUUID()}@test.local`);
   const listing = await createListingAs(owner.jwt);
@@ -234,7 +234,14 @@ test('a real chat message notification title is "Yeni Mesaj" and the body carrie
       } as any),
     (r: any) => Boolean(r),
   );
-  assert.equal(row.title, 'Yeni Mesaj');
+  // LISTING_L8_MESSAGING_LISTING_CONTEXT_REPORT.md L8.9: the title now
+  // carries the message's own canonical listingNo snapshot (server-
+  // derived from the real listing, see message/lifecycles.ts) whenever
+  // the conversation resolves to a real listing -- this test's listing
+  // does, so the plain 'Yeni Mesaj' title only applies to a message
+  // with no resolvable listing context (covered separately in
+  // tarim360-strapi's conversation-listing-context.integration.test.ts).
+  assert.equal(row.title, `Yeni Mesaj — T360-${listing.listingNo}`);
   assert.ok(
     row.message.includes('İlanınızla ilgileniyorum, müsait misiniz?'),
     `unexpected message: ${row.message}`,

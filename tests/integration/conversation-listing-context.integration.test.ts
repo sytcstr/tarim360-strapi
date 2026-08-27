@@ -258,3 +258,172 @@ test('a seller cannot message themselves about their own listing', async () => {
   assert.equal(status, 400);
   assert.ok(body.error?.message || body.message);
 });
+
+// =======================================================================
+// LISTING_L8_MESSAGING_LISTING_CONTEXT_REPORT.md
+// =======================================================================
+
+// ---------------------------------------------------------------------
+// L8.3 -- thread reuse semantics: same buyer+seller, two DIFFERENT
+// listings (no explicit threadId/contextId reused) must produce two
+// SEPARATE threads, each with its own correct, un-mixed context.
+// ---------------------------------------------------------------------
+
+test('the same buyer and seller messaging about two different listings get two separate threads', async () => {
+  const seller = await registerAndLogin(`l8-multi-seller-${randomUUID()}@test.local`);
+  const buyer = await registerAndLogin(`l8-multi-buyer-${randomUUID()}@test.local`);
+  const listingA = await createListing(seller.jwt, { title: `Listing A ${randomUUID()}` });
+  const listingB = await createListing(seller.jwt, { title: `Listing B ${randomUUID()}` });
+
+  const convA = await upsertConversation(buyer.jwt, { listingId: listingA.documentId });
+  const convB = await upsertConversation(buyer.jwt, { listingId: listingB.documentId });
+  assert.equal(convA.status, 200);
+  assert.equal(convB.status, 200);
+
+  assert.notEqual(convA.body.data.threadId, convB.body.data.threadId);
+  assert.equal(convA.body.data.listingTitle, listingA.title);
+  assert.equal(convB.body.data.listingTitle, listingB.title);
+  assert.equal(convA.body.data.listingId, listingA.documentId);
+  assert.equal(convB.body.data.listingId, listingB.documentId);
+});
+
+// ---------------------------------------------------------------------
+// L8.3/L8.4 -- the actual bug found during this phase's own forensic: a
+// client resending a real, existing thread's threadId alongside a
+// DIFFERENT listing's listingId must NOT silently redirect that
+// thread's canonical context to the new listing.
+// ---------------------------------------------------------------------
+
+test('reusing an existing threadId with a different listingId does not corrupt the thread\'s canonical context', async () => {
+  const seller = await registerAndLogin(`l8-pin-seller-${randomUUID()}@test.local`);
+  const buyer = await registerAndLogin(`l8-pin-buyer-${randomUUID()}@test.local`);
+  const listingA = await createListing(seller.jwt, { title: `Pinned A ${randomUUID()}` });
+  const listingB = await createListing(seller.jwt, { title: `Pinned B ${randomUUID()}` });
+
+  const first = await upsertConversation(buyer.jwt, { listingId: listingA.documentId });
+  assert.equal(first.status, 200);
+  const threadId = first.body.data.threadId;
+
+  // Reuse the SAME real threadId, but this message claims a DIFFERENT
+  // listing -- exactly the shape a listing-context-unaware local
+  // thread-id scheme would send (see the paired Flutter fix).
+  const second = await sendMessage(buyer.jwt, {
+    threadId,
+    listingId: listingB.documentId,
+    listingTitle: listingB.title,
+    message: 'Bu ikinci ilan hakkinda mesaj',
+  });
+  assert.equal(second.status, 200);
+  assert.equal(second.body.thread.threadId, threadId);
+  // The thread's canonical context must still be listing A -- untouched.
+  assert.equal(second.body.thread.listingId, listingA.documentId);
+  assert.equal(second.body.thread.listingTitle, listingA.title);
+
+  const persisted = await strapiInstance.db
+    .query('api::thread.thread')
+    .findOne({ where: { threadId } } as any);
+  assert.equal((persisted as any).listingId, listingA.documentId);
+  assert.equal((persisted as any).listingTitle, listingA.title);
+});
+
+// ---------------------------------------------------------------------
+// L8.2/L8.7 -- listingNo/mode are canonicalized from the real listing,
+// never trusted from client input, for a brand-new conversation. Price
+// is deliberately NOT canonicalized here (see identity.ts's doc
+// comment) -- Flutter has no raw price to verify a client value
+// against in the first place, only the already-formatted L5 display
+// string, so listingPriceText stays a client-trusted display snapshot,
+// same precedent as imageUrl.
+// ---------------------------------------------------------------------
+
+test('listingNo/mode are canonicalized from the real listing, forged client values are ignored', async () => {
+  const seller = await registerAndLogin(`l8-canon-seller-${randomUUID()}@test.local`);
+  const buyer = await registerAndLogin(`l8-canon-buyer-${randomUUID()}@test.local`);
+  const listing = await createListing(seller.jwt, {
+    title: `Canonical Fields Test ${randomUUID()}`,
+    mode: 'sell',
+  });
+
+  const { status, body } = await upsertConversation(buyer.jwt, {
+    listingId: listing.documentId,
+    listingNo: 999999999,
+    listingMode: 'buy',
+  });
+  assert.equal(status, 200);
+  assert.equal(body.data.listingNo, listing.listingNo);
+  assert.notEqual(body.data.listingNo, 999999999);
+  assert.equal(body.data.listingMode, 'sell');
+});
+
+test('a thread with no canonical listingNo (e.g. a non-resolving legacy context) never lets a client backfill it later', async () => {
+  const buyer = await registerAndLogin(`l8-nobackfill-buyer-${randomUUID()}@test.local`);
+  const fakeListingId = `listing-no-real-match-${randomUUID().replace(/[0-9]/g, 'x')}`;
+  const sellerEmail = `l8-nobackfill-target-${randomUUID()}@test.local`;
+
+  const first = await upsertConversation(buyer.jwt, {
+    listingId: fakeListingId,
+    receiverEmail: sellerEmail,
+  });
+  assert.equal(first.status, 200);
+  assert.equal(first.body.data.listingNo, null);
+  const threadId = first.body.data.threadId;
+
+  const second = await sendMessage(buyer.jwt, {
+    threadId,
+    listingId: fakeListingId,
+    listingNo: 12345,
+    message: 'Ikinci mesaj',
+  });
+  assert.equal(second.status, 200);
+  assert.equal(second.body.thread.listingNo, null);
+});
+
+// ---------------------------------------------------------------------
+// L8.9 -- push notification title carries the canonical T360-XXXXX
+// number when the conversation has one, server-derived only.
+// ---------------------------------------------------------------------
+
+test('a new message about a real listing creates a notification titled with its canonical T360 number', async () => {
+  const seller = await registerAndLogin(`l8-push-seller-${randomUUID()}@test.local`);
+  const buyer = await registerAndLogin(`l8-push-buyer-${randomUUID()}@test.local`);
+  const listing = await createListing(seller.jwt, { title: `Push Context Test ${randomUUID()}` });
+
+  const conv = await upsertConversation(buyer.jwt, { listingId: listing.documentId });
+  assert.equal(conv.status, 200);
+  const send = await sendMessage(buyer.jwt, {
+    threadId: conv.body.data.threadId,
+    listingId: listing.documentId,
+    message: 'Merhaba, ilan hala musait mi?',
+  });
+  assert.equal(send.status, 200);
+
+  const notification = await strapiInstance.db
+    .query('api::notification.notification')
+    .findOne({ where: { kind: 'message', threadId: conv.body.data.threadId } } as any);
+  assert.ok(notification);
+  assert.equal((notification as any).title, `Yeni Mesaj — T360-${listing.listingNo}`);
+});
+
+test('a message with no resolvable listing context creates a notification with the plain default title', async () => {
+  const buyer = await registerAndLogin(`l8-push-plain-buyer-${randomUUID()}@test.local`);
+  const sellerEmail = `l8-push-plain-target-${randomUUID()}@test.local`;
+  const fakeListingId = `listing-no-real-match-${randomUUID().replace(/[0-9]/g, 'x')}`;
+
+  const conv = await upsertConversation(buyer.jwt, {
+    listingId: fakeListingId,
+    receiverEmail: sellerEmail,
+  });
+  assert.equal(conv.status, 200);
+  const send = await sendMessage(buyer.jwt, {
+    threadId: conv.body.data.threadId,
+    listingId: fakeListingId,
+    message: 'Merhaba',
+  });
+  assert.equal(send.status, 200);
+
+  const notification = await strapiInstance.db
+    .query('api::notification.notification')
+    .findOne({ where: { kind: 'message', threadId: conv.body.data.threadId } } as any);
+  assert.ok(notification);
+  assert.equal((notification as any).title, 'Yeni Mesaj');
+});
