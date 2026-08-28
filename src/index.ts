@@ -228,6 +228,37 @@ const enableMany = (permissions: PermissionsTree, actionIds: string[]) => {
   }
 };
 
+// LISTING_L13_MEDIA_LIFECYCLE_REPORT.md L13.3: `enableMany`/`enableAction`
+// are additive-only (idempotent-safe to re-run every boot, but never
+// revoke anything not in their list) -- an already-deployed production
+// role that previously had a permission enabled would keep it forever
+// unless something explicitly disables it. Needed once, to actually
+// close the `plugin::upload.content-api.destroy` gap (see
+// authenticatedActions' own comment) on an instance where it may already
+// be enabled from a prior deploy, not just prevent it being (re-)enabled
+// on a fresh one.
+const disableAction = (permissions: PermissionsTree, actionId: string) => {
+  const parts = actionId.split('.');
+  if (parts.length < 3) return;
+  const [typeName, controllerName, actionName] = parts;
+  const node = permissions[typeName]?.controllers?.[controllerName]?.[actionName];
+  if (!node) return;
+  permissions[typeName].controllers[controllerName][actionName] = {
+    ...node,
+    enabled: false,
+  };
+};
+
+const disableMany = (permissions: PermissionsTree, actionIds: string[]) => {
+  for (const id of actionIds) {
+    disableAction(permissions, id);
+  }
+};
+
+const authenticatedActionsToRevoke: string[] = [
+  'plugin::upload.content-api.destroy',
+];
+
 const publicActions: string[] = [
   // Auth basics
   'plugin::users-permissions.auth.callback',
@@ -290,7 +321,16 @@ const authenticatedActions: string[] = [
   'plugin::upload.content-api.upload',
   'plugin::upload.content-api.find',
   'plugin::upload.content-api.findOne',
-  'plugin::upload.content-api.destroy',
+  // LISTING_L13_MEDIA_LIFECYCLE_REPORT.md L13.3: `destroy` deliberately
+  // removed -- Strapi's stock destroy action has no ownership check of
+  // its own (only verifies the file id exists), so any authenticated
+  // user could delete ANY uploaded file across the whole app by id.
+  // Nothing legitimate ever called this route (Flutter never calls a
+  // delete-file endpoint itself; this app's own new orphan-cleanup logic
+  // always uses the upload plugin's service directly, server-side,
+  // never this public HTTP route) -- confirmed via forensic before
+  // removing it.
+  // 'plugin::upload.content-api.destroy',
 
   // Listing
   'api::listing.listing.create',
@@ -529,6 +569,7 @@ const syncUsersPermissionsRoleConfig = async (strapi: Core.Strapi) => {
     const current = await roleService.findOne(authenticatedRole.id);
     const permissions = current.permissions as PermissionsTree;
     enableMany(permissions, authenticatedActions);
+    disableMany(permissions, authenticatedActionsToRevoke);
     await roleService.updateRole(authenticatedRole.id, {
       permissions,
     });

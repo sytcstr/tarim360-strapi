@@ -16,6 +16,12 @@ import {
 import { computeListingSearchFields } from '../../../utils/listing-search-fields';
 import { buildListingDiscoveryQuery } from '../../../utils/listing-query';
 import { fetchPopularListingsPage } from '../../../utils/listing-popular-query';
+import {
+  cleanupOrphanedPhotoIds,
+  extractRequestedPhotoIds,
+  findNonImageFileId,
+  isPhotoOwnedByIdentity,
+} from '../../../utils/listing-media';
 import { fingerprintPayload, isValidOperationId, resolveOperation } from '../../../utils/operation-idempotency';
 
 const LISTING_UID = 'api::listing.listing';
@@ -238,6 +244,30 @@ export default factories.createCoreController(
         stripClientProtectedFields(input),
       );
       delete (clientPayload as any).operationId;
+
+      // LISTING_L13_MEDIA_LIFECYCLE_REPORT.md L13.3: confirmed live gap
+      // -- Strapi's core media-relation connect only checks that a file
+      // id EXISTS in plugin::upload.file, never who uploaded/owns it, so
+      // nothing previously stopped a user from attaching a file id
+      // already visibly in use on someone ELSE's live listing to their
+      // own. Rejects only that confirmed case; a freshly-uploaded,
+      // not-yet-attached file (the normal case) or the identity's own
+      // existing photo remain allowed.
+      const requestedPhotoIds = extractRequestedPhotoIds((clientPayload as any).photos);
+      for (const fileId of requestedPhotoIds) {
+        const owned = await isPhotoOwnedByIdentity(strapi, fileId, identity);
+        if (!owned) {
+          return ctx.forbidden('Bu fotograf baska bir kullaniciya ait.');
+        }
+      }
+      // L13.17: allowedTypes:["images"] is not enforced by Strapi's own
+      // relation-connect for an already-uploaded file id -- see
+      // findNonImageFileId's own comment.
+      const nonImageId = await findNonImageFileId(strapi, requestedPhotoIds);
+      if (nonImageId !== null) {
+        return ctx.badRequest('Sadece resim dosyalari fotograf olarak eklenebilir.');
+      }
+
       const fingerprint = fingerprintPayload({
         ...clientPayload,
         ownerKey: identity.ownerId,
@@ -484,6 +514,8 @@ export default factories.createCoreController(
       // whatever this edit actually changes), the same "real value wins"
       // rule L1 established for category-field edit hydration.
       const existing = await findListingByAnyId(strapi, ctx.params?.id, [
+        'id',
+        'documentId',
         'title',
         'description',
         'mainType',
@@ -500,6 +532,46 @@ export default factories.createCoreController(
         ownerCity: cleanInput.ownerCity ?? existing?.ownerCity,
       });
 
+      // LISTING_L13_MEDIA_LIFECYCLE_REPORT.md L13.3/L13.7/L13.8/L13.9: a
+      // client PUT can change the `photos` relation to add/remove/
+      // replace listing photos -- reads the CURRENT relation first
+      // (before the write) so (a) any newly-referenced file id can be
+      // ownership-checked (an id already on this listing obviously
+      // already belongs to it, only genuinely NEW ids need checking),
+      // and (b) any id present before but absent after this update can
+      // be considered for orphan cleanup once the write itself commits
+      // successfully -- never before, so a failed update never deletes
+      // photos that are still very much in use (L13.9's explicit
+      // ordering requirement).
+      const documentId = String((existing as any)?.documentId ?? '').trim();
+      const photosProvided = Object.prototype.hasOwnProperty.call(cleanInput, 'photos');
+      let previousPhotoIds: number[] = [];
+      if (photosProvided && (existing as any)?.id) {
+        const withPhotos = await strapi.entityService.findOne(LISTING_UID as any, (existing as any).id, {
+          populate: ['photos'],
+        } as any);
+        previousPhotoIds = extractRequestedPhotoIds((withPhotos as any)?.photos);
+      }
+      if (photosProvided) {
+        const requestedPhotoIds = extractRequestedPhotoIds((cleanInput as any).photos);
+        const newlyReferencedIds = requestedPhotoIds.filter(
+          (id) => !previousPhotoIds.includes(id),
+        );
+        for (const fileId of newlyReferencedIds) {
+          const owned = await isPhotoOwnedByIdentity(strapi, fileId, identity);
+          if (!owned) {
+            return ctx.forbidden('Bu fotograf baska bir kullaniciya ait.');
+          }
+        }
+        // L13.17: same allowedTypes gap as create() -- only newly
+        // referenced ids need checking, since an id already on this
+        // listing was already validated when it was first attached.
+        const nonImageId = await findNonImageFileId(strapi, newlyReferencedIds);
+        if (nonImageId !== null) {
+          return ctx.badRequest('Sadece resim dosyalari fotograf olarak eklenebilir.');
+        }
+      }
+
       ctx.request.body = {
         data: {
           ...cleanInput,
@@ -509,7 +581,62 @@ export default factories.createCoreController(
           ...searchFields,
         },
       };
-      return super.update(ctx);
+      const result = await super.update(ctx);
+
+      if (photosProvided && documentId) {
+        const requestedPhotoIds = extractRequestedPhotoIds((cleanInput as any).photos);
+        const removedIds = previousPhotoIds.filter(
+          (id) => !requestedPhotoIds.includes(id),
+        );
+        if (removedIds.length > 0) {
+          // Awaited (not fire-and-forget) so cleanup can't be cut short
+          // by the request/response cycle ending -- safe either way,
+          // since cleanupOrphanedPhotoIds already catches and logs its
+          // own per-file failures and never throws (L13.23), so this
+          // can never turn into an update failure for the caller.
+          await cleanupOrphanedPhotoIds(strapi, removedIds, documentId);
+        }
+      }
+
+      return result;
+    },
+
+    /**
+     * LISTING_L13_MEDIA_LIFECYCLE_REPORT.md L13.9: the stock core delete
+     * action (previously unoverridden -- confirmed via forensic) removes
+     * only the listing's own DB row(s) (both draft+published, since
+     * draftAndPublish:true) and leaves every attached upload-plugin file
+     * completely untouched -- 100% of a deleted listing's photos became
+     * permanent orphans before this fix. Captures the listing's own
+     * photos BEFORE deleting (never after -- there would be nothing left
+     * to read), lets the real delete proceed, and only THEN considers
+     * each photo for cleanup, still gated by the same "not referenced
+     * elsewhere" check every removal path uses (L13.10) -- a photo this
+     * listing shared with, say, a re-used upload on another of the
+     * owner's own listings is never touched. If delete itself fails,
+     * nothing is cleaned up (the early return below).
+     */
+    async delete(ctx) {
+      const existing = await findListingByAnyId(strapi, ctx.params?.id, [
+        'id',
+        'documentId',
+      ]);
+      const documentId = String((existing as any)?.documentId ?? '').trim();
+      let photoIds: number[] = [];
+      if (existing?.id) {
+        const withPhotos = await strapi.entityService.findOne(LISTING_UID as any, (existing as any).id, {
+          populate: ['photos'],
+        } as any);
+        photoIds = extractRequestedPhotoIds((withPhotos as any)?.photos);
+      }
+
+      const result = await super.delete(ctx);
+
+      if (documentId && photoIds.length > 0) {
+        await cleanupOrphanedPhotoIds(strapi, photoIds, documentId);
+      }
+
+      return result;
     },
 
     /**
