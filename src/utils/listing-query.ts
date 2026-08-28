@@ -39,6 +39,7 @@ export const LISTING_SORT_WHITELIST = [
   'oldest',
   'price_asc',
   'price_desc',
+  'popular',
 ] as const;
 export type ListingSortBy = (typeof LISTING_SORT_WHITELIST)[number];
 
@@ -69,6 +70,14 @@ export type ListingDiscoveryQuery = {
   filters: Record<string, unknown>;
   sort: Array<Record<string, 'asc' | 'desc'>>;
   pagination: { page: number; pageSize: number };
+  // LISTING_L12_POPULAR_TRENDING_RANKING_REPORT.md L12.4: the resolved
+  // sortBy is exposed here so the controller can detect `'popular'` and
+  // route to the dedicated two-tier composite query (listing-popular-
+  // query.ts) instead of passing `sort` straight through to the generic
+  // entityService find -- a plain field-direction sort array cannot
+  // express "active (non-expired) Rocket listings first", which needs a
+  // live rocketEndsAt-vs-now comparison, not a static column value.
+  sortBy: ListingSortBy;
 };
 
 /**
@@ -144,6 +153,12 @@ export const buildListingDiscoveryQuery = (
         return [{ price: 'asc' }, { id: 'asc' }];
       case 'price_desc':
         return [{ price: 'desc' }, { id: 'asc' }];
+      case 'popular':
+        // Never actually used -- the controller branches to
+        // listing-popular-query.ts before consulting `.sort` for this
+        // sortBy value. Kept as an inert, sensible fallback only so this
+        // field's type stays a plain non-nullable array.
+        return [{ createdAt: 'desc' }, { id: 'desc' }];
       case 'newest':
       default:
         return [{ createdAt: 'desc' }, { id: 'desc' }];
@@ -155,5 +170,5 @@ export const buildListingDiscoveryQuery = (
   const pageSizeRaw = asPositiveInt(rawQuery.pageSize);
   const pageSize = Math.min(pageSizeRaw ?? DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE);
 
-  return { filters, sort, pagination: { page, pageSize } };
+  return { filters, sort, pagination: { page, pageSize }, sortBy };
 };

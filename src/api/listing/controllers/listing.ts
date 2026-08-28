@@ -15,6 +15,7 @@ import {
 } from '../../../utils/listing-metrics';
 import { computeListingSearchFields } from '../../../utils/listing-search-fields';
 import { buildListingDiscoveryQuery } from '../../../utils/listing-query';
+import { fetchPopularListingsPage } from '../../../utils/listing-popular-query';
 import { fingerprintPayload, isValidOperationId, resolveOperation } from '../../../utils/operation-idempotency';
 
 const LISTING_UID = 'api::listing.listing';
@@ -149,6 +150,36 @@ export default factories.createCoreController(
         (ctx.query ?? {}) as Record<string, unknown>,
       );
       if (discoveryQuery) {
+        // LISTING_L12_POPULAR_TRENDING_RANKING_REPORT.md L12.4: `popular`
+        // cannot be expressed as a plain field-direction `sort` array (it
+        // needs a live rocketEndsAt-vs-now comparison to correctly float
+        // ONLY currently-active Rocket listings above everyone else --
+        // see listing-popular-query.ts's own header comment) so it's
+        // handled as a fully separate response path, never handed to
+        // the generic entityService find/sort machinery below.
+        if (discoveryQuery.sortBy === 'popular') {
+          const { results, pagination } = await fetchPopularListingsPage(
+            strapi,
+            discoveryQuery.filters,
+            discoveryQuery.pagination.page,
+            discoveryQuery.pagination.pageSize,
+          );
+          // Not this.sanitizeOutput/transformResponse here -- confirmed
+          // live (same finding this file's create() action already
+          // documents) that they don't behave the same way outside the
+          // standard entityService-driven find pipeline for a custom
+          // action. `fetchPopularListingsPage` reads via the low-level
+          // Query Engine (db.query), which does NOT apply Strapi's
+          // role-based private-field stripping the way entityService/
+          // super.find() normally would -- `ownerEmail` is the one
+          // `private: true` field on this content-type, so it must be
+          // stripped explicitly here or it would leak into a public
+          // response.
+          const publicResults = results.map(({ ownerEmail, ...rest }) => rest);
+          ctx.body = { data: publicResults, meta: { pagination } };
+          return;
+        }
+
         const previous = (ctx.query ?? {}) as Record<string, unknown>;
         ctx.query = {
           filters: discoveryQuery.filters,
