@@ -13,6 +13,7 @@
     "seed:agri-reference": "node scripts/seed-agri-reference-data.js",
     "recount:processed-product-engagement": "node --import tsx scripts/recount-processed-product-engagement.ts",
     "recount:hub-content-engagement": "node --import tsx scripts/recount-hub-content-engagement.ts",
+    "scan:orphaned-upload-files": "node --import tsx scripts/scan-orphaned-upload-files.ts",
     "strapi": "strapi",
     "test:unit": "node --import tsx --test tests/unit/**/*.test.ts",
     "test:integration": "node --import tsx --test tests/integration/**/*.test.ts",
