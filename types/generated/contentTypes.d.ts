@@ -1003,10 +1003,7 @@ export interface ApiListingListing extends Struct.CollectionTypeSchema {
     ownerName: Schema.Attribute.String;
     ownerProfileId: Schema.Attribute.String;
     packaging: Schema.Attribute.String;
-    photos: Schema.Attribute.Media<
-      'images' | 'files' | 'videos' | 'audios',
-      true
-    >;
+    photos: Schema.Attribute.Media<'images', true>;
     price: Schema.Attribute.Decimal;
     priceUnit: Schema.Attribute.String;
     protein: Schema.Attribute.Decimal;
