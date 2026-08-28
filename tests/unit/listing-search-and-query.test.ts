@@ -172,6 +172,15 @@ test('buildListingDiscoveryQuery: sortBy whitelist maps to the right sort array 
   ]);
 });
 
+test('buildListingDiscoveryQuery: sortBy=popular resolves and is exposed for the controller to detect (L12.4)', () => {
+  const q = buildListingDiscoveryQuery({ sortBy: 'popular', page: '1' });
+  assert.equal(q?.sortBy, 'popular');
+  // The `.sort` field is never actually consulted for this sortBy value
+  // (listing.ts's find() branches to listing-popular-query.ts instead)
+  // but must still resolve to a valid, non-throwing fallback array.
+  assert.ok(Array.isArray(q?.sort) && q!.sort.length > 0);
+});
+
 test('buildListingDiscoveryQuery: an unrecognized sortBy value falls back to newest', () => {
   const q = buildListingDiscoveryQuery({ sortBy: 'literally_anything', page: '1' });
   assert.deepEqual(q?.sort, [{ createdAt: 'desc' }, { id: 'desc' }]);
