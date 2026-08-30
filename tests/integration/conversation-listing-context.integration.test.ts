@@ -288,6 +288,45 @@ test('the same buyer and seller messaging about two different listings get two s
 });
 
 // ---------------------------------------------------------------------
+// LISTING_L18_CONTACT_CONTEXT_CONSISTENCY_REPORT.md L18.28/L18.29/L18.37:
+// the mirror image of the test above -- the SAME listing, messaged by
+// TWO DIFFERENT buyers, must produce two separate threads (never one
+// merged/shared conversation). `conversationKeyFor` already includes
+// the sorted actor pair, so this was structurally sound before this
+// phase, just not directly asserted by a dedicated test until now.
+// ---------------------------------------------------------------------
+
+test('the same listing messaged by two different buyers gets two separate threads', async () => {
+  const seller = await registerAndLogin(`l18-shared-listing-seller-${randomUUID()}@test.local`);
+  const buyerB = await registerAndLogin(`l18-shared-listing-buyerB-${randomUUID()}@test.local`);
+  const buyerC = await registerAndLogin(`l18-shared-listing-buyerC-${randomUUID()}@test.local`);
+  const listing = await createListing(seller.jwt, { title: `Shared Listing ${randomUUID()}` });
+
+  const convB = await upsertConversation(buyerB.jwt, { listingId: listing.documentId });
+  const convC = await upsertConversation(buyerC.jwt, { listingId: listing.documentId });
+  assert.equal(convB.status, 200);
+  assert.equal(convC.status, 200);
+
+  assert.notEqual(convB.body.data.threadId, convC.body.data.threadId);
+  assert.equal(convB.body.data.listingId, listing.documentId);
+  assert.equal(convC.body.data.listingId, listing.documentId);
+  assert.equal(convB.body.data.listingTitle, listing.title);
+  assert.equal(convC.body.data.listingTitle, listing.title);
+
+  // Buyer B sending a follow-up message must never land in buyer C's
+  // thread, and vice versa -- confirms the separation holds for the
+  // message path too, not just the initial upsert.
+  const replyB = await sendMessage(buyerB.jwt, {
+    threadId: convB.body.data.threadId,
+    listingId: listing.documentId,
+    message: 'Buyer B mesaji',
+  });
+  assert.equal(replyB.status, 200);
+  assert.equal(replyB.body.thread.threadId, convB.body.data.threadId);
+  assert.notEqual(replyB.body.thread.threadId, convC.body.data.threadId);
+});
+
+// ---------------------------------------------------------------------
 // L8.3/L8.4 -- the actual bug found during this phase's own forensic: a
 // client resending a real, existing thread's threadId alongside a
 // DIFFERENT listing's listingId must NOT silently redirect that
