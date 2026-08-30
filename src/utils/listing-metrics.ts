@@ -19,6 +19,20 @@ export const NORMAL_LISTING_BLOCK_SIZE = 5;
 export const NORMAL_LISTING_QUOTA_PRODUCT_ID = 'normal_listing_5_399';
 
 /**
+ * LISTING_L14_LIFECYCLE_STATE_MACHINE_REPORT.md L14.13: single canonical
+ * shape for "the real, published row" -- this content-type's
+ * draftAndPublish:true means every create leaves a draft (publishedAt:
+ * null) and a published row sharing one documentId, and any query that
+ * doesn't exclude the draft either double-counts or can non-
+ * deterministically resolve to the invisible draft instead of the real
+ * listing. Previously re-written independently in four places
+ * (canCreateNextNormalListing, nextListingNo, findListingByAnyId's own
+ * PUBLISHED_ONLY, and listing-popular-query.ts's publishedOnly) -- a
+ * genuine duplication-drift risk, consolidated here.
+ */
+export const PUBLISHED_ONLY_FILTER = { publishedAt: { $notNull: true } } as const;
+
+/**
  * Server-authoritative mirror of NormalListingQuotaStatus.canCreateNext
  * (purchase_store.dart). `usedCount` counts real listing rows owned by
  * this profile (not a client-supplied count); `purchasedBlocks` counts
@@ -38,7 +52,7 @@ export const canCreateNextNormalListing = async (
   // quota (confirmed live while writing this fix's own regression test:
   // a free-tier account was rejected on its 4th listing, not its 6th).
   const usedCount = await strapi.db.query(LISTING_UID).count({
-    where: { ownerProfileId, publishedAt: { $notNull: true } },
+    where: { ownerProfileId, ...PUBLISHED_ONLY_FILTER },
   } as any);
   const purchasedBlocks = await strapi.db.query(PURCHASE_EVENT_UID).count({
     where: {
@@ -69,7 +83,7 @@ export const canCreateNextNormalListing = async (
  */
 export const nextListingNo = async (strapi: any): Promise<number> => {
   const rows = await strapi.db.query(LISTING_UID).findMany({
-    where: { publishedAt: { $notNull: true } },
+    where: { ...PUBLISHED_ONLY_FILTER },
     orderBy: { listingNo: 'desc' },
     limit: 1,
     select: ['listingNo'],
@@ -179,7 +193,7 @@ export const findListingByAnyId = async (
   // write can silently land on the invisible draft while every real
   // reader (the public API, entityService.findOne's own default) keeps
   // showing the unchanged published row.
-  const PUBLISHED_ONLY = { publishedAt: { $notNull: true } };
+  const PUBLISHED_ONLY = PUBLISHED_ONLY_FILTER;
 
   for (const id of listingIdCandidates(rawId)) {
     const numeric = Number(id);

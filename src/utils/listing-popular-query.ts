@@ -1,4 +1,5 @@
 import type { Core } from '@strapi/strapi';
+import { PUBLISHED_ONLY_FILTER } from './listing-metrics';
 
 const LISTING_UID = 'api::listing.listing';
 
@@ -79,9 +80,10 @@ export const fetchPopularListingsPage = async (
   // `listing` has draftAndPublish:true -- every real create leaves TWO
   // physical rows sharing one documentId (a draft, publishedAt:null,
   // and the published row). Without this filter both tiers would
-  // return each listing twice. Matches the same published-only
-  // filtering `resolveTargetRow`/other listing queries already use.
-  const publishedOnly = { publishedAt: { $notNull: true } };
+  // return each listing twice. LISTING_L14_LIFECYCLE_STATE_MACHINE_
+  // REPORT.md L14.13: now the single shared constant (listing-metrics.ts)
+  // instead of an independently re-written literal.
+  const publishedOnly = PUBLISHED_ONLY_FILTER;
 
   const tier1Filters = {
     ...baseFilters,
