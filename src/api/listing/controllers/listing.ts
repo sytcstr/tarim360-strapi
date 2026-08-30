@@ -204,6 +204,51 @@ export default factories.createCoreController(
     },
 
     /**
+     * LISTING_L14_LIFECYCLE_STATE_MACHINE_REPORT.md L14.14: `findOne` was
+     * previously unoverridden -- the stock core action applies NO status
+     * filter at all (unlike `find()`'s custom discovery path above), and
+     * `api::listing.listing.findOne` is granted to both the Public role
+     * AND the Authenticated role (src/index.ts). Confirmed live: a direct
+     * `GET /api/listings/:id` for a listing whose `status` is `pending`/
+     * `rejected` (currently only reachable via a direct DB write or the
+     * Strapi admin panel -- see listing-metrics.ts's own `status` comment)
+     * returned its full content to ANY caller, public or not, even though
+     * every list/search/popular endpoint already correctly excludes it.
+     * This closes that gap the same way `conversation.ts`/
+     * `offer-ownership.ts` already gate lifecycle: the listing's owner can
+     * always see their own real status (the mandate's own requirement),
+     * everyone else gets a plain not-found -- never a 403, which would
+     * itself leak "this id exists but is hidden" to a stranger.
+     */
+    async findOne(ctx) {
+      const rawId = String(ctx.params?.id ?? '').trim();
+      const row = await findListingByAnyId(strapi, rawId, [
+        'id',
+        'documentId',
+        'status',
+        'ownerEmail',
+        'ownerProfileId',
+        'ownerId',
+      ]);
+      if (!row) return ctx.notFound('Ilan bulunamadi.');
+
+      const identity = readIdentity(ctx);
+      const isOwner =
+        !!identity &&
+        matchesIdentity(
+          row as Record<string, unknown>,
+          identity,
+          ['ownerEmail'],
+          ['ownerProfileId', 'ownerId'],
+        );
+      const status = String((row as any).status ?? '').trim().toLowerCase();
+      if (!isOwner && status !== 'active') {
+        return ctx.notFound('Ilan bulunamadi.');
+      }
+      return super.findOne(ctx);
+    },
+
+    /**
      * PRE_UAT_F1_TARGETED_FUNCTIONAL_FIX_REPORT.md F1.6: createListing()
      * had no idempotency key at all. If a create request actually reached
      * and was processed by the server but the client timed out waiting
