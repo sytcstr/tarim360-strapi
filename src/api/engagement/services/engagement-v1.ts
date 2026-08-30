@@ -116,18 +116,3 @@ export const setMembership = async (
     };
   });
 };
-
-export const isMembershipActive = async (
-  strapiInstance: any,
-  actorKey: string,
-  targetType: EngagementTargetType,
-  rawTargetId: string,
-  kind: EngagementMembershipKind,
-): Promise<boolean> => {
-  const target = await resolveTargetRow(strapiInstance, targetType, rawTargetId);
-  if (!target) return false;
-  const existing = await strapiInstance.db.query(INTERACTION_UID).findOne({
-    where: { actorKey, targetType, targetId: String(target.id), kind },
-  });
-  return !!existing;
-};

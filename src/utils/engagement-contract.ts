@@ -224,23 +224,6 @@ export const buildViewBody = (input: ViewEnvelopeInput) => ({
   contractVersion: CONTRACT_VERSION,
 });
 
-export interface EventEnvelopeInput {
-  data: Record<string, unknown>;
-  count: number;
-  targetType: EngagementTargetType;
-  targetId: string;
-  serverVersion: number;
-}
-
-export const buildEventBody = (input: EventEnvelopeInput) => ({
-  success: true as const,
-  data: input.data,
-  count: input.count,
-  target: { type: input.targetType, id: input.targetId },
-  serverVersion: input.serverVersion,
-  contractVersion: CONTRACT_VERSION,
-});
-
 const GUEST_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
