@@ -10,6 +10,7 @@ import { runOfferIdDedupeOnce } from './utils/offer-id-dedupe';
 import { hasUniqueIndex } from './utils/engagement-index-support';
 import { runListingNoBackfillOnce } from './utils/listing-number-backfill';
 import { runListingSearchFieldsBackfillOnce } from './utils/listing-search-fields-backfill';
+import { runListingStatusBackfillOnce } from './utils/listing-status-backfill';
 
 /**
  * Faz B-V: reliable, idempotent composite-unique-index creation for the
@@ -170,6 +171,17 @@ export const LISTING_DISCOVERY_INDEXES: Array<{
     table: 'listings',
     name: 'listings_created_at_index',
     columns: ['created_at'],
+  },
+  // LISTING_L14_LIFECYCLE_STATE_MACHINE_REPORT.md L14.26: every
+  // discovery/popular query unconditionally filters `status:{$eq:
+  // 'active'}` (listing-query.ts) -- harmless today only because status
+  // has always been 'active' for every real row in practice; adding the
+  // index now keeps that filter cheap as the catalog grows and/or a
+  // future phase actually starts producing pending/rejected rows.
+  {
+    table: 'listings',
+    name: 'listings_status_index',
+    columns: ['status'],
   },
 ];
 
@@ -1002,6 +1014,12 @@ export default {
     // still runs first so newly-indexed columns are never queried before
     // every existing row has a real (non-null) value in them.
     await runListingSearchFieldsBackfillOnce(strapi);
+    // LISTING_L14_LIFECYCLE_STATE_MACHINE_REPORT.md L14.25/L14.26: same
+    // reasoning as the search-fields backfill above -- runs before the
+    // new status index so a pre-existing null-status row is never
+    // queried through the freshly-indexed column before it has a real
+    // value.
+    await runListingStatusBackfillOnce(strapi);
     await ensureListingDiscoveryIndexes(strapi);
     registerUserDeleteCleanupLifecycle(strapi);
     await syncUsersPermissionsRoleConfig(strapi);
