@@ -183,6 +183,17 @@ export const LISTING_DISCOVERY_INDEXES: Array<{
     name: 'listings_status_index',
     columns: ['status'],
   },
+  // LISTING_L19_MARKETPLACE_PRODUCT_GAP_FOUNDATIONS_REPORT.md L19.36:
+  // Seller's Other Listings filters by `ownerProfileId` combined with
+  // the always-present `status:'active'` filter -- previously
+  // unindexed (forensic confirmed), meaning a seller with many listings
+  // would force a full-table-minus-status-index scan on every buyer
+  // who opens one of their listings.
+  {
+    table: 'listings',
+    name: 'listings_owner_profile_id_index',
+    columns: ['owner_profile_id'],
+  },
 ];
 
 export const ensureListingDiscoveryIndexes = async (strapi: Core.Strapi) => {
@@ -282,6 +293,7 @@ const publicActions: string[] = [
   // Public reads
   'api::listing.listing.find',
   'api::listing.listing.findOne',
+  'api::listing.listing.similar',
   'api::ad.ad.find',
   'api::ad.ad.findOne',
   'api::hub-content.hub-content.find',

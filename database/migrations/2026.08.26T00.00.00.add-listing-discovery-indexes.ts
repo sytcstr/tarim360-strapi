@@ -22,6 +22,14 @@ const INDEXES: Array<{ name: string; columns: string[] }> = [
   { name: 'listings_price_index', columns: ['price'] },
   { name: 'listings_city_normalized_index', columns: ['city_normalized'] },
   { name: 'listings_created_at_index', columns: ['created_at'] },
+  // LISTING_L19_MARKETPLACE_PRODUCT_GAP_FOUNDATIONS_REPORT.md L19.36:
+  // reconciling a real drift this phase's forensic found -- src/index.ts's
+  // LISTING_DISCOVERY_INDEXES (the primary mechanism, runs every boot)
+  // already had `listings_status_index`, but it was never mirrored here in
+  // the secondary/migration-only path. Added here alongside the new
+  // owner-index this phase introduces so the two mechanisms agree again.
+  { name: 'listings_status_index', columns: ['status'] },
+  { name: 'listings_owner_profile_id_index', columns: ['owner_profile_id'] },
 ];
 
 export async function up(knex: Knex, db: Database) {
