@@ -73,6 +73,23 @@ const handleMembership = async (
     if (ownTarget) {
       return sendEngagementError(ctx, 'FORBIDDEN', 'Kendi hedefinizi beğenemez/favorileyemezsiniz.');
     }
+    // LISTING_L20_FINAL_TECHNICAL_INTEGRITY_REPORT.md L20.21: findOne()/
+    // similar() already 404 a pending/rejected listing for any non-owner
+    // -- this endpoint had no equivalent check, so a caller who already
+    // had a now-hidden listing's id (a stale bookmark, or a direct API
+    // call) could still create a brand-new like/favorite against it even
+    // though no normal UI path could ever show them that listing. Scoped
+    // to CREATING a new membership only (active=true) -- removing an
+    // already-existing like/favorite is left unaffected, matching L18's
+    // own precedent that an existing relationship with a listing survives
+    // it later becoming non-active.
+    const target = await loadEntityByRouteId(strapi, TARGET_UID.listing, targetId, [
+      'status',
+    ]);
+    const status = String((target as any)?.status ?? '').trim().toLowerCase();
+    if (target && status !== 'active') {
+      return sendEngagementError(ctx, 'NOT_FOUND', `${targetType} bulunamadi: ${targetId}`);
+    }
   }
 
   const actorKey = requireAuthenticatedActorKey(ctx);
@@ -136,16 +153,42 @@ export default {
     // views did not, until now). registerView/setMembership stay completely
     // untouched otherwise (self-view never becomes a case they need to know
     // about).
-    if (targetType === 'profile' || targetType === 'listing') {
+    if (targetType === 'listing') {
+      // L20.21: same visibility rule as handleMembership above -- fetched
+      // unconditionally (not gated behind `identity`) so an ANONYMOUS
+      // caller (guestActorId only) is equally blocked from registering a
+      // new view against a listing findOne()/similar() would already 404
+      // for them.
+      const identity = readIdentity(ctx);
+      const target = await resolveTargetRow(strapi, targetType, targetId);
+      const isOwner =
+        !!identity &&
+        !!target &&
+        matchesIdentity(target, identity, ['ownerEmail'], ['ownerProfileId', 'ownerId']);
+      const status = String((target as any)?.status ?? '').trim().toLowerCase();
+      if (target && !isOwner && status !== 'active') {
+        return sendEngagementError(ctx, 'NOT_FOUND', `${targetType} bulunamadi: ${targetId}`);
+      }
+      if (target && isOwner) {
+        const countField = VIEW_COUNT_FIELD[targetType];
+        if (countField) {
+          ctx.body = buildViewBody({
+            incremented: false,
+            count: Math.max(0, Number(target[countField] ?? 0)),
+            targetType,
+            targetId,
+            updatedAt: target.updatedAt ?? new Date().toISOString(),
+            serverVersion: Number(target[VERSION_FIELD] ?? 0),
+          });
+          return;
+        }
+      }
+    } else if (targetType === 'profile') {
       const identity = readIdentity(ctx);
       if (identity) {
         const target = await resolveTargetRow(strapi, targetType, targetId);
         const countField = VIEW_COUNT_FIELD[targetType];
-        const isSelfView =
-          !!target &&
-          (targetType === 'profile'
-            ? String(target.profileId ?? '').trim() === identity.ownerId
-            : matchesIdentity(target, identity, ['ownerEmail'], ['ownerProfileId', 'ownerId']));
+        const isSelfView = !!target && String(target.profileId ?? '').trim() === identity.ownerId;
         if (target && countField && isSelfView) {
           ctx.body = buildViewBody({
             incremented: false,

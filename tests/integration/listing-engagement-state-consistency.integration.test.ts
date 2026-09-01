@@ -110,6 +110,23 @@ async function postView(jwt: string, targetId: string | number) {
   return { status: res.status, body: await res.json().catch(() => ({})) };
 }
 
+async function deleteLike(jwt: string, targetId: string | number) {
+  const res = await fetch(
+    `${BASE_URL}/engagements/like?targetType=listing&targetId=${targetId}`,
+    { method: 'DELETE', headers: authed(jwt) },
+  );
+  return { status: res.status, body: await res.json().catch(() => ({})) };
+}
+
+/** Same precedent as listing-lifecycle.integration.test.ts's forceStatus
+ * -- the only way any real row ends up pending/rejected in this codebase. */
+async function forceStatus(documentId: string, status: 'pending' | 'active' | 'rejected') {
+  await strapiInstance.db.query('api::listing.listing').updateMany({
+    where: { documentId },
+    data: { status },
+  });
+}
+
 // ---------------------------------------------------------------------
 // L11.11/L11.12 -- engagementVersion is a per-target, cross-kind
 // monotonic counter (validates the Flutter monotonic-guard fix)
@@ -225,4 +242,86 @@ test('L11.4 regression: a client cannot spoof favoriteCount/likeCount/viewCount/
   assert.equal(body.data.likeCount ?? 0, 0);
   assert.equal(body.data.viewCount ?? 0, 0);
   assert.equal(body.data.engagementVersion ?? 0, 0);
+});
+
+// ---------------------------------------------------------------------
+// LISTING_L20_FINAL_TECHNICAL_INTEGRITY_REPORT.md L20.21 -- a NEW
+// like/favorite/view can no longer be created against a pending/rejected
+// listing. findOne()/similar() already 404 these for any non-owner; this
+// closes the same gap for the three engagement actions, which previously
+// had no status check at all. Removing an EXISTING like/favorite is
+// deliberately left unaffected (matches L18's own precedent that an
+// existing relationship survives the target later becoming non-active).
+// ---------------------------------------------------------------------
+
+test('L20.21: a stranger cannot PUT a new like against a pending listing', async () => {
+  const listing = await createListingOwnedByStranger();
+  await forceStatus(listing.documentId, 'pending');
+  const jwt = await registerAndLogin(`l20-status-like-pending-${randomUUID()}@test.local`);
+  const res = await putLike(jwt, listing.documentId);
+  assert.equal(res.status, 404);
+});
+
+test('L20.21: a stranger cannot PUT a new favorite against a rejected listing', async () => {
+  const listing = await createListingOwnedByStranger();
+  await forceStatus(listing.documentId, 'rejected');
+  const jwt = await registerAndLogin(`l20-status-fav-rejected-${randomUUID()}@test.local`);
+  const res = await putFavorite(jwt, listing.documentId);
+  assert.equal(res.status, 404);
+});
+
+test('L20.21: a stranger cannot POST a new view against a pending listing', async () => {
+  const listing = await createListingOwnedByStranger();
+  await forceStatus(listing.documentId, 'pending');
+  const jwt = await registerAndLogin(`l20-status-view-pending-${randomUUID()}@test.local`);
+  const res = await postView(jwt, listing.documentId);
+  assert.equal(res.status, 404);
+});
+
+test('L20.21: an ANONYMOUS (guestActorId-only) view is equally blocked against a rejected listing', async () => {
+  const listing = await createListingOwnedByStranger();
+  await forceStatus(listing.documentId, 'rejected');
+  const res = await fetch(`${BASE_URL}/engagements/view`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      targetType: 'listing',
+      targetId: listing.documentId,
+      guestActorId: randomUUID(),
+    }),
+  });
+  assert.equal(res.status, 404);
+});
+
+test('L20.21 regression: like/favorite/view still succeed normally against an ACTIVE listing', async () => {
+  const listing = await createListingOwnedByStranger();
+  const jwt = await registerAndLogin(`l20-status-active-ok-${randomUUID()}@test.local`);
+  assert.equal((await putLike(jwt, listing.documentId)).status, 200);
+  assert.equal((await putFavorite(jwt, listing.documentId)).status, 200);
+  assert.equal((await postView(jwt, listing.documentId)).status, 200);
+});
+
+test('L20.21 regression: the owner-self-action FORBIDDEN check still fires before the new status check (not masked into a 404)', async () => {
+  const ownerJwt = await registerAndLogin(`l20-status-owner-${randomUUID()}@test.local`);
+  const createRes = await fetch(`${BASE_URL}/listings`, {
+    method: 'POST',
+    headers: authed(ownerJwt),
+    body: JSON.stringify({
+      data: { title: 'L20 Owner Self', mode: 'sell', mainType: 'urun', operationId: randomUUID() },
+    }),
+  });
+  const listing = (await createRes.json()).data;
+  await forceStatus(listing.documentId, 'pending');
+  const res = await putLike(ownerJwt, listing.documentId);
+  assert.equal(res.status, 403, 'owner self-like must stay FORBIDDEN, not become NOT_FOUND');
+});
+
+test('L20.21: removing an EXISTING like still works after the listing later becomes pending (existing relationship survives, matches L18 messaging precedent)', async () => {
+  const listing = await createListingOwnedByStranger();
+  const jwt = await registerAndLogin(`l20-status-remove-existing-${randomUUID()}@test.local`);
+  assert.equal((await putLike(jwt, listing.documentId)).status, 200);
+  await forceStatus(listing.documentId, 'pending');
+  const removed = await deleteLike(jwt, listing.documentId);
+  assert.equal(removed.status, 200);
+  assert.equal(removed.body.active, false);
 });
