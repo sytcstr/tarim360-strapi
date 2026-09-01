@@ -22,6 +22,7 @@ import { normalizeTurkishText } from './listing-search-fields';
 export const LISTING_DISCOVERY_PARAM_KEYS = [
   'search',
   'listingNo',
+  'listingNos',
   'mainType',
   'subType',
   'mode',
@@ -32,6 +33,19 @@ export const LISTING_DISCOVERY_PARAM_KEYS = [
   'sortBy',
   'page',
   'pageSize',
+  // LISTING_L19_MARKETPLACE_PRODUCT_GAP_FOUNDATIONS_REPORT.md L19.3/L19.4:
+  // Seller's Other Listings needs an owner-scoped, PUBLIC-only,
+  // paginated query. `fetchListingsForOwner` (strapi_service.dart)
+  // already exists but is deliberately `publishedOnly:false` (it powers
+  // the owner's OWN "my ads" management view, which must show their own
+  // pending/rejected rows too) -- reusing it for a buyer-facing "this
+  // seller's other listings" section would leak another user's non-
+  // public rows. Adding these two params to the whitelisted discovery
+  // contract instead reuses the existing forced `status:'active'`
+  // (below) plus pagination/deterministic-sort machinery for free,
+  // rather than opening a second, looser, raw-filter-shaped path.
+  'ownerProfileId',
+  'excludeListingNo',
 ] as const;
 
 export const LISTING_SORT_WHITELIST = [
@@ -57,6 +71,30 @@ const asPositiveInt = (value: unknown): number | null => {
 const asFiniteNumber = (value: unknown): number | null => {
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
+};
+
+// L19.43/L19.37: Recently Viewed hydrates a small, bounded, client-owned
+// list of listingNos in ONE request (never one request per card -- see
+// the report's "no N+1" section) -- accepts either a real array
+// (`listingNos[]=1&listingNos[]=2`) or a comma-separated string (how a
+// plain query-string GET request naturally serializes a Dart `List<int>`
+// query param), silently drops anything non-positive-integer, and caps
+// the accepted count so a caller can never turn this into an unbounded
+// full-table `$in`.
+const MAX_LISTING_NOS_BATCH = 50;
+const asPositiveIntArray = (value: unknown): number[] => {
+  const raw: unknown[] = Array.isArray(value)
+    ? value
+    : typeof value === 'string'
+      ? value.split(',')
+      : [];
+  const out: number[] = [];
+  for (const item of raw) {
+    const n = asPositiveInt(item);
+    if (n !== null && !out.includes(n)) out.push(n);
+    if (out.length >= MAX_LISTING_NOS_BATCH) break;
+  }
+  return out;
 };
 
 export const hasAnyListingDiscoveryParam = (
@@ -95,14 +133,40 @@ export const buildListingDiscoveryQuery = (
 
   const filters: Record<string, unknown> = { status: { $eq: 'active' } };
 
+  const listingNos = asPositiveIntArray(rawQuery.listingNos);
   const listingNo = asPositiveInt(rawQuery.listingNo);
-  if (listingNo !== null) {
+  if (listingNos.length > 0) {
+    filters.listingNo = { $in: listingNos };
+  } else if (listingNo !== null) {
     filters.listingNo = { $eq: listingNo };
   } else {
     const search = asTrimmedString(rawQuery.search);
     if (search) {
       filters.searchNormalized = { $containsi: normalizeTurkishText(search) };
     }
+  }
+
+  // L19.4/L19.5: Seller's Other Listings. `ownerProfileId` is the
+  // canonical owner-identity field on this content-type (schema.json --
+  // `ownerId` is written as a duplicate of it on create, not a separate
+  // identity; see the report's schema audit). `excludeListingNo` removes
+  // the listing the buyer is currently viewing from its own seller's
+  // "other listings" -- applied at the query level (not a post-fetch
+  // client-side filter) so it never shrinks a full page below the
+  // requested pageSize. Deliberately a no-op when combined with the
+  // exact-match `listingNo`/`listingNos` params above (that combination
+  // isn't a real caller shape and self-exclusion inside an explicit
+  // listingNo(s) lookup would be a contradiction, not a refinement).
+  const ownerProfileId = asTrimmedString(rawQuery.ownerProfileId);
+  if (ownerProfileId) filters.ownerProfileId = { $eq: ownerProfileId };
+
+  const excludeListingNo = asPositiveInt(rawQuery.excludeListingNo);
+  if (
+    excludeListingNo !== null &&
+    listingNos.length === 0 &&
+    listingNo === null
+  ) {
+    filters.listingNo = { $ne: excludeListingNo };
   }
 
   const mainType = asTrimmedString(rawQuery.mainType);
