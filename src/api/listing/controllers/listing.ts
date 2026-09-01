@@ -16,6 +16,7 @@ import {
 import { computeListingSearchFields } from '../../../utils/listing-search-fields';
 import { buildListingDiscoveryQuery } from '../../../utils/listing-query';
 import { fetchPopularListingsPage } from '../../../utils/listing-popular-query';
+import { fetchSimilarListingsPage } from '../../../utils/listing-similar-query';
 import {
   cleanupOrphanedPhotoIds,
   extractRequestedPhotoIds,
@@ -898,6 +899,68 @@ export default factories.createCoreController(
           rocketRemaining: sourceType === 'premium_credit' ? rocketRemaining - 1 : null,
         },
       };
+    },
+
+    /**
+     * LISTING_L19_MARKETPLACE_PRODUCT_GAP_FOUNDATIONS_REPORT.md
+     * L19.9-L19.17: `GET /listings/:id/similar` -- a deterministic,
+     * bounded-candidate similarity feed (see listing-similar-query.ts's
+     * own header for the full scoring/mode-semantics rationale). Public
+     * route, but applies the exact same visibility rule as `findOne()`
+     * above: a pending/rejected reference listing's similar-set is not
+     * computable by anyone except its own owner, so this can never be
+     * used to probe whether a hidden listing exists.
+     */
+    async similar(ctx) {
+      const rawId = String(ctx.params?.id ?? '').trim();
+      const row = await findListingByAnyId(strapi, rawId, [
+        'id',
+        'documentId',
+        'status',
+        'ownerEmail',
+        'ownerProfileId',
+        'ownerId',
+        'listingNo',
+        'mainType',
+        'subType',
+        'cityNormalized',
+        'price',
+        'mode',
+      ]);
+      if (!row) return ctx.notFound('Ilan bulunamadi.');
+
+      const identity = readIdentity(ctx);
+      const isOwner =
+        !!identity &&
+        matchesIdentity(
+          row as Record<string, unknown>,
+          identity,
+          ['ownerEmail'],
+          ['ownerProfileId', 'ownerId'],
+        );
+      const status = String((row as any).status ?? '').trim().toLowerCase();
+      if (!isOwner && status !== 'active') {
+        return ctx.notFound('Ilan bulunamadi.');
+      }
+
+      const page = Number(ctx.query?.page) || 1;
+      const pageSizeRaw = Number(ctx.query?.pageSize);
+      const pageSize = Number.isFinite(pageSizeRaw) && pageSizeRaw > 0 ? pageSizeRaw : undefined;
+
+      const { results, pagination } = await fetchSimilarListingsPage(
+        strapi,
+        {
+          listingNo: (row as any).listingNo ?? null,
+          mainType: (row as any).mainType ?? null,
+          subType: (row as any).subType ?? null,
+          cityNormalized: (row as any).cityNormalized ?? null,
+          price: (row as any).price ?? null,
+          mode: (row as any).mode ?? null,
+        },
+        page,
+        pageSize as any,
+      );
+      ctx.body = { data: results, meta: { pagination } };
     },
   }),
 );
