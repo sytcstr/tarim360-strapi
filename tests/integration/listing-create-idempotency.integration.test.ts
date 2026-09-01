@@ -96,6 +96,31 @@ async function createListing(jwt: string, operationId: string, overrides: Record
   return { status: res.status, body: json };
 }
 
+// A minimal valid 1x1 PNG, real image bytes (same fixture as
+// listing-media-lifecycle.integration.test.ts) so a real upload happens.
+const ONE_PX_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64',
+);
+
+async function uploadOnePhoto(jwt: string): Promise<number> {
+  const form = new FormData();
+  form.append('files', new Blob([ONE_PX_PNG], { type: 'image/png' }), `${randomUUID()}.png`);
+  const res = await fetch(`${BASE_URL}/upload`, {
+    method: 'POST',
+    // NOT authed(jwt) -- that helper forces content-type:application/json
+    // for this file's other (JSON-body) requests, which breaks multipart
+    // upload (fetch needs to set its own boundary content-type here).
+    headers: { authorization: `Bearer ${jwt}` },
+    body: form as any,
+  });
+  const body = await res.json();
+  if (res.status >= 400) {
+    throw new Error(`upload failed (${res.status}): ${JSON.stringify(body)}`);
+  }
+  return (body as any[])[0].id;
+}
+
 // `listing` has draftAndPublish:true -- every real create leaves TWO
 // physical rows sharing one documentId (a draft, publishedAt:null, and
 // the published row callers actually mean), so counting "real listings"
@@ -166,6 +191,30 @@ test('the SAME operationId with a DIFFERENT payload is rejected as a conflict', 
   assert.equal(conflicting.status, 409);
   assert.equal(await countListingsByTitle(title), 1);
   assert.equal(await countListingsByTitle(`${title} DIFFERENT`), 0);
+});
+
+test('LISTING_L20_FINAL_TECHNICAL_INTEGRITY_REPORT.md L20.10: retrying the SAME operationId with DIFFERENT (re-uploaded) photo ids is recognized as the same operation, not a conflict', async () => {
+  const user = await registerAndLogin(`l20-photo-retry-${randomUUID()}@test.local`);
+  const opId = randomUUID();
+  const title = `L20 Photo Retry ${randomUUID()}`;
+
+  // Simulates: first attempt uploads a photo and creates the listing
+  // (succeeds server-side), but the client never sees the response and
+  // believes it failed.
+  const firstPhotoId = await uploadOnePhoto(user.jwt);
+  const first = await createListing(user.jwt, opId, { title, photos: [firstPhotoId] });
+  assert.equal(first.status, 201);
+  const firstId = first.body.data.documentId ?? first.body.data.id;
+
+  // Retry with the SAME operationId, but the client re-uploaded the photo
+  // (a genuinely different upload.file id, identical logical content) --
+  // must be recognized as the same operation, not rejected as a conflict.
+  const retryPhotoId = await uploadOnePhoto(user.jwt);
+  const retry = await createListing(user.jwt, opId, { title, photos: [retryPhotoId] });
+  assert.equal(retry.status, 200, 'a photo-re-upload retry must not return 201 again');
+  const retryId = retry.body.data.documentId ?? retry.body.data.id;
+  assert.equal(retryId, firstId, 'the retry must resolve to the SAME listing, not a new one');
+  assert.equal(await countListingsByTitle(title), 1);
 });
 
 test('a genuinely different operationId creates a genuinely different listing, even with identical content', async () => {

@@ -314,8 +314,28 @@ export default factories.createCoreController(
         return ctx.badRequest('Sadece resim dosyalari fotograf olarak eklenebilir.');
       }
 
+      // LISTING_L20_FINAL_TECHNICAL_INTEGRITY_REPORT.md L20.10: `photos`
+      // was previously included in the create fingerprint. Confirmed
+      // live: if the FIRST create actually succeeded server-side but the
+      // client only saw a lost/timed-out response, the client believes it
+      // failed and re-uploads the same photos on retry -- producing BRAND
+      // NEW plugin::upload.file ids for logically identical content. That
+      // retry (same operationId, different photo ids) then fingerprint-
+      // mismatched against the original and was rejected as a CONFLICT
+      // (409) instead of being recognized as the same operation --
+      // blocking the user's retry entirely AND permanently orphaning the
+      // newly re-uploaded (never attached to anything) photo files.
+      // Excluding `photos` from the fingerprint fixes this: the same
+      // operationId + identical non-photo fields is correctly treated as
+      // the same logical submission regardless of which physical upload
+      // ids the photos happen to have this attempt, and
+      // respondWithLedgeredListing (below) returns the original,
+      // already-created listing -- exactly like every other duplicate-
+      // operationId retry already does for non-photo fields.
+      const { photos: _fingerprintPhotosOmitted, ...fingerprintPayloadFields } =
+        clientPayload as Record<string, unknown>;
       const fingerprint = fingerprintPayload({
-        ...clientPayload,
+        ...fingerprintPayloadFields,
         ownerKey: identity.ownerId,
       });
 
