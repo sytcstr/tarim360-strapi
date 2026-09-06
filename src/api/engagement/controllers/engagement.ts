@@ -14,6 +14,16 @@ import {
 } from '../../../utils/listing-metrics';
 import { computeListingSearchFields } from '../../../utils/listing-search-fields';
 import { isPremiumActiveFromProfile, loadPremiumProfile } from '../../../utils/premium-sync';
+import {
+  extractRequestedPhotoIds,
+  findNonImageFileId,
+  isPhotoOwnedByIdentity,
+} from '../../../utils/listing-media';
+import {
+  fingerprintPayload,
+  isValidOperationId,
+  resolveOperation,
+} from '../../../utils/operation-idempotency';
 
 const PROFILE_SETTING_UID = 'api::profile-setting.profile-setting';
 const LISTING_UID = 'api::listing.listing';
@@ -441,6 +451,28 @@ export default {
     safeListing.ownerId = identity.ownerId;
     safeListing.updatedAtClient = asString(listing.updatedAtClient) || new Date().toISOString();
 
+    // BACKEND_FLUTTER_SEMANTIC_CONTRACT_AUDIT.md / A-Z PART 3 SPECIAL
+    // DIRECT-API MEDIA SECURITY PASS: this offline-sync path is a second,
+    // parallel way to create/update a listing.listing row, entirely
+    // separate from listing.ts's own create()/update() -- confirmed live
+    // it enforced neither photo-ownership nor image-type checks, so any
+    // authenticated caller could attach another user's currently-in-use
+    // photo (or a non-image file id) to their own listing simply by
+    // calling this endpoint instead of the direct one. Same checks,
+    // same shared helpers, same rejection order as listing.ts's create()
+    // -- checked before either the update or create branch below runs any
+    // entityService call, so a rejected operation never produces a
+    // partial/corrupted listing.
+    const requestedPhotoIds = extractRequestedPhotoIds(safeListing.photos);
+    for (const fileId of requestedPhotoIds) {
+      const owned = await isPhotoOwnedByIdentity(strapi, fileId, identity);
+      if (!owned) return ctx.forbidden('Bu fotograf baska bir kullaniciya ait.');
+    }
+    const nonImageId = await findNonImageFileId(strapi, requestedPhotoIds);
+    if (nonImageId !== null) {
+      return ctx.badRequest('Sadece resim dosyalari fotograf olarak eklenebilir.');
+    }
+
     if (existing?.id) {
       const isOwner = matchesIdentity(
         existing,
@@ -471,30 +503,111 @@ export default {
       return;
     }
 
-    // PRE_UAT_F1_TARGETED_FUNCTIONAL_FIX_REPORT.md F1.6: this is the
-    // offline-retry path -- the client's local id will never match a
-    // listing that was actually already created by a prior POST /listings
-    // call the client only THOUGHT had failed (a client-side timeout with
-    // no response, not a real server-side failure). Before creating a
-    // second, duplicate listing, check the same listing-create-operation
-    // ledger listing.ts's create() already writes to, keyed by the same
-    // operationId the client is required to carry through this retry.
+    // PRE_UAT_F1_TARGETED_FUNCTIONAL_FIX_REPORT.md F1.6 / A-Z PART 3
+    // P0/P1 CORRECTION FIX B (Madde 45): this is the offline-retry path
+    // -- the client's local id will never match a listing that was
+    // actually already created by a prior POST /listings call the client
+    // only THOUGHT had failed (a client-side timeout with no response,
+    // not a real server-side failure). Uses the exact same shared
+    // operationId+fingerprint ledger listing.ts's create() uses (via
+    // resolveOperation/fingerprintPayload), not just a one-off read of
+    // it: previously this endpoint only ever READ the ledger (so it could
+    // recognize a listing created via the DIRECT POST /listings path) but
+    // never WROTE to it, so a create that itself went through THIS
+    // endpoint had no protection against being retried a second time by
+    // this same endpoint (e.g. this call's own HTTP response getting
+    // lost, and the client's offline queue re-sending the identical
+    // queued row later) -- confirmed that produced a genuine duplicate
+    // listing. operationId is now required here exactly like listing.ts's
+    // create(), for the same reason: with no claimable id, no retry of
+    // this specific attempt can ever be recognized.
+    let operationId = '';
     if (operation === 'create') {
-      const operationId = asString(listing.operationId);
-      if (operationId) {
-        const ledger = await strapi.db
-          .query(LISTING_CREATE_OPERATION_UID)
-          .findOne({ where: { operationId } } as any);
-        const linkedDocumentId = asString(ledger?.listingDocumentId);
-        if (linkedDocumentId) {
-          const alreadyCreated = await findListingByAnyId(strapi, linkedDocumentId);
-          if (alreadyCreated?.id) {
-            ctx.body = {
-              data: { ok: true, operation: 'create', listing: alreadyCreated, idempotent: true },
-            };
-            return;
-          }
+      operationId = asString(listing.operationId);
+      if (!isValidOperationId(operationId)) {
+        return ctx.badRequest('operationId zorunlu ve UUID formatinda olmali.');
+      }
+
+      // L20.10: `photos` legitimately differs between two attempts of the
+      // exact same logical submission (a retry re-uploads/re-supplies
+      // photos under brand-new upload ids) -- excluded from the
+      // fingerprint for the same reason listing.ts's create() already
+      // excludes it. `updatedAtClient` is excluded for the same class of
+      // reason: this handler stamps it with a fresh server timestamp
+      // whenever the client didn't supply its own (see above), so it
+      // would otherwise differ on every single attempt regardless of
+      // whether the user changed anything. `ownerEmail`/`ownerProfileId`/
+      // `ownerId` are excluded so this fingerprint matches listing.ts's
+      // create() fingerprint for the SAME logical submission -- a retry
+      // of the exact same operationId can land on either endpoint (this
+      // one always force-sets these three from `identity`, above; the
+      // direct path only has them if the client happened to send them),
+      // and `ownerKey: identity.ownerId` below already carries the one
+      // identity dimension that actually matters here.
+      const {
+        photos: _fingerprintPhotosOmitted,
+        updatedAtClient: _fingerprintUpdatedAtClientOmitted,
+        ownerEmail: _fingerprintOwnerEmailOmitted,
+        ownerProfileId: _fingerprintOwnerProfileIdOmitted,
+        ownerId: _fingerprintOwnerIdOmitted,
+        // listing.ts's create() explicitly deletes `operationId` from its
+        // own fingerprinted payload (it identifies the OPERATION, it is
+        // not content) -- `safeListing` still carries it unless excluded
+        // here too, which would otherwise make every single fingerprint
+        // on this path unique to itself and defeat this fix's whole
+        // point.
+        operationId: _fingerprintOperationIdOmitted,
+        ...fingerprintPayloadFields
+      } = safeListing as Record<string, unknown>;
+      const fingerprint = fingerprintPayload({
+        ...fingerprintPayloadFields,
+        ownerKey: identity.ownerId,
+      });
+
+      // Mirrors listing.ts create()'s respondWithLedgeredListing exactly:
+      // resolves a ledger row to the real, already-created listing, or --
+      // if the row is stale (claimed but never linked, e.g. a prior
+      // attempt's validation/create failure) -- deletes it and returns
+      // false so the caller falls through to a fresh create attempt
+      // instead of being stuck forever.
+      const respondWithLedgeredListing = async (
+        ledgerRow: any,
+      ): Promise<boolean> => {
+        const documentId = String(ledgerRow?.listingDocumentId ?? '').trim();
+        if (!documentId) {
+          await strapi.db
+            .query(LISTING_CREATE_OPERATION_UID)
+            .delete({ where: { id: ledgerRow.id } } as any);
+          return false;
         }
+        const alreadyCreated = await findListingByAnyId(strapi, documentId);
+        if (!alreadyCreated?.id) {
+          await strapi.db
+            .query(LISTING_CREATE_OPERATION_UID)
+            .delete({ where: { id: ledgerRow.id } } as any);
+          return false;
+        }
+        ctx.body = {
+          data: { ok: true, operation: 'create', listing: alreadyCreated, idempotent: true },
+        };
+        return true;
+      };
+
+      const resolution = await resolveOperation(
+        strapi,
+        LISTING_CREATE_OPERATION_UID,
+        operationId,
+        fingerprint,
+      );
+      if (resolution.status === 'conflict') {
+        return ctx.conflict(
+          'Bu islem kimligi farkli bir ilan gonderimi icin kullanilmis.',
+        );
+      }
+      if (resolution.status === 'duplicate') {
+        const responded = await respondWithLedgeredListing(resolution.existing);
+        if (responded) return;
+        // Stale claim -- already deleted; fall through to a fresh attempt.
       }
 
       // FINAL_R1_TARGETED_RELEASE_FIX_REPORT.md R1.2 (FINAL-BUG-002): this
@@ -513,6 +626,34 @@ export default {
             `Normal hesapta ilk ${NORMAL_LISTING_FREE_COUNT} ilan ucretsizdir. Yeni ilan acmak icin ${NORMAL_LISTING_BLOCK_SIZE} ilan hakki paketi satin almalisin.`,
           );
         }
+      }
+
+      // The ledger create is the atomic claim: operationId's unique
+      // constraint means only one concurrent request with the same
+      // operationId can ever win this insert -- the loser re-reads the
+      // winner's result instead of separately creating a listing. Same
+      // race-handling shape as listing.ts's create().
+      let raced = false;
+      try {
+        await strapi.entityService.create(LISTING_CREATE_OPERATION_UID as any, {
+          data: {
+            operationId,
+            payloadFingerprint: fingerprint,
+            ownerProfileId: identity.ownerId,
+          },
+        });
+      } catch (_e) {
+        raced = true;
+      }
+      if (raced) {
+        const racedExisting = await strapi.db
+          .query(LISTING_CREATE_OPERATION_UID)
+          .findOne({ where: { operationId } } as any);
+        if (racedExisting) {
+          const responded = await respondWithLedgeredListing(racedExisting);
+          if (responded) return;
+        }
+        return ctx.internalServerError('Ilan gonderim kaydi dogrulanamadi.');
       }
     }
 
@@ -546,6 +687,29 @@ export default {
       }
     }
     if (lastCreateError) throw lastCreateError;
+
+    // Links the ledger claim to the real created row so a later retry (a
+    // genuine duplicate hit) can resolve to it -- same self-healing
+    // contract as listing.ts's create(): a failure between the claim
+    // above and here leaves the claim deliberately unlinked, and the next
+    // retry with the same operationId finds it stale and deletes it
+    // instead of being permanently stuck.
+    if (operation === 'create' && operationId) {
+      try {
+        const createdDocumentId = (entity as any)?.documentId ?? (entity as any)?.id;
+        if (createdDocumentId) {
+          await strapi.db.query(LISTING_CREATE_OPERATION_UID).update({
+            where: { operationId },
+            data: { listingDocumentId: String(createdDocumentId) },
+          } as any);
+        }
+      } catch (e) {
+        strapi.log.warn(
+          `Offline listing create operation ledger link failed: ${String(e)}`,
+        );
+      }
+    }
+
     ctx.body = { data: { ok: true, operation: 'create', listing: entity } };
   },
 };
