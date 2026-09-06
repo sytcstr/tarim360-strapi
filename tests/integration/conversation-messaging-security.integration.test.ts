@@ -116,8 +116,7 @@ test('spoof prevention: A submits senderEmail=B, backend still records A as the 
     senderEmail: bEmail,
     senderProfileId: 'u_should_be_ignored',
     senderName: 'Sahte Isim',
-    requesterEmail: bEmail,
-    receiverEmail: aEmail,
+    receiverEmail: bEmail,
   });
 
   assert.equal(status, 200);
@@ -126,6 +125,115 @@ test('spoof prevention: A submits senderEmail=B, backend still records A as the 
 
   const row = await fetchThreadByContextId(contextId);
   assert.equal(row.lastSenderEmail, aEmail.toLowerCase(), 'thread.lastSenderEmail must also reflect the real sender, not a spoofed one');
+});
+
+// LISTING_AZ_REVALIDATION_PART2_21_40.md Madde 21 (P0): requesterEmail/
+// requesterProfileId used to be trusted outright whenever the client
+// sent ANY non-empty value -- only defaulted to the real authenticated
+// user when BOTH fields were empty. An authenticated attacker could
+// submit a real third party's email as requesterEmail while claiming
+// receiverEmail=themselves, which defeated the self-message check
+// (different emails -> not "same person") and created a thread carrying
+// the victim's real email as its requester -- appearing in the victim's
+// OWN `GET /conversations/mine` list (that endpoint's userFilter matches
+// on requesterEmail/receiverEmail) despite the victim never having sent
+// or received anything.
+test('requester spoof prevention: A submits requesterEmail=B (a real user), backend still records A as the real requester -- no ghost thread in B\'s inbox', async () => {
+  const aEmail = `m1-reqspoof-a-${randomUUID()}@test.local`;
+  const bEmail = `m1-reqspoof-b-${randomUUID()}@test.local`;
+  const cEmail = `m1-reqspoof-c-${randomUUID()}@test.local`;
+  const aJwt = await registerAndLogin(aEmail);
+  await registerAndLogin(bEmail);
+  await registerAndLogin(cEmail);
+  const contextId = `listing-${randomUUID()}`;
+
+  const { status, body } = await sendMessage(aJwt, {
+    message: 'C ye mesaj atarken B gibi davranmayi deniyorum',
+    listingId: contextId,
+    requesterEmail: bEmail,
+    receiverEmail: cEmail,
+  });
+
+  // The request itself is still accepted (A is genuinely messaging
+  // about a context) -- what must never happen is B's real identity
+  // ending up as this thread's requester.
+  assert.equal(status, 200);
+  assert.equal(
+    body.data.requesterEmail,
+    aEmail.toLowerCase(),
+    'requester must always be the real authenticated caller, never a client-supplied claim',
+  );
+  assert.notEqual(body.data.requesterEmail, bEmail.toLowerCase());
+
+  const row = await fetchThreadByContextId(contextId);
+  assert.notEqual(
+    row.requesterEmail,
+    bEmail.toLowerCase(),
+    'B must never have a ghost thread recorded with their real email as requester',
+  );
+});
+
+test('requester spoof prevention: A submits requesterProfileId belonging to a real user B, backend still records A as the real requester', async () => {
+  const aEmail = `m1-reqspoof2-a-${randomUUID()}@test.local`;
+  const bEmail = `m1-reqspoof2-b-${randomUUID()}@test.local`;
+  const cEmail = `m1-reqspoof2-c-${randomUUID()}@test.local`;
+  const aJwt = await registerAndLogin(aEmail);
+  await registerAndLogin(bEmail);
+  await registerAndLogin(cEmail);
+  const contextId = `listing-${randomUUID()}`;
+  const bProfileId = `u_${bEmail.replace(/[^a-z0-9]/g, '_')}`;
+
+  const { status, body } = await sendMessage(aJwt, {
+    message: 'sahte requesterProfileId denemesi',
+    listingId: contextId,
+    requesterProfileId: bProfileId,
+    receiverEmail: cEmail,
+  });
+
+  assert.equal(status, 200);
+  assert.equal(body.data.requesterEmail, aEmail.toLowerCase());
+  assert.notEqual(body.data.requesterProfileId, bProfileId);
+});
+
+test('requester spoof cannot be used to defeat self-message protection', async () => {
+  const aEmail = `m1-reqspoof-self-${randomUUID()}@test.local`;
+  const victimEmail = `m1-reqspoof-victim-${randomUUID()}@test.local`;
+  const aJwt = await registerAndLogin(aEmail);
+  await registerAndLogin(victimEmail);
+  const contextId = `listing-${randomUUID()}`;
+
+  const { status, body } = await sendMessage(aJwt, {
+    message: 'kendime sahte requester ile mesaj atmayi deniyorum',
+    listingId: contextId,
+    requesterEmail: victimEmail,
+    receiverEmail: aEmail,
+  });
+
+  // Before the fix this would succeed (200): isSamePerson(requester=victim,
+  // receiver=A) is false, so the self-message guard never fired. After
+  // the fix, requester is forced back to A regardless of the client's
+  // claim, so requester === receiver === A and self-message is correctly
+  // rejected.
+  assert.equal(status, 400);
+  assert.match(body.error?.message ?? '', /kendisine mesaj/i);
+});
+
+test('valid A-to-seller flow still works after the requester-identity fix (regression)', async () => {
+  const buyerEmail = `m1-reqfix-buyer-${randomUUID()}@test.local`;
+  const sellerEmail = `m1-reqfix-seller-${randomUUID()}@test.local`;
+  const buyerJwt = await registerAndLogin(buyerEmail);
+  await registerAndLogin(sellerEmail);
+  const contextId = `listing-${randomUUID()}`;
+
+  const { status, body } = await sendMessage(buyerJwt, {
+    message: 'satici ile normal akis',
+    listingId: contextId,
+    receiverEmail: sellerEmail,
+  });
+
+  assert.equal(status, 200);
+  assert.equal(body.data.requesterEmail, buyerEmail.toLowerCase());
+  assert.equal(body.data.receiverEmail, sellerEmail.toLowerCase());
 });
 
 test('participant authorization: a non-participant cannot hijack an existing thread by supplying its threadId', async () => {
