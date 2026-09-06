@@ -288,6 +288,7 @@ test('offline-sync (syncOfflineListing) persists Hayvancılık/Tarımsal Aletler
       operation: 'create',
       listing: {
         id: `l_${Date.now()}`,
+        operationId: randomUUID(),
         title: 'Offline Alet Ilani',
         mainType: 'tarimsalAletler',
         mode: 'sell',

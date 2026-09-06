@@ -266,7 +266,11 @@ test('offline create preserves mode', async () => {
     headers: authed(user.jwt),
     body: JSON.stringify({
       operation: 'create',
-      listing: { id: `l_${Date.now()}`, ...listingPayload({ mode: 'buy' }) },
+      listing: {
+        id: `l_${Date.now()}`,
+        operationId: randomUUID(),
+        ...listingPayload({ mode: 'buy' }),
+      },
     }),
   });
   assert.equal(res.status, 200);
@@ -283,6 +287,7 @@ test('offline create ignores a client-supplied listingNo and assigns its own uni
       operation: 'create',
       listing: {
         id: `l_${Date.now()}`,
+        operationId: randomUUID(),
         listingNo: 'T360-99999',
         ...listingPayload({ title: `Offline No Spoof ${randomUUID()}` }),
       },
