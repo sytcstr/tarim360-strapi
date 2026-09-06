@@ -433,8 +433,38 @@ export default factories.createCoreController(
       // respondWithLedgeredListing (below) returns the original,
       // already-created listing -- exactly like every other duplicate-
       // operationId retry already does for non-photo fields.
-      const { photos: _fingerprintPhotosOmitted, ...fingerprintPayloadFields } =
-        clientPayload as Record<string, unknown>;
+      // A-Z PART 3 P0/P1 CORRECTION FIX B (Madde 45): `createdAtClient` is
+      // a client-stamped wall-clock value the Flutter client regenerates
+      // fresh on every single publish attempt, including a manual retry
+      // of the exact same logical submission -- if it stayed in the
+      // fingerprint, a retry that correctly reused the same operationId
+      // (per the Flutter-side fix) would still fingerprint-mismatch
+      // against the original attempt and be wrongly rejected as a
+      // CONFLICT (409) instead of being recognized as the same
+      // operation, exactly the failure mode L20.10 already fixed for
+      // `photos` above -- same reasoning, same fix shape.
+      //
+      // `ownerEmail`/`ownerProfileId`/`ownerId` are also excluded: a real
+      // retry of the SAME logical submission can land on this direct path
+      // OR on engagement.ts's syncOfflineListing (offline-queue replay of
+      // the identical operationId) -- that handler always FORCES these
+      // three fields from the caller's own identity (never trusts the
+      // client's value, a deliberate security property, see its own
+      // comment), so the two paths' fingerprints must not depend on
+      // whichever raw value happens to be present/absent in each path's
+      // payload shape for these three, or a genuinely identical
+      // submission retried on the other path would fingerprint-mismatch
+      // as a false CONFLICT. `ownerKey: identity.ownerId` below already
+      // carries the one identity dimension that actually matters for
+      // fingerprinting -- these three are redundant with it.
+      const {
+        photos: _fingerprintPhotosOmitted,
+        createdAtClient: _fingerprintCreatedAtClientOmitted,
+        ownerEmail: _fingerprintOwnerEmailOmitted,
+        ownerProfileId: _fingerprintOwnerProfileIdOmitted,
+        ownerId: _fingerprintOwnerIdOmitted,
+        ...fingerprintPayloadFields
+      } = clientPayload as Record<string, unknown>;
       const fingerprint = fingerprintPayload({
         ...fingerprintPayloadFields,
         ownerKey: identity.ownerId,
