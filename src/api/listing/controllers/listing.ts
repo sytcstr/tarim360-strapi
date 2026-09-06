@@ -46,6 +46,41 @@ const ROCKET_VALID_DAYS = new Set<number>([
 
 const clean = (value: unknown): string => String(value ?? '').trim();
 
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === 'object' && !Array.isArray(value);
+
+// LISTING_AZ_REVALIDATION_PART2_21_40.md Madde 34 (P0): the only
+// legitimate reason a caller may see non-active listings through this
+// route at all is the owner viewing their OWN "İlanlarım" management
+// list (Flutter's `fetchListingsForOwner`, strapi_service.dart) --
+// which asks by a raw `filters[<field>][$eq]=<ownerId>` clause, trying
+// these three historical owner-identity field names in turn.
+const OWNER_IDENTITY_FILTER_FIELDS = ['ownerProfileId', 'ownerId', 'profileId'] as const;
+
+/**
+ * Returns the owner-identity field name a raw client filter object is
+ * genuinely, verifiably scoped to (its `$eq` value matches the
+ * AUTHENTICATED caller's own identity) -- or `null` if the caller isn't
+ * authenticated, sent no such clause, or the value belongs to someone
+ * else. Deliberately does not just check "is present" -- a caller could
+ * send `filters[ownerProfileId][$eq]=<someone else's id>` and would
+ * still need to be rejected.
+ */
+const resolveOwnListingsFilterField = (
+  rawFilters: Record<string, unknown>,
+  identity: { email: string; ownerId: string },
+): (typeof OWNER_IDENTITY_FILTER_FIELDS)[number] | null => {
+  for (const field of OWNER_IDENTITY_FILTER_FIELDS) {
+    const clause = rawFilters[field];
+    if (!isPlainObject(clause)) continue;
+    const eqValue = (clause as Record<string, unknown>).$eq;
+    if (typeof eqValue === 'string' && eqValue.trim() === identity.ownerId) {
+      return field;
+    }
+  }
+  return null;
+};
+
 /**
  * SEMANTIC_CONTRACT_S2 (audit finding 2.5): unlike processed-product,
  * logistics-vehicle, and hub-content -- which all strip their engagement-
@@ -151,6 +186,28 @@ export default factories.createCoreController(
      * including older app builds that never send them -- `ctx.query` is
      * left completely untouched and `super.find(ctx)` runs exactly as
      * before this phase.
+     *
+     * LISTING_AZ_REVALIDATION_PART2_21_40.md Madde 34 (P0): the "if none
+     * of the new param names are present, leave ctx.query completely
+     * untouched" fallback above was itself the vulnerability -- it let a
+     * caller send RAW Strapi filter syntax (`filters[status][$eq]=pending`,
+     * `filters[status][$ne]=active`, etc.), which uses the DIFFERENT
+     * top-level `filters` key this whitelist never inspects, straight
+     * through to `super.find(ctx)` with zero status/ownership
+     * restriction -- and this route is granted to Strapi's Public role,
+     * so no authentication was even required to enumerate every
+     * pending/rejected listing's full content. The `else` branch below
+     * closes that: raw client filters are NEVER trusted anymore. The one
+     * legitimate raw-filter caller (the owner's own "İlanlarım"
+     * management view, `fetchListingsForOwner`) is verified against the
+     * REQUEST'S OWN authenticated identity and, even then, only a
+     * server-rebuilt `{<field>:{$eq:identity.ownerId}}` filter is used --
+     * never the client's raw filter object verbatim, so a verified
+     * owner-match clause can't be combined with an additional smuggled
+     * `$or`/`$ne` to still leak other rows. Every other caller (public,
+     * authenticated-but-unrelated, or malformed) always gets a
+     * server-built `status:active`-only query, matching the whitelisted
+     * discovery path's own guarantee.
      */
     async find(ctx) {
       const discoveryQuery = buildListingDiscoveryQuery(
@@ -195,6 +252,50 @@ export default factories.createCoreController(
           // Structural/response-shape params are safe to pass through
           // verbatim -- they don't select which rows match, only how
           // each matched row is serialized.
+          ...(previous.populate !== undefined
+            ? { populate: previous.populate }
+            : {}),
+          ...(previous.fields !== undefined ? { fields: previous.fields } : {}),
+        } as any;
+      } else {
+        const previous = (ctx.query ?? {}) as Record<string, unknown>;
+        const rawFilters = isPlainObject(previous.filters) ? previous.filters : null;
+        const identity = readIdentity(ctx);
+        const ownField =
+          rawFilters && identity
+            ? resolveOwnListingsFilterField(rawFilters, identity)
+            : null;
+
+        // LISTING_AZ_REVALIDATION_PART2_21_40.md Madde 34 P1 correction:
+        // the first version of this fix discarded EVERY non-owner-
+        // verified raw filter outright, which also broke legitimate,
+        // non-privacy-sensitive raw lookups that predate the whitelisted
+        // discovery contract (listing-type-and-public-number.integration.test.ts's
+        // `filters[listingNo][$eq]`/`filters[mode][$eq]`,
+        // listing-search-filter-sort.integration.test.ts's L6.16 "legacy
+        // passthrough" using `filters[title][$containsi]`) -- confirmed
+        // live when the full integration suite actually ran those files.
+        // AND-wrapping the client's raw filters with a forced
+        // `status:active` clause instead preserves all of that while
+        // remaining just as safe: Strapi's query engine evaluates `$and`
+        // as a hard conjunction, so no nested `$or`/`$ne`/anything the
+        // client puts in their own half can ever be satisfied alongside
+        // a contradicting status -- at worst it makes their own query
+        // return empty, it can never leak a non-active row.
+        ctx.query = {
+          filters: ownField
+            ? { [ownField]: { $eq: identity!.ownerId } }
+            : rawFilters
+              ? { $and: [{ status: { $eq: 'active' } }, rawFilters] }
+              : { status: { $eq: 'active' } },
+          // Structural/response-shape/pagination/sort params are safe to
+          // pass through verbatim -- they don't select which rows match,
+          // only how many/which order/which fields of an already-matched
+          // row are returned.
+          ...(previous.pagination !== undefined
+            ? { pagination: previous.pagination }
+            : {}),
+          ...(previous.sort !== undefined ? { sort: previous.sort } : {}),
           ...(previous.populate !== undefined
             ? { populate: previous.populate }
             : {}),
