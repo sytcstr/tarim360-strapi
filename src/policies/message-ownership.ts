@@ -6,7 +6,7 @@ import {
   mergeScopeOrFilter,
   ownerIdFromEmail,
   readIdentity,
-  resolveListingOwnerByAnyId,
+  resolveListingContextByAnyId,
   resolveThreadParticipantsByThreadId,
 } from '../utils/identity';
 
@@ -57,6 +57,7 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
     let receiverEmail = '';
     let receiverProfileId = '';
     let receiverVerified = false;
+    let existingThreadFound = false;
 
     if (threadId) {
       const fromThread = await resolveThreadParticipantsByThreadId(
@@ -64,6 +65,7 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
         threadId,
       );
       if (fromThread) {
+        existingThreadFound = true;
         const callerIsRequester =
           fromThread.requesterEmail === identity.email ||
           fromThread.requesterProfileId === identity.ownerId;
@@ -84,10 +86,43 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
     }
 
     if (!receiverVerified) {
-      const owner = await resolveListingOwnerByAnyId(
+      const owner = await resolveListingContextByAnyId(
         strapi,
         data.listingId ?? data.listingNo,
       );
+      // LISTING_AZ_REVALIDATION_PART2_21_40.md Madde 26 (P0): this stock-
+      // CRUD create route sits on the exact same `message` content type
+      // as conversation.ts's own `/conversations/message` endpoint, whose
+      // `verifyAndCorrectReceiver` already rejects (400) a brand-new
+      // message referencing a pending/rejected listing -- this route had
+      // no equivalent check at all, letting a caller bypass that
+      // lifecycle rule entirely by posting here directly instead. Only
+      // applies when no existing thread already covers this conversation
+      // (mirrors conversation.ts: an existing thread must never be
+      // retroactively broken by its listing later going inactive).
+      // Rejected via denyForbidden (403), not a 400, because Strapi's
+      // policy contract makes a genuine 400 unreachable from a policy:
+      // confirmed live (@strapi/core's createPolicicesMiddleware) that
+      // any non-true/undefined policy return is unconditionally replaced
+      // with a blank, generic 403 PolicyError -- whatever status/message
+      // the policy tried to set is discarded regardless (the policy also
+      // only ever receives a shallow Object.assign COPY of ctx, so
+      // ctx.throw/.badRequest calls inside a policy never reach the real
+      // response either way). 403 here is what this route's every other
+      // rejection already produces (e.g. "Mesaj alicisi dogrulanamadi"
+      // below) -- consistent with the rest of this policy, not a
+      // regression from the custom endpoint's 400.
+      if (
+        !existingThreadFound &&
+        owner &&
+        owner.status &&
+        owner.status !== 'active'
+      ) {
+        return denyForbidden(
+          ctx,
+          'Bu ilan artik aktif degil, yeni mesaj gonderilemez.',
+        );
+      }
       if (
         owner &&
         owner.email !== identity.email &&

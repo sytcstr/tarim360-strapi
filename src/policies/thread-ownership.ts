@@ -1,4 +1,5 @@
 import {
+  denyForbidden,
   denyNoIdentity,
   loadEntityByRouteId,
   matchesIdentity,
@@ -6,7 +7,7 @@ import {
   normalizeEmail,
   ownerIdFromEmail,
   readIdentity,
-  resolveListingOwnerByAnyId,
+  resolveListingContextByAnyId,
 } from '../utils/identity';
 
 const UID = 'api::thread.thread';
@@ -42,11 +43,32 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
     if (!requesterEmail) requesterEmail = identity.email;
     if (!requesterProfileId) requesterProfileId = identity.ownerId;
 
-    if (!receiverEmail || !receiverProfileId) {
-      const owner = await resolveListingOwnerByAnyId(
-        strapi,
-        data.listingId ?? data.listingNo,
+    // LISTING_AZ_REVALIDATION_PART2_21_40.md Madde 26 (P0): this stock-
+    // CRUD create route sits on the same `thread` content type as
+    // conversation.ts's own `/conversations/upsert`, whose
+    // `verifyAndCorrectReceiver` already rejects creating a brand-new
+    // thread about a pending/rejected listing -- this route had no
+    // equivalent check. This is a plain create (no find-or-merge-into-an-
+    // existing-thread logic on this stock path), so the check applies
+    // unconditionally whenever the referenced id resolves to a real
+    // listing row, regardless of whether the client also supplied a
+    // receiver directly.
+    const listingLikeId = data.listingId ?? data.listingNo;
+    const owner =
+      listingLikeId != null
+        ? await resolveListingContextByAnyId(strapi, listingLikeId)
+        : null;
+    // Rejected via denyForbidden (403) rather than a 400 -- Strapi's
+    // policy contract makes a genuine 400 unreachable from a policy (see
+    // message-ownership.ts's identical check for the full explanation).
+    if (owner && owner.status && owner.status !== 'active') {
+      return denyForbidden(
+        ctx,
+        'Bu ilan artik aktif degil, yeni sohbet baslatilamaz.',
       );
+    }
+
+    if (!receiverEmail || !receiverProfileId) {
       if (!receiverEmail && owner?.email && owner.email !== identity.email) {
         receiverEmail = owner.email;
       }
