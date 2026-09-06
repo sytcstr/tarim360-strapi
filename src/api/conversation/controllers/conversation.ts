@@ -308,6 +308,33 @@ const applyVerifiedReceiver = (data, owner) => {
   data.receiverProfileId = owner.ownerId || '';
 };
 
+const REQUESTER_ALIAS_FIELDS = [
+  'requesterEmail',
+  'requestedByEmail',
+  'requesterProfileId',
+  'requestedByProfileId',
+];
+
+/**
+ * LISTING_AZ_REVALIDATION_PART2_21_40.md Madde 21 (P1): normalizeParticipants
+ * only ever defaulted requesterEmail/requesterProfileId to the
+ * authenticated caller when the client sent NEITHER field -- any
+ * non-empty client-supplied value (including a real third party's own
+ * email) was trusted outright, since the original reasoning ("requester/
+ * receiver remain client-suppliable, the backend has no other way to
+ * learn who a NEW conversation's other party is") was only ever true for
+ * the RECEIVER, never the requester: the requester of a message is
+ * always whoever is actually sending it. Mutates `data` in place (same
+ * mechanism as applyVerifiedReceiver) so every downstream
+ * normalizeParticipants() call picks up the corrected value.
+ */
+const applyVerifiedRequester = (data, requester) => {
+  for (const field of REQUESTER_ALIAS_FIELDS) delete data[field];
+  data.requesterEmail = requester.email || '';
+  data.requesterProfileId = requester.profileId || '';
+  if (requester.name) data.requesterName = requester.name;
+};
+
 /** Returns { existingThread, forbidden, rejected }. On forbidden:true the
  * caller must reject immediately -- current is not a real participant of
  * the real, pre-existing thread being referenced. On rejected (a string
@@ -341,12 +368,32 @@ const verifyAndCorrectReceiver = async (strapi, data, user) => {
     if (!currentIsRequester && !currentIsReceiver) {
       return { existingThread, forbidden: true, rejected: null };
     }
+    // Pre-existing, unchanged: "receiver" for THIS message is always the
+    // OTHER real participant relative to current (never the client's
+    // claim), so a real participant can't redirect a reply to an
+    // arbitrary third party (NOTIFICATION_N1_SECURITY_FIX_REPORT.md
+    // BUG-NOTIF-002).
     const owner = currentIsRequester
       ? { email: existingThread.receiverEmail, ownerId: existingThread.receiverProfileId }
       : { email: existingThread.requesterEmail, ownerId: existingThread.requesterProfileId };
     applyVerifiedReceiver(data, owner);
+    // Madde 21: "requester" for THIS message is always the real,
+    // authenticated sender -- normalizeParticipants' OWN original intent
+    // ("if the client sends neither field, default to sender") already
+    // established this; the fix is enforcing it UNCONDITIONALLY instead
+    // of only when the client happens to send nothing. This is symmetric
+    // with senderEmail (already always forced to `current`) -- a
+    // requester spoofing attempt can no longer smuggle a real third
+    // party's identity into the thread by claiming it on a reply either.
+    applyVerifiedRequester(data, current);
     return { existingThread, forbidden: false, rejected: null };
   }
+
+  // Madde 21: a brand-new conversation's requester is always whoever is
+  // actually creating it -- there is no legitimate "requesting on behalf
+  // of someone else" scenario, unlike the receiver (the other party),
+  // which genuinely has no server-known value yet for a first message.
+  applyVerifiedRequester(data, current);
 
   const owner = await resolveContextOwner(strapi, data);
   if (
