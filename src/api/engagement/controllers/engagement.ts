@@ -5,6 +5,7 @@ import {
 } from '../../logistics-load/controllers/logistics-load';
 import { requireAuthenticatedActorKey } from '../../../utils/engagement-contract';
 import { setMembership } from '../services/engagement-v1';
+import { isOwnListingTarget } from './engagement-v1';
 import {
   canCreateNextNormalListing,
   nextListingNo,
@@ -177,6 +178,23 @@ const delegateListingMembershipToggle = async (
   const id = asString(body[idField]);
   if (!id) return ctx.badRequest(`${idField} zorunlu.`);
   const enabled = asBool(body[payloadField], true);
+
+  // LISTING_AZ_REVALIDATION_PART5_81_100.md Madde 86 (P1): this legacy
+  // route delegates straight into setMembership with no ownership check
+  // at all, unlike the current PUT /engagements/like|favorite route
+  // (engagement-v1.ts's handleMembership), which already blocks a caller
+  // from favoriting/liking their own listing via isOwnListingTarget. Any
+  // authenticated caller could still self-favorite/self-like through
+  // this still-registered route to inflate their own listing's
+  // favoriteCount/likeCount. Scoped to CREATING a new membership only
+  // (enabled=true), matching handleMembership's own precedent -- removing
+  // an existing membership is left unaffected.
+  if (enabled) {
+    const ownTarget = await isOwnListingTarget(strapi, id, identity);
+    if (ownTarget) {
+      return ctx.forbidden('Kendi hedefinizi beğenemez/favorileyemezsiniz.');
+    }
+  }
 
   const actorKey = requireAuthenticatedActorKey(ctx);
   if (!actorKey) return ctx.unauthorized('Kimlik dogrulanamadi.');

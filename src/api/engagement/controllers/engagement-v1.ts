@@ -43,8 +43,13 @@ const dataBody = (ctx: any): Record<string, unknown> => {
 
 /** Only "listing" ownership is checked in this phase — see
  * ENGAGEMENT_BACKEND_IMPLEMENTATION_REPORT.md known-risks for the other
- * domains' deferred self-action checks. */
-const isOwnListingTarget = async (strapiInstance: any, targetId: string, identity: { email: string; ownerId: string }) => {
+ * domains' deferred self-action checks. Exported (LISTING_AZ_
+ * REVALIDATION_PART5_81_100.md Madde 86, P1) so the legacy
+ * `delegateListingMembershipToggle` path in `engagement.ts` can share
+ * this exact check instead of re-implementing (and potentially drifting
+ * from) it independently — the audit's own finding was precisely that
+ * the legacy route silently fell behind this one. */
+export const isOwnListingTarget = async (strapiInstance: any, targetId: string, identity: { email: string; ownerId: string }) => {
   const row = await loadEntityByRouteId(strapiInstance, TARGET_UID.listing, targetId, [
     'ownerEmail',
     'ownerProfileId',
