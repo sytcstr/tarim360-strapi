@@ -233,3 +233,141 @@ test('generic POST /api/threads on a REJECTED listing is rejected', async () => 
   });
   assert.equal(status, 403, JSON.stringify(body));
 });
+
+// ---------------------------------------------------------------------
+// LISTING_AZ_REVALIDATION_PART5_81_100.md Madde 92 (P1), fixed in
+// src/policies/thread-ownership.ts: requesterEmail/requesterProfileId
+// used to be trusted from the client whenever non-empty, gated only by a
+// "does the fabricated participant set contain me" check that an
+// attacker trivially satisfies by naming themselves the RECEIVER while
+// claiming a real victim's email as the REQUESTER. A live PoC (run and
+// reverted during the Part 5 audit) confirmed this created a thread that
+// showed up in the victim's own `/conversations/mine` with zero consent.
+// The fix forces requesterEmail/requesterProfileId unconditionally from
+// server-verified identity, mirroring message-ownership.ts's POST branch.
+// ---------------------------------------------------------------------
+
+async function mineConversations(jwt: string) {
+  const res = await fetch(`${BASE_URL}/conversations/mine`, {
+    method: 'GET',
+    headers: authed(jwt),
+  });
+  const body = await res.json().catch(() => ({}));
+  return { status: res.status, body };
+}
+
+test('generic POST /api/threads: attacker cannot spoof a victim as requesterEmail', async () => {
+  const victimEmail = `m92-thr-victim-${randomUUID()}@test.local`;
+  const victimJwt = await registerAndLogin(victimEmail);
+  const attackerEmail = `m92-thr-attacker-${randomUUID()}@test.local`;
+  const attackerJwt = await registerAndLogin(attackerEmail);
+
+  const conversationKey = `m92-spoof-key-${randomUUID()}`;
+  const { status, body } = await genericCreateThread(attackerJwt, {
+    conversationKey,
+    lastMessage: 'sahte sohbet denemesi',
+    requesterEmail: victimEmail,
+    receiverEmail: `m92-thr-attacker-recv-${randomUUID()}@test.local`,
+  });
+  assert.equal(status, 201, JSON.stringify(body));
+  // The persisted row must carry the ATTACKER's real identity as
+  // requester, never the spoofed victim email.
+  assert.equal(body.data.requesterEmail, attackerEmail.toLowerCase());
+  assert.notEqual(body.data.requesterEmail, victimEmail.toLowerCase());
+
+  // Victim's own inbox must not contain the fabricated thread.
+  const mine = await mineConversations(victimJwt);
+  assert.equal(mine.status, 200, JSON.stringify(mine.body));
+  const rows = Array.isArray(mine.body?.data) ? mine.body.data : [];
+  const leaked = rows.some((row: any) => row.conversationKey === conversationKey);
+  assert.equal(leaked, false, 'victim inbox must not receive a forged requester thread');
+});
+
+test('generic POST /api/threads: attacker cannot spoof a victim as requesterProfileId', async () => {
+  const victimEmail = `m92-thr-victim-pid-${randomUUID()}@test.local`;
+  const victimJwt = await registerAndLogin(victimEmail);
+  const attacker = await registerAndLogin(`m92-thr-attacker-pid-${randomUUID()}@test.local`);
+
+  // ownerIdFromEmail's exact derivation isn't re-implemented here -- a
+  // fabricated but plausible-looking profile id is enough to prove the
+  // server never trusts an arbitrary client-supplied value verbatim.
+  const spoofedProfileId = `u_${victimEmail.split('@')[0]}`;
+  const conversationKey = `m92-spoof-pid-key-${randomUUID()}`;
+  const { status, body } = await genericCreateThread(attacker, {
+    conversationKey,
+    lastMessage: 'sahte profil id denemesi',
+    requesterProfileId: spoofedProfileId,
+    receiverEmail: `m92-thr-attacker-recv-${randomUUID()}@test.local`,
+  });
+  assert.equal(status, 201, JSON.stringify(body));
+  assert.notEqual(body.data.requesterProfileId, spoofedProfileId);
+
+  const mine = await mineConversations(victimJwt);
+  assert.equal(mine.status, 200, JSON.stringify(mine.body));
+  const rows = Array.isArray(mine.body?.data) ? mine.body.data : [];
+  const leaked = rows.some((row: any) => row.conversationKey === conversationKey);
+  assert.equal(leaked, false, 'victim inbox must not receive a forged requesterProfileId thread');
+});
+
+test('generic POST /api/threads: created thread always belongs to the authenticated caller as requester', async () => {
+  const buyerEmail = `m92-thr-owner-check-${randomUUID()}@test.local`;
+  const buyerJwt = await registerAndLogin(buyerEmail);
+  const seller = await registerAndLogin(`m92-thr-owner-seller-${randomUUID()}@test.local`);
+  const listing = await createListing(seller);
+
+  const { status, body } = await genericCreateThread(buyerJwt, {
+    listingId: listing.documentId,
+    lastMessage: 'gercek alici-satici sohbeti',
+    conversationKey: `m92-real-key-${randomUUID()}`,
+    requesterEmail: 'someone-else-entirely@test.local',
+  });
+  assert.equal(status, 201, JSON.stringify(body));
+  assert.equal(body.data.requesterEmail, buyerEmail.toLowerCase());
+  assert.notEqual(body.data.requesterEmail, 'someone-else-entirely@test.local');
+});
+
+test('generic POST /api/threads: legitimate buyer->seller thread creation still works after the fix', async () => {
+  const seller = await registerAndLogin(`m92-thr-legit-seller-${randomUUID()}@test.local`);
+  const buyer = await registerAndLogin(`m92-thr-legit-buyer-${randomUUID()}@test.local`);
+  const listing = await createListing(seller);
+
+  const { status, body } = await genericCreateThread(buyer, {
+    listingId: listing.documentId,
+    lastMessage: 'merhaba, ilan hakkinda',
+    conversationKey: `m92-legit-key-${randomUUID()}`,
+  });
+  assert.equal(status, 201, JSON.stringify(body));
+  assert.ok(body.data.requesterEmail);
+  assert.ok(body.data.receiverEmail);
+});
+
+test('generic POST /api/threads: two different buyers on the same listing stay isolated', async () => {
+  const seller = await registerAndLogin(`m92-thr-iso-seller-${randomUUID()}@test.local`);
+  const buyerA = await registerAndLogin(`m92-thr-iso-buyer-a-${randomUUID()}@test.local`);
+  const buyerB = await registerAndLogin(`m92-thr-iso-buyer-b-${randomUUID()}@test.local`);
+  const listing = await createListing(seller);
+
+  const keyA = `m92-iso-key-a-${randomUUID()}`;
+  const keyB = `m92-iso-key-b-${randomUUID()}`;
+  const resA = await genericCreateThread(buyerA, {
+    listingId: listing.documentId,
+    lastMessage: 'A alicisindan mesaj',
+    conversationKey: keyA,
+  });
+  const resB = await genericCreateThread(buyerB, {
+    listingId: listing.documentId,
+    lastMessage: 'B alicisindan mesaj',
+    conversationKey: keyB,
+  });
+  assert.equal(resA.status, 201, JSON.stringify(resA.body));
+  assert.equal(resB.status, 201, JSON.stringify(resB.body));
+
+  const mineA = await mineConversations(buyerA);
+  const mineB = await mineConversations(buyerB);
+  const rowsA = Array.isArray(mineA.body?.data) ? mineA.body.data : [];
+  const rowsB = Array.isArray(mineB.body?.data) ? mineB.body.data : [];
+  assert.ok(rowsA.some((row: any) => row.conversationKey === keyA));
+  assert.ok(!rowsA.some((row: any) => row.conversationKey === keyB));
+  assert.ok(rowsB.some((row: any) => row.conversationKey === keyB));
+  assert.ok(!rowsB.some((row: any) => row.conversationKey === keyA));
+});

@@ -35,13 +35,25 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
     const body = (ctx.request?.body ?? {}) as Record<string, unknown>;
     const data = (body.data ?? {}) as Record<string, unknown>;
 
-    let requesterEmail = normalizeEmail(data.requesterEmail);
     let receiverEmail = normalizeEmail(data.receiverEmail);
-    let requesterProfileId = String(data.requesterProfileId ?? '').trim();
     let receiverProfileId = String(data.receiverProfileId ?? '').trim();
 
-    if (!requesterEmail) requesterEmail = identity.email;
-    if (!requesterProfileId) requesterProfileId = identity.ownerId;
+    // LISTING_AZ_REVALIDATION_PART5_81_100.md Madde 92 (P1): requesterEmail/
+    // requesterProfileId used to be taken from the client first and only
+    // defaulted to the caller's own identity when both were empty -- so an
+    // attacker could name themselves as `receiver` (trivially satisfying
+    // the "participant set contains me" check below) while claiming an
+    // arbitrary real user's email as `requesterEmail`, injecting a
+    // fabricated thread into that stranger's own inbox (live PoC
+    // confirmed: POST here with a victim's email as requesterEmail creates
+    // a thread that shows up in the victim's own `/conversations/mine`).
+    // The requester of a brand-new thread is always whoever is actually
+    // creating it -- the exact same invariant message-ownership.ts's POST
+    // branch and conversation.ts's applyVerifiedRequester already enforce
+    // -- so it is now forced unconditionally from server-verified
+    // identity, never read from the client.
+    const requesterEmail = identity.email;
+    const requesterProfileId = identity.ownerId;
 
     // LISTING_AZ_REVALIDATION_PART2_21_40.md Madde 26 (P0): this stock-
     // CRUD create route sits on the same `thread` content type as
@@ -84,22 +96,23 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
     if (!receiverProfileId && receiverEmail) {
       receiverProfileId = ownerIdFromEmail(receiverEmail);
     }
-    if (!requesterProfileId && requesterEmail) {
-      requesterProfileId = ownerIdFromEmail(requesterEmail);
-    }
-
-    const emailParticipantSet = requesterEmail || receiverEmail;
-    const profileParticipantSet = requesterProfileId || receiverProfileId;
-    const emailContainsMe = requesterEmail === identity.email || receiverEmail === identity.email;
-    const profileContainsMe =
-      requesterProfileId === identity.ownerId || receiverProfileId === identity.ownerId;
 
     if (!receiverEmail && !receiverProfileId) {
       ctx.forbidden('Sohbet alicisi bulunamadi.');
       return false;
     }
 
-    if ((emailParticipantSet || profileParticipantSet) && !(emailContainsMe || profileContainsMe)) {
+    // requesterEmail/requesterProfileId are now always identity.email/
+    // identity.ownerId (see above), so this "participant set contains me"
+    // check can no longer be defeated by a spoofed requester -- it is kept
+    // as a defense-in-depth guard against a still-malformed receiver claim
+    // (e.g. one that resolves to neither party), matching the same
+    // redundant-by-design pattern used elsewhere (e.g. offer-ownership.ts).
+    const emailContainsMe = requesterEmail === identity.email || receiverEmail === identity.email;
+    const profileContainsMe =
+      requesterProfileId === identity.ownerId || receiverProfileId === identity.ownerId;
+
+    if (!(emailContainsMe || profileContainsMe)) {
       ctx.forbidden('Sohbet katilimci bilgileri aktif oturumla uyusmuyor.');
       return false;
     }
