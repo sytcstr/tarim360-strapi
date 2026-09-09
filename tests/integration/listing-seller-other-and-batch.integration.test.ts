@@ -264,3 +264,86 @@ test('L19.26: listingNos silently excludes a pending listing from the batch (no 
   assert.equal(body.data.length, 1);
   assert.equal(body.data[0].listingNo, active.listingNo);
 });
+
+// ---------------------------------------------------------------------
+// LISTING_AZ_REVALIDATION_PART5_81_100.md Madde 83 (P1): Favorites
+// batch-hydration via `documentIds` -- same whitelisted-contract, same
+// batch/prune/lifecycle semantics as `listingNos` above, but keyed by
+// documentId (FavoritesStore's own actual identity, not listingNo).
+// ---------------------------------------------------------------------
+
+test('Madde 83: documentIds batch-hydrates several listings in one request', async () => {
+  const { jwt } = await registerAndLogin(`m83-batch-${randomUUID()}@test.local`);
+  const marker = randomUUID().slice(0, 8);
+  const a = await createListing(jwt, { title: `M83 Batch A ${marker}` });
+  const b = await createListing(jwt, { title: `M83 Batch B ${marker}` });
+  const c = await createListing(jwt, { title: `M83 Batch C ${marker}` });
+
+  const { status, body } = await discover({
+    documentIds: `${a.documentId},${b.documentId},${c.documentId}`,
+    pageSize: 50,
+  });
+  assert.equal(status, 200);
+  const titles = body.data.map((r: any) => r.title);
+  assert.ok(titles.includes(a.title));
+  assert.ok(titles.includes(b.title));
+  assert.ok(titles.includes(c.title));
+  assert.equal(body.data.length, 3);
+});
+
+test('Madde 83: documentIds gracefully prunes a nonexistent id instead of erroring', async () => {
+  const { jwt } = await registerAndLogin(`m83-batch-prune-${randomUUID()}@test.local`);
+  const real = await createListing(jwt, { title: `M83 Batch Prune ${randomUUID().slice(0, 8)}` });
+
+  const { status, body } = await discover({
+    documentIds: `${real.documentId},nonexistent000000000000`,
+  });
+  assert.equal(status, 200);
+  assert.equal(body.data.length, 1);
+  assert.equal(body.data[0].documentId, real.documentId);
+});
+
+test('Madde 83: documentIds silently excludes a pending/rejected listing from the batch (never leaks a favorited-but-hidden row)', async () => {
+  const { jwt } = await registerAndLogin(`m83-batch-lifecycle-${randomUUID()}@test.local`);
+  const marker = randomUUID().slice(0, 8);
+  const active = await createListing(jwt, { title: `M83 Batch Active ${marker}` });
+  const pending = await createListing(jwt, { title: `M83 Batch Pending ${marker}` });
+  const rejected = await createListing(jwt, { title: `M83 Batch Rejected ${marker}` });
+  await forceStatus(pending.documentId, 'pending');
+  await forceStatus(rejected.documentId, 'rejected');
+
+  const { body } = await discover({
+    documentIds: `${active.documentId},${pending.documentId},${rejected.documentId}`,
+  });
+  assert.equal(body.data.length, 1);
+  assert.equal(body.data[0].documentId, active.documentId);
+});
+
+test('Madde 83: documentIds never leaks the private ownerEmail field', async () => {
+  const { jwt } = await registerAndLogin(`m83-batch-privacy-${randomUUID()}@test.local`);
+  const listing = await createListing(jwt, { title: `M83 Batch Privacy ${randomUUID().slice(0, 8)}` });
+
+  const { body } = await discover({ documentIds: listing.documentId });
+  assert.equal(body.data.length, 1);
+  assert.equal(body.data[0].ownerEmail, undefined);
+});
+
+test('Madde 83: another user\'s favorited-but-since-deleted listing id is silently pruned, not errored', async () => {
+  const { jwt: ownerJwt } = await registerAndLogin(`m83-owner-${randomUUID()}@test.local`);
+  const { jwt: buyerJwt } = await registerAndLogin(`m83-buyer-${randomUUID()}@test.local`);
+  const marker = randomUUID().slice(0, 8);
+  const stillActive = await createListing(buyerJwt, { title: `M83 Buyer Own ${marker}` });
+  const ownerListing = await createListing(ownerJwt, { title: `M83 Owner Deleted ${marker}` });
+
+  await fetch(`${BASE_URL}/listings/${ownerListing.documentId}`, {
+    method: 'DELETE',
+    headers: authed(ownerJwt),
+  });
+
+  const { status, body } = await discover({
+    documentIds: `${stillActive.documentId},${ownerListing.documentId}`,
+  });
+  assert.equal(status, 200);
+  assert.equal(body.data.length, 1);
+  assert.equal(body.data[0].documentId, stillActive.documentId);
+});

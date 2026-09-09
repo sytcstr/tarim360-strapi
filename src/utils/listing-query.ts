@@ -23,6 +23,18 @@ export const LISTING_DISCOVERY_PARAM_KEYS = [
   'search',
   'listingNo',
   'listingNos',
+  // LISTING_AZ_REVALIDATION_PART5_81_100.md Madde 83 (P1): Favorites has
+  // no server "list my favorited listings" capability -- it can only
+  // enumerate FavoritesStore's own local id set (documentId strings, not
+  // listingNo) and intersect it against whatever's already in the
+  // shared, ~60-most-recent-row ListingsStore cache. A favorited listing
+  // older than that window silently never renders, and a lone such
+  // favorite makes the page look completely empty. This whitelisted
+  // batch-by-documentId param mirrors `listingNos`' exact treatment (cap,
+  // forced status:active, silently drops anything that no longer
+  // resolves) so Favorites can hydrate its own specific ids directly,
+  // the same way Recently Viewed already does via `listingNos`.
+  'documentIds',
   'mainType',
   'subType',
   'mode',
@@ -97,6 +109,23 @@ const asPositiveIntArray = (value: unknown): number[] => {
   return out;
 };
 
+// Same accept-array-or-comma-separated-string, cap, dedupe treatment as
+// asPositiveIntArray above, for documentId strings (Madde 83).
+const asTrimmedStringArray = (value: unknown): string[] => {
+  const raw: unknown[] = Array.isArray(value)
+    ? value
+    : typeof value === 'string'
+      ? value.split(',')
+      : [];
+  const out: string[] = [];
+  for (const item of raw) {
+    const s = asTrimmedString(item);
+    if (s && !out.includes(s)) out.push(s);
+    if (out.length >= MAX_LISTING_NOS_BATCH) break;
+  }
+  return out;
+};
+
 export const hasAnyListingDiscoveryParam = (
   rawQuery: Record<string, unknown>,
 ): boolean =>
@@ -133,9 +162,12 @@ export const buildListingDiscoveryQuery = (
 
   const filters: Record<string, unknown> = { status: { $eq: 'active' } };
 
+  const documentIds = asTrimmedStringArray(rawQuery.documentIds);
   const listingNos = asPositiveIntArray(rawQuery.listingNos);
   const listingNo = asPositiveInt(rawQuery.listingNo);
-  if (listingNos.length > 0) {
+  if (documentIds.length > 0) {
+    filters.documentId = { $in: documentIds };
+  } else if (listingNos.length > 0) {
     filters.listingNo = { $in: listingNos };
   } else if (listingNo !== null) {
     filters.listingNo = { $eq: listingNo };
