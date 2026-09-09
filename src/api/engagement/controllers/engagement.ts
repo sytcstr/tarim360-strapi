@@ -575,6 +575,47 @@ export default {
         // on this path unique to itself and defeat this fix's whole
         // point.
         operationId: _fingerprintOperationIdOmitted,
+        // LISTING_AZ_REVALIDATION_PART5_81_100.md Madde 90 (P1): this
+        // handler's `listing` payload is the WHOLE offline-queue row
+        // (Flutter's ListingPendingSyncQueue.enqueue), which carries
+        // several fields the direct POST /listings payload (listing.ts's
+        // create(), `_buildPayload` on the Flutter side) never sends at
+        // all under these names -- so a genuinely identical resubmission
+        // of the SAME operationId across the two paths always
+        // fingerprint-mismatched purely because of this shape gap, never
+        // resolving to the already-created listing and permanently
+        // stranding the retry as a 409 conflict. Each is excluded here
+        // because it is either (a) a volatile, attempt-local marker with
+        // no content meaning (`operation`, mirroring `operationId` right
+        // above; `queuedAt`, mirroring `updatedAtClient` above; `createdAt`,
+        // the exact offline-side analogue of `createdAtClient`, which
+        // listing.ts's create() already excludes for the same reason), or
+        // (b) a value fully redundant with another field that IS still
+        // compared: `category` is a display label derived purely from
+        // `mainType` (still fingerprinted); `priceText` is a formatted
+        // echo of `price`/`priceUnit` (now real fields on this row too,
+        // see create_listing_page.dart's _offlineSyncContentFields,
+        // still fingerprinted); `localImagePath`/`localPhotoPaths`/
+        // `photoUrls` are local device paths/display URLs with no
+        // counterpart in `photos` (already excluded above) and are not
+        // even real listing schema fields. `attrs` is a human-readable
+        // label->value echo of the same typed fields already being
+        // compared individually (hasatYear/animalAge/equipCondition/etc.)
+        // -- excluding it does not hide any content change those typed
+        // fields wouldn't already catch. None of these exclusions touch
+        // a field that is the ONLY carrier of some real content, so a
+        // genuinely different title/price/mainType/etc. between two
+        // attempts still fingerprint-mismatches and is correctly
+        // rejected as a CONFLICT.
+        operation: _fingerprintOperationOmitted,
+        category: _fingerprintCategoryOmitted,
+        priceText: _fingerprintPriceTextOmitted,
+        localImagePath: _fingerprintLocalImagePathOmitted,
+        localPhotoPaths: _fingerprintLocalPhotoPathsOmitted,
+        photoUrls: _fingerprintPhotoUrlsOmitted,
+        createdAt: _fingerprintCreatedAtOmitted,
+        queuedAt: _fingerprintQueuedAtOmitted,
+        attrs: _fingerprintAttrsOmitted,
         ...fingerprintPayloadFields
       } = safeListing as Record<string, unknown>;
       const fingerprint = fingerprintPayload({
