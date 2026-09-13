@@ -218,6 +218,153 @@ test('Tarımsal Aletler: create persists condition+workHour+modelYear; edit only
   assert.equal(read3.body.data.equipModelYear, 2022, 'workHour-only update must not touch equipModelYear');
 });
 
+// İLAN1_A_LISTING_CREATE_EDIT_REPORT.md İtem 1: equipBrand/equipModel/
+// equipPower/equipFuelType -- richer Tarımsal Aletler fields added
+// alongside the pre-existing equipCondition/equipWorkHour/equipModelYear
+// above. Same create -> persist -> read -> partial-update -> read
+// contract.
+test('Tarımsal Aletler: create persists brand/model/power/fuelType; a workHour-only update leaves them unchanged', async () => {
+  const user = await registerAndLogin(`l2-alet-brand-${randomUUID()}@test.local`);
+  const created = await createListing(user.jwt, {
+    title: 'John Deere Traktor',
+    mainType: 'tarimsalAletler',
+    mode: 'sell',
+    price: 800000,
+    equipBrand: 'John Deere',
+    equipModel: '5075E',
+    equipPower: '75 HP',
+    equipFuelType: 'Dizel',
+  });
+  assert.equal(created.status, 201);
+  const documentId = created.body.data.documentId;
+
+  const read1 = await getListing(documentId);
+  assert.equal(read1.body.data.equipBrand, 'John Deere');
+  assert.equal(read1.body.data.equipModel, '5075E');
+  assert.equal(read1.body.data.equipPower, '75 HP');
+  assert.equal(read1.body.data.equipFuelType, 'Dizel');
+
+  const workHourUpdate = await updateListing(user.jwt, documentId, { equipWorkHour: '500 saat' });
+  assert.equal(workHourUpdate.status, 200);
+  const read2 = await getListing(documentId);
+  assert.equal(read2.body.data.equipWorkHour, '500 saat');
+  assert.equal(read2.body.data.equipBrand, 'John Deere', 'workHour-only update must not touch equipBrand');
+  assert.equal(read2.body.data.equipModel, '5075E', 'workHour-only update must not touch equipModel');
+  assert.equal(read2.body.data.equipPower, '75 HP', 'workHour-only update must not touch equipPower');
+  assert.equal(read2.body.data.equipFuelType, 'Dizel', 'workHour-only update must not touch equipFuelType');
+
+  const brandUpdate = await updateListing(user.jwt, documentId, { equipBrand: 'Massey Ferguson' });
+  assert.equal(brandUpdate.status, 200);
+  const read3 = await getListing(documentId);
+  assert.equal(read3.body.data.equipBrand, 'Massey Ferguson', 'brand update must apply');
+  assert.equal(read3.body.data.equipModel, '5075E', 'brand-only update must not touch equipModel');
+});
+
+// ---------------------------------------------------------------------
+// İLAN1_A_LISTING_CREATE_EDIT_REPORT.md İtem 2 — Nakliye/Lojistik
+// (logisticsRange/logisticsCapacity/logisticsRoute) and İşlenmiş Ürünler
+// (processedProdDate/processedExpDate). Forensic found these were
+// collected by the Flutter form and written to a LOCAL-only display map,
+// but never sent to the backend at all -- no schema column existed
+// before this phase, so a real create/read/update round trip had never
+// been proven (or even possible) for these two categories.
+// ---------------------------------------------------------------------
+
+test('Nakliye/Lojistik: create persists range/capacity/route; a title-only update leaves them unchanged', async () => {
+  const user = await registerAndLogin(`l2-lojistik-${randomUUID()}@test.local`);
+  const created = await createListing(user.jwt, {
+    title: 'Soguk Zincir Nakliye',
+    mainType: 'nakliyeLojistik',
+    mode: 'sell',
+    price: 5000,
+    logisticsRange: 'Marmara ici',
+    logisticsCapacity: '20 ton',
+    logisticsRoute: 'Eskisehir - Izmir',
+  });
+  assert.equal(created.status, 201);
+  const documentId = created.body.data.documentId;
+
+  const read1 = await getListing(documentId);
+  assert.equal(read1.body.data.logisticsRange, 'Marmara ici');
+  assert.equal(read1.body.data.logisticsCapacity, '20 ton');
+  assert.equal(read1.body.data.logisticsRoute, 'Eskisehir - Izmir');
+
+  const titleUpdate = await updateListing(user.jwt, documentId, { title: 'Guncellendi' });
+  assert.equal(titleUpdate.status, 200);
+  const read2 = await getListing(documentId);
+  assert.equal(read2.body.data.title, 'Guncellendi');
+  assert.equal(read2.body.data.logisticsRange, 'Marmara ici', 'title-only update must not touch logisticsRange');
+  assert.equal(read2.body.data.logisticsCapacity, '20 ton', 'title-only update must not touch logisticsCapacity');
+  assert.equal(read2.body.data.logisticsRoute, 'Eskisehir - Izmir', 'title-only update must not touch logisticsRoute');
+});
+
+test('İşlenmiş Ürünler: create persists prodDate/expDate; a price-only update leaves them unchanged', async () => {
+  const user = await registerAndLogin(`l2-islenmis-${randomUUID()}@test.local`);
+  const created = await createListing(user.jwt, {
+    title: 'Ev Yapimi Recel',
+    mainType: 'islenmisUrunler',
+    mode: 'sell',
+    price: 100,
+    processedProdDate: '01/2026',
+    processedExpDate: '12/2027',
+  });
+  assert.equal(created.status, 201);
+  const documentId = created.body.data.documentId;
+
+  const read1 = await getListing(documentId);
+  assert.equal(read1.body.data.processedProdDate, '01/2026');
+  assert.equal(read1.body.data.processedExpDate, '12/2027');
+
+  const priceUpdate = await updateListing(user.jwt, documentId, { price: 120 });
+  assert.equal(priceUpdate.status, 200);
+  const read2 = await getListing(documentId);
+  assert.equal(Number(read2.body.data.price), 120);
+  assert.equal(read2.body.data.processedProdDate, '01/2026', 'price-only update must not touch processedProdDate');
+  assert.equal(read2.body.data.processedExpDate, '12/2027', 'price-only update must not touch processedExpDate');
+});
+
+test('offline-sync (syncOfflineListing) persists logistics/processed fields on create and update', async () => {
+  const user = await registerAndLogin(`l2-offline-lojistik-${randomUUID()}@test.local`);
+
+  const createRes = await fetch(`${BASE_URL}/offline-sync/listings`, {
+    method: 'POST',
+    headers: authed(user.jwt),
+    body: JSON.stringify({
+      operation: 'create',
+      listing: {
+        id: `l_${Date.now()}`,
+        operationId: randomUUID(),
+        title: 'Offline Lojistik Ilani',
+        mainType: 'nakliyeLojistik',
+        mode: 'sell',
+        price: 3000,
+        logisticsRange: 'Ege bolgesi',
+        logisticsCapacity: '10 ton',
+        logisticsRoute: 'Izmir - Manisa',
+      },
+    }),
+  });
+  assert.equal(createRes.status, 200);
+  const createJson = await createRes.json();
+  assert.equal(createJson.data.listing.logisticsRange, 'Ege bolgesi');
+  assert.equal(createJson.data.listing.logisticsCapacity, '10 ton');
+  assert.equal(createJson.data.listing.logisticsRoute, 'Izmir - Manisa');
+
+  const listingId = createJson.data.listing.id;
+  const updateRes = await fetch(`${BASE_URL}/offline-sync/listings`, {
+    method: 'POST',
+    headers: authed(user.jwt),
+    body: JSON.stringify({
+      operation: 'update',
+      listing: { id: listingId, logisticsCapacity: '15 ton' },
+    }),
+  });
+  assert.equal(updateRes.status, 200);
+  const updateJson = await updateRes.json();
+  assert.equal(updateJson.data.listing.logisticsCapacity, '15 ton');
+  assert.equal(updateJson.data.listing.logisticsRange, 'Ege bolgesi', 'offline update must not disturb logisticsRange');
+});
+
 // ---------------------------------------------------------------------
 // Backward compatibility — a listing created before these columns
 // existed (i.e. simply never set) must read back as null, not crash and
@@ -242,6 +389,15 @@ test('a listing created without any category fields reads back as null for all o
   assert.equal(read.body.data.equipCondition, null);
   assert.equal(read.body.data.equipWorkHour, null);
   assert.equal(read.body.data.equipModelYear, null);
+  assert.equal(read.body.data.equipBrand, null);
+  assert.equal(read.body.data.equipModel, null);
+  assert.equal(read.body.data.equipPower, null);
+  assert.equal(read.body.data.equipFuelType, null);
+  assert.equal(read.body.data.logisticsRange, null);
+  assert.equal(read.body.data.logisticsCapacity, null);
+  assert.equal(read.body.data.logisticsRoute, null);
+  assert.equal(read.body.data.processedProdDate, null);
+  assert.equal(read.body.data.processedExpDate, null);
 });
 
 // ---------------------------------------------------------------------
@@ -319,4 +475,49 @@ test('offline-sync (syncOfflineListing) persists Hayvancılık/Tarımsal Aletler
   assert.equal(updateJson.data.listing.equipWorkHour, '3200 saat');
   assert.equal(updateJson.data.listing.equipCondition, 'Orta', 'offline update must not disturb equipCondition');
   assert.equal(updateJson.data.listing.equipModelYear, 2018, 'offline update must not disturb equipModelYear');
+});
+
+test('offline-sync (syncOfflineListing) persists equipBrand/equipModel/equipPower/equipFuelType on create and update', async () => {
+  const user = await registerAndLogin(`l2-offline-brand-${randomUUID()}@test.local`);
+
+  const createRes = await fetch(`${BASE_URL}/offline-sync/listings`, {
+    method: 'POST',
+    headers: authed(user.jwt),
+    body: JSON.stringify({
+      operation: 'create',
+      listing: {
+        id: `l_${Date.now()}`,
+        operationId: randomUUID(),
+        title: 'Offline Alet Ilani Marka',
+        mainType: 'tarimsalAletler',
+        mode: 'sell',
+        price: 200000,
+        equipBrand: 'John Deere',
+        equipModel: '5075E',
+        equipPower: '75 HP',
+        equipFuelType: 'Dizel',
+      },
+    }),
+  });
+  assert.equal(createRes.status, 200);
+  const createJson = await createRes.json();
+  assert.equal(createJson.data.listing.equipBrand, 'John Deere');
+  assert.equal(createJson.data.listing.equipModel, '5075E');
+  assert.equal(createJson.data.listing.equipPower, '75 HP');
+  assert.equal(createJson.data.listing.equipFuelType, 'Dizel');
+
+  const listingId = createJson.data.listing.id;
+  const updateRes = await fetch(`${BASE_URL}/offline-sync/listings`, {
+    method: 'POST',
+    headers: authed(user.jwt),
+    body: JSON.stringify({
+      operation: 'update',
+      listing: { id: listingId, equipPower: '90 HP' },
+    }),
+  });
+  assert.equal(updateRes.status, 200);
+  const updateJson = await updateRes.json();
+  assert.equal(updateJson.data.listing.equipPower, '90 HP');
+  assert.equal(updateJson.data.listing.equipBrand, 'John Deere', 'offline update must not disturb equipBrand');
+  assert.equal(updateJson.data.listing.equipModel, '5075E', 'offline update must not disturb equipModel');
 });

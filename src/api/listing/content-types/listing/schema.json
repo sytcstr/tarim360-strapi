@@ -102,6 +102,33 @@
     "equipModelYear": {
       "type": "integer"
     },
+    "equipBrand": {
+      "type": "string"
+    },
+    "equipModel": {
+      "type": "string"
+    },
+    "equipPower": {
+      "type": "string"
+    },
+    "equipFuelType": {
+      "type": "string"
+    },
+    "logisticsRange": {
+      "type": "string"
+    },
+    "logisticsCapacity": {
+      "type": "string"
+    },
+    "logisticsRoute": {
+      "type": "string"
+    },
+    "processedProdDate": {
+      "type": "string"
+    },
+    "processedExpDate": {
+      "type": "string"
+    },
     "location": {
       "type": "json"
     },
