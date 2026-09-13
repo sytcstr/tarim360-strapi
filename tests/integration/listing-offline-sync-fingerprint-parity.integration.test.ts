@@ -276,13 +276,10 @@ test('an owner-derived-fields difference ALONE does not cause a conflict', async
   assert.equal(first.status, 201, JSON.stringify(first.body));
   const realId = first.body.data.documentId ?? first.body.data.id;
 
-  // ownerEmail/ownerProfileId/ownerId (the real identity fields, unlike
-  // the display-only ownerName/ownerCity, which ARE genuinely compared --
-  // see LISTING_AZ_REVALIDATION_PART5_81_100.md Madde 98's own separate
-  // finding on that) are always force-set from the caller's own JWT
-  // identity server-side on both paths regardless of what the client
-  // sends -- a client-side echo mismatch on these three specifically
-  // must never affect the fingerprint.
+  // ownerEmail/ownerProfileId/ownerId are always force-set from the
+  // caller's own JWT identity server-side on both paths regardless of
+  // what the client sends -- a client-side echo mismatch on these three
+  // specifically must never affect the fingerprint.
   const retry = await syncOffline(user.jwt, opId, {
     title,
     ownerEmail: 'someone-completely-different@test.local',
@@ -290,6 +287,37 @@ test('an owner-derived-fields difference ALONE does not cause a conflict', async
     ownerId: 'u_someone_completely_different',
   });
   assert.equal(retry.status, 200, `expected idempotent 200, got ${retry.status}: ${JSON.stringify(retry.body)}`);
+  const retryId = retry.body.data.listing?.documentId ?? retry.body.data.listing?.id;
+  assert.equal(retryId, realId);
+  assert.equal(await countListingsByTitle(title), 1);
+});
+
+test('an ownerName/ownerCity difference ALONE does not cause a conflict (Madde 98 sanitization runs on one path but not symmetrically on raw payload timing)', async () => {
+  const user = await registerAndLogin(`m90-ownerdisplay-fields-${randomUUID()}@test.local`);
+  const opId = randomUUID();
+  const title = `M90 Owner Display Fields ${randomUUID()}`;
+
+  const first = await createDirect(user.jwt, opId, { title });
+  assert.equal(first.status, 201, JSON.stringify(first.body));
+  const realId = first.body.data.documentId ?? first.body.data.id;
+
+  // Madde 98: sanitizeOwnerDisplayFields validates ownerName/ownerCity
+  // against the caller's own profile, applied to `safeListing` in-place
+  // BEFORE engagement.ts computes its fingerprint, but to the raw
+  // `clientPayload` (never mutated) on the direct path -- so both
+  // ownerName/ownerCity are excluded from BOTH paths' fingerprints the
+  // same way the identity fields above are, to avoid a fresh cross-path
+  // mismatch. A brand-new test user has no profile-setting row yet, so
+  // sanitizeOwnerDisplayFields passes any client value through
+  // unchanged regardless -- this test's mismatch alone proves the
+  // fingerprint exclusion holds even when sanitization is a no-op.
+  const retry = await syncOffline(user.jwt, opId, {
+    title,
+    ownerName: 'Baska Bir Isim',
+    ownerCity: 'Istanbul',
+  });
+  assert.equal(retry.status, 200, `expected idempotent 200, got ${retry.status}: ${JSON.stringify(retry.body)}`);
+  assert.equal(retry.body.data.idempotent, true);
   const retryId = retry.body.data.listing?.documentId ?? retry.body.data.listing?.id;
   assert.equal(retryId, realId);
   assert.equal(await countListingsByTitle(title), 1);

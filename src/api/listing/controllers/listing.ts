@@ -141,7 +141,7 @@ const hasActivePremiumExpiry = (
   profile: Record<string, unknown> | null,
 ): boolean => isPremiumActiveFromProfile(profile);
 
-const findProfileForIdentity = async (
+export const findProfileForIdentity = async (
   strapi: any,
   email: string,
   ownerId: string,
@@ -155,12 +155,70 @@ const findProfileForIdentity = async (
       'ownerEmail',
       'activePremium',
       'activePremiumSubscription',
+      // İLAN 1A (Madde 98): the three real candidate "seller name"
+      // values this identity actually owns, plus their own real city --
+      // used below to validate (not blindly trust) a create/update's
+      // client-supplied ownerName/ownerCity.
+      'displayName',
+      'publicUsername',
+      'brandName',
+      'city',
     ],
     limit: 1,
   } as any);
   return (Array.isArray(rows) ? rows[0] : rows) as
     | Record<string, unknown>
     | null;
+};
+
+/**
+ * LISTING_AZ_FINAL_MASTER_SWEEP_REPORT.md İlan 1A (Madde 98):
+ * ownerName/ownerCity are display-only snapshots taken from the client
+ * at create/update time -- unlike ownerEmail/ownerProfileId/ownerId
+ * (always force-derived from the JWT), these two were never checked
+ * against anything, so an authenticated caller could type an arbitrary
+ * string (impersonating a different real seller's name/city) with no
+ * identity/ownership bypass but a genuine cosmetic-display-spoofing
+ * surface. There is no single canonical "the seller's name" on
+ * profile-setting (displayName/publicUsername/brandName are three
+ * independent, legitimately-different fields Flutter itself picks
+ * between per context -- see `currentSessionOwnerName()`), so this does
+ * NOT force one specific value the way the identity fields are forced.
+ * Instead: if the caller's own profile has at least one real candidate
+ * name and the client's claim matches NONE of them, the claim is
+ * replaced with the first real one instead of trusted verbatim. A
+ * caller with no profile-setting name set yet (brand new account) has
+ * nothing genuine to check against, so their client-computed fallback
+ * (email prefix / "Kullanıcı", never a THIRD PARTY's real name) passes
+ * through unchanged -- this must never regress that legitimate case.
+ * Same policy for ownerCity against the profile's own `city`.
+ */
+export const sanitizeOwnerDisplayFields = (
+  clientOwnerName: unknown,
+  clientOwnerCity: unknown,
+  profile: Record<string, unknown> | null,
+): { ownerName: unknown; ownerCity: unknown } => {
+  const clean = (v: unknown) => String(v ?? '').trim();
+  const requestedName = clean(clientOwnerName);
+  const requestedCity = clean(clientOwnerCity);
+
+  const realNames = [
+    clean(profile?.displayName),
+    clean(profile?.publicUsername),
+    clean(profile?.brandName),
+  ].filter((v) => v.length > 0);
+  const ownerName =
+    realNames.length === 0 || realNames.includes(requestedName)
+      ? clientOwnerName
+      : realNames[0];
+
+  const realCity = clean(profile?.city);
+  const ownerCity =
+    realCity.length === 0 || realCity === requestedCity
+      ? clientOwnerCity
+      : realCity;
+
+  return { ownerName, ownerCity };
 };
 
 export default factories.createCoreController(
@@ -463,6 +521,20 @@ export default factories.createCoreController(
         ownerEmail: _fingerprintOwnerEmailOmitted,
         ownerProfileId: _fingerprintOwnerProfileIdOmitted,
         ownerId: _fingerprintOwnerIdOmitted,
+        // İlan 1A (Madde 98): ownerName/ownerCity are now validated
+        // against the caller's own server-side profile
+        // (sanitizeOwnerDisplayFields) on this path, but
+        // engagement.ts's syncOfflineListing applies that same
+        // validation to `safeListing` BEFORE its own fingerprint is
+        // computed, while this path's fingerprint reads the raw,
+        // pre-validation `clientPayload` -- excluded here for the exact
+        // same reason ownerEmail/ownerProfileId/ownerId already are:
+        // a genuinely identical resubmission retried across paths must
+        // never fingerprint-mismatch over a field both paths resolve
+        // from the same identity rather than trust verbatim (Madde 90's
+        // bug class).
+        ownerName: _fingerprintOwnerNameOmitted,
+        ownerCity: _fingerprintOwnerCityOmitted,
         ...fingerprintPayloadFields
       } = clientPayload as Record<string, unknown>;
       const fingerprint = fingerprintPayload({
@@ -548,6 +620,13 @@ export default factories.createCoreController(
         ownerIdFromEmail(identity.email);
       const isPremium = hasActivePremiumExpiry(profile);
       const publishedAt = new Date().toISOString();
+      // İlan 1A (Madde 98): validated, not blindly trusted -- see
+      // sanitizeOwnerDisplayFields' own doc comment.
+      const ownerDisplay = sanitizeOwnerDisplayFields(
+        clientPayload.ownerName,
+        clientPayload.ownerCity,
+        profile,
+      );
 
       if (!isPremium) {
         const canCreate = await canCreateNextNormalListing(
@@ -625,7 +704,7 @@ export default factories.createCoreController(
         mainType: clientPayload.mainType,
         subType: clientPayload.subType,
         location: clientPayload.location,
-        ownerCity: clientPayload.ownerCity,
+        ownerCity: ownerDisplay.ownerCity,
       });
       for (let attempt = 0; attempt < MAX_LISTING_NO_ATTEMPTS; attempt++) {
         const listingNo = await nextListingNo(strapi);
@@ -635,6 +714,8 @@ export default factories.createCoreController(
             ownerProfileId,
             ownerId: ownerProfileId,
             ownerEmail: normalizeEmail(identity.email),
+            ownerName: ownerDisplay.ownerName,
+            ownerCity: ownerDisplay.ownerCity,
             isPremium,
             isPremiumOwner: isPremium,
             status: 'active',
@@ -718,15 +799,32 @@ export default factories.createCoreController(
         'mainType',
         'subType',
         'location',
+        'ownerName',
         'ownerCity',
       ]);
+      // İlan 1A (Madde 98): same validated-not-blindly-trusted policy as
+      // create() -- see sanitizeOwnerDisplayFields' own doc comment.
+      // Falls back to the existing row's own value first (preserving
+      // L6.4/L6.7's "an edit that never touched this field must not
+      // change it" rule) before validating whatever value ends up being
+      // considered.
+      const profile = await findProfileForIdentity(
+        strapi,
+        identity.email,
+        identity.ownerId,
+      );
+      const ownerDisplay = sanitizeOwnerDisplayFields(
+        cleanInput.ownerName ?? (existing as any)?.ownerName,
+        cleanInput.ownerCity ?? (existing as any)?.ownerCity,
+        profile,
+      );
       const searchFields = computeListingSearchFields({
         title: cleanInput.title ?? existing?.title,
         description: cleanInput.description ?? existing?.description,
         mainType: cleanInput.mainType ?? existing?.mainType,
         subType: cleanInput.subType ?? existing?.subType,
         location: cleanInput.location ?? existing?.location,
-        ownerCity: cleanInput.ownerCity ?? existing?.ownerCity,
+        ownerCity: ownerDisplay.ownerCity,
       });
 
       // LISTING_L13_MEDIA_LIFECYCLE_REPORT.md L13.3/L13.7/L13.8/L13.9: a
@@ -775,6 +873,8 @@ export default factories.createCoreController(
           ownerProfileId: identity.ownerId,
           ownerId: identity.ownerId,
           ownerEmail: normalizeEmail(identity.email),
+          ownerName: ownerDisplay.ownerName,
+          ownerCity: ownerDisplay.ownerCity,
           ...searchFields,
         },
       };

@@ -6,6 +6,14 @@ import {
 import { requireAuthenticatedActorKey } from '../../../utils/engagement-contract';
 import { setMembership } from '../services/engagement-v1';
 import { isOwnListingTarget } from './engagement-v1';
+// İlan 1A (Madde 98): reused, not duplicated -- this is the exact same
+// ownerName/ownerCity validation listing.ts's own create()/update() use,
+// shared so this parallel write path can never drift from it the way
+// syncOfflineListing's photo-ownership check once did (Part 3 P0).
+import {
+  findProfileForIdentity,
+  sanitizeOwnerDisplayFields,
+} from '../../listing/controllers/listing';
 import {
   canCreateNextNormalListing,
   nextListingNo,
@@ -468,6 +476,28 @@ export default {
     safeListing.ownerProfileId = identity.ownerId;
     safeListing.ownerId = identity.ownerId;
     safeListing.updatedAtClient = asString(listing.updatedAtClient) || new Date().toISOString();
+    // İlan 1A (Madde 98): same validated-not-blindly-trusted ownerName/
+    // ownerCity policy as listing.ts's create()/update() -- reused via
+    // the shared helper, not reimplemented, so this parallel write path
+    // can never drift from it. Applied once here, before either the
+    // update or create branch below reads safeListing.ownerName/ownerCity.
+    // Falls back to the existing row's own value first when this
+    // attempt's row omits the field (same L6.4/L6.7 "untouched field
+    // must not change" rule listing.ts's update() follows) -- the
+    // offline queue normally always resends a full snapshot, but this
+    // keeps the two paths' semantics identical rather than assuming so.
+    const offlineSyncProfile = await findProfileForIdentity(
+      strapi,
+      identity.email,
+      identity.ownerId,
+    );
+    const offlineOwnerDisplay = sanitizeOwnerDisplayFields(
+      safeListing.ownerName ?? (existing as any)?.ownerName,
+      safeListing.ownerCity ?? (existing as any)?.ownerCity,
+      offlineSyncProfile,
+    );
+    safeListing.ownerName = offlineOwnerDisplay.ownerName;
+    safeListing.ownerCity = offlineOwnerDisplay.ownerCity;
 
     // BACKEND_FLUTTER_SEMANTIC_CONTRACT_AUDIT.md / A-Z PART 3 SPECIAL
     // DIRECT-API MEDIA SECURITY PASS: this offline-sync path is a second,
@@ -616,6 +646,16 @@ export default {
         createdAt: _fingerprintCreatedAtOmitted,
         queuedAt: _fingerprintQueuedAtOmitted,
         attrs: _fingerprintAttrsOmitted,
+        // İlan 1A (Madde 98): ownerName/ownerCity are validated against
+        // the caller's own server-side profile (sanitizeOwnerDisplayFields,
+        // applied above to `safeListing` before this destructure runs) --
+        // matches the same exclusion just added to listing.ts's create(),
+        // for the identical reason: this path's fingerprint would
+        // otherwise read the POST-validation value while the direct
+        // path's still read the pre-validation one, a fresh Madde-90-
+        // class asymmetry between the two paths' fingerprints.
+        ownerName: _fingerprintOwnerNameOmitted,
+        ownerCity: _fingerprintOwnerCityOmitted,
         ...fingerprintPayloadFields
       } = safeListing as Record<string, unknown>;
       const fingerprint = fingerprintPayload({
