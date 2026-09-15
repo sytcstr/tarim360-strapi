@@ -88,6 +88,14 @@ async function createOwnedListing(owner: { ownerId: string; email: string }, ove
       isPremium: false,
       isPremiumOwner: false,
       isDoping: false,
+      // İlan 1B — MEDIA (P0/P1 fix): every REAL listing is published
+      // immediately on creation (listing.ts's create() always sets this)
+      // -- a draft-only row (no publishedAt) is not a state a genuine
+      // listing is ever actually in, and syncOfflineListing's update now
+      // explicitly re-publishes after writing (see publishAndFetchListing
+      // in engagement.ts), which needs a real published counterpart to
+      // sync into, same as production.
+      publishedAt: new Date().toISOString(),
       ...overrides,
     },
   });
@@ -110,7 +118,14 @@ test('offline-sync: owner can sync their own listing -> 200, non-protected field
     }),
   });
   assert.equal(res.status, 200);
-  const row = await strapiInstance.entityService.findOne('api::listing.listing', listing.id);
+  // İlan 1B — MEDIA (P0/P1 fix): syncOfflineListing's update now
+  // re-publishes after writing (publishAndFetchListing, engagement.ts),
+  // producing a fresh published row with a NEW numeric id (same
+  // id-churn the direct path's own super.update() already has) --
+  // documentId is the only identifier guaranteed stable across the edit.
+  const row = await strapiInstance.db.query('api::listing.listing').findOne({
+    where: { documentId: listing.documentId, publishedAt: { $notNull: true } },
+  } as any);
   assert.equal(row.title, 'Yeni Baslik');
 });
 
@@ -179,7 +194,9 @@ test('offline-sync: owner cannot self-grant premium/rocket via offline-sync payl
   });
   assert.equal(res.status, 200, 'the sync itself should still succeed (only the protected fields are stripped)');
 
-  const row = await strapiInstance.entityService.findOne('api::listing.listing', listing.id);
+  const row = await strapiInstance.db.query('api::listing.listing').findOne({
+    where: { documentId: listing.documentId, publishedAt: { $notNull: true } },
+  } as any);
   assert.equal(row.isPremium, false);
   assert.equal(row.isPremiumOwner, false);
   assert.equal(row.isDoping, false);
@@ -207,7 +224,9 @@ test('offline-sync: owner cannot spoof engagement counters via offline-sync payl
   });
   assert.equal(res.status, 200);
 
-  const row = await strapiInstance.entityService.findOne('api::listing.listing', listing.id);
+  const row = await strapiInstance.db.query('api::listing.listing').findOne({
+    where: { documentId: listing.documentId, publishedAt: { $notNull: true } },
+  } as any);
   assert.equal(row.viewCount, 0);
   assert.equal(row.likeCount, 0);
   assert.equal(row.favoriteCount, 0);

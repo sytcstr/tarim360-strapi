@@ -234,7 +234,14 @@ test('offline-sync update: a spoofed ownerName is overridden on an existing list
     }),
   });
   assert.equal(res.status, 200, JSON.stringify(await res.clone().json()));
-  const row = await strapiInstance.entityService.findOne('api::listing.listing', created.body.data.id);
+  // İlan 1B — MEDIA (P0/P1 fix): syncOfflineListing's update now
+  // re-publishes after writing (publishAndFetchListing, engagement.ts),
+  // which produces a fresh published row with a NEW numeric id (same
+  // id-churn the direct path's own super.update() already has) --
+  // documentId is the only identifier guaranteed stable across the edit.
+  const row = await strapiInstance.db.query('api::listing.listing').findOne({
+    where: { documentId: created.body.data.documentId, publishedAt: { $notNull: true } },
+  } as any);
   assert.equal(row.ownerName, 'Gercek Isim2');
   assert.equal(row.ownerCity, 'Samsun');
 });

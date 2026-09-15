@@ -443,3 +443,144 @@ test('offline create: retrying the SAME operationId that was originally used via
   assert.equal(retryId, realId);
   assert.equal(await countListingsByTitle(`${title} v2`), 1);
 });
+
+// ---------------------------------------------------------------------
+// İLAN 1B — MEDIA residual note: the offline queue previously omitted
+// the `photos` key entirely whenever the caller's confidently-empty
+// photoIds list (`[]`, meaning "the user removed every photo") was
+// present -- indistinguishable, server-side, from "this attempt has no
+// confident photo data at all" (also omitted). A listing's real photos
+// were silently left untouched on replay even though the user's actual
+// intent was to remove them all. The Flutter-side fix
+// (ListingPendingSyncQueue.enqueue) now sends an explicit empty array in
+// that case; this proves the backend's own handling of that array
+// (already proven for the direct path by listing-media-lifecycle's
+// L13.10) also holds for the offline-sync path specifically.
+// ---------------------------------------------------------------------
+
+// ---------------------------------------------------------------------
+// İLAN 1B — MEDIA P0/P1 FIX: engagement.ts's syncOfflineListing wrote
+// via raw entityService.create()/update() directly, which -- confirmed
+// live -- only ever touches the DRAFT counterpart of this
+// draftAndPublish content-type, never the published row every real
+// reader (search, discovery, a plain GET) actually sees. Every offline
+// UPDATE silently modified an invisible draft; every offline-only
+// CREATE produced a listing with no published counterpart at all,
+// permanently invisible. Fixed by explicitly publishing after the write
+// (publishAndFetchListing, engagement.ts). These tests prove the FULL
+// removal (already covered above by the pre-existing Madde-12 tests,
+// which now also exercise this fix) plus the PARTIAL-removal and
+// offline-CREATE-visibility cases that first surfaced the bug.
+// ---------------------------------------------------------------------
+
+test('offline update: PARTIAL photo removal (2 -> 1) actually reaches the published row a real GET serves', async () => {
+  const user = await registerAndLogin(`b-media-partial-removal-${randomUUID()}@test.local`);
+  const fileA = await uploadOnePhoto(user.jwt);
+  const fileB = await uploadOnePhoto(user.jwt);
+  const created = await createDirectListing(user.jwt, { photos: [fileA, fileB] });
+  assert.equal(created.status, 201);
+
+  const res = await offlineSync(user.jwt, 'update', {
+    id: created.body.data.id,
+    photos: [fileA],
+  });
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+
+  const check = await fetch(`${BASE_URL}/listings/${created.body.data.documentId}?populate[0]=photos`, {
+    headers: authed(user.jwt),
+  });
+  const checkBody = await check.json();
+  assert.deepEqual(
+    (checkBody.data.photos ?? []).map((p: any) => p.id).sort(),
+    [fileA],
+    'the kept photo must remain and the removed one must actually be gone from the row a real GET returns',
+  );
+});
+
+test('offline update: an unrelated field change (title) also reaches the published row, not just the invisible draft', async () => {
+  const user = await registerAndLogin(`b-media-field-visibility-${randomUUID()}@test.local`);
+  const created = await createDirectListing(user.jwt, { title: 'Eski Baslik' });
+  assert.equal(created.status, 201);
+
+  const res = await offlineSync(user.jwt, 'update', {
+    id: created.body.data.id,
+    title: 'Yeni Baslik Offline',
+  });
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+
+  const check = await fetch(`${BASE_URL}/listings/${created.body.data.documentId}`, {
+    headers: authed(user.jwt),
+  });
+  const checkBody = await check.json();
+  assert.equal(
+    checkBody.data.title,
+    'Yeni Baslik Offline',
+    'a real GET (which serves the published row) must reflect the offline-sync update, not the pre-edit value',
+  );
+});
+
+test('offline create: a listing created entirely offline (no prior direct-path attempt) is publicly visible via a plain GET', async () => {
+  const user = await registerAndLogin(`b-media-offline-create-visible-${randomUUID()}@test.local`);
+  const title = `Offline-Only Create ${randomUUID()}`;
+
+  const res = await offlineSync(user.jwt, 'create', {
+    id: `l_${Date.now()}`,
+    operationId: randomUUID(),
+    ...listingPayload({ title }),
+  });
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.ok(res.body.data.listing?.publishedAt, 'the offline-sync response itself must reflect a published row');
+
+  const documentId = res.body.data.listing.documentId;
+  const check = await fetch(`${BASE_URL}/listings/${documentId}`, { headers: authed(user.jwt) });
+  assert.equal(
+    check.status,
+    200,
+    'a listing created entirely offline must be a real, publicly-visible published listing, not an invisible draft-only row',
+  );
+  const checkBody = await check.json();
+  assert.equal(checkBody.data.title, title);
+});
+
+test('offline update: an explicit empty photos array clears every existing photo (user removed all of them)', async () => {
+  const user = await registerAndLogin(`b-media-remove-all-${randomUUID()}@test.local`);
+  const fileA = await uploadOnePhoto(user.jwt);
+  const fileB = await uploadOnePhoto(user.jwt);
+  const created = await createDirectListing(user.jwt, { photos: [fileA, fileB] });
+  assert.equal(created.status, 201);
+
+  const res = await offlineSync(user.jwt, 'update', {
+    id: created.body.data.id,
+    photos: [],
+  });
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+
+  const check = await fetch(`${BASE_URL}/listings/${created.body.data.documentId}?populate[0]=photos`, {
+    headers: authed(user.jwt),
+  });
+  const checkBody = await check.json();
+  // Strapi's REST serializer can return `null` (not `[]`) for a
+  // zero-attachment media relation -- same defensive normalization the
+  // direct path's own L13.10 test already applies via its photoIds()
+  // helper.
+  assert.deepEqual(checkBody.data.photos ?? [], [], 'every photo must be removed from the relation');
+});
+
+test('offline update: omitting the photos key entirely still leaves existing photos untouched (no-confidence case unaffected by the fix)', async () => {
+  const user = await registerAndLogin(`b-media-omit-key-${randomUUID()}@test.local`);
+  const fileA = await uploadOnePhoto(user.jwt);
+  const created = await createDirectListing(user.jwt, { photos: [fileA] });
+  assert.equal(created.status, 201);
+
+  const res = await offlineSync(user.jwt, 'update', {
+    id: created.body.data.id,
+    title: 'Sadece Baslik',
+  });
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+
+  const check = await fetch(`${BASE_URL}/listings/${created.body.data.documentId}?populate[0]=photos`, {
+    headers: authed(user.jwt),
+  });
+  const checkBody = await check.json();
+  assert.equal(checkBody.data.photos.length, 1, 'omitting the key must never touch the existing photos relation');
+});

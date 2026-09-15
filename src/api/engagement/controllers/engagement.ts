@@ -19,6 +19,7 @@ import {
   nextListingNo,
   NORMAL_LISTING_BLOCK_SIZE,
   NORMAL_LISTING_FREE_COUNT,
+  PUBLISHED_ONLY_FILTER,
   stripListingProtectedFields,
 } from '../../../utils/listing-metrics';
 import { computeListingSearchFields } from '../../../utils/listing-search-fields';
@@ -157,6 +158,47 @@ const findListingByAnyId = async (strapi: any, rawId: unknown) => {
     }
   }
   return null;
+};
+
+/**
+ * İLAN 1B — MEDIA (P0/P1 fix, discovered while closing the "offline
+ * queue can't express remove-all-photos" residual note).
+ *
+ * Confirmed live via a dedicated diagnostic: `strapi.entityService.
+ * create()`/`.update()` on this draftAndPublish content-type ALWAYS
+ * writes to the DRAFT counterpart -- regardless of which specific
+ * numeric id (draft's or published's) is given for an update, and never
+ * producing a published row at all for a create that doesn't explicitly
+ * set `publishedAt`. Every real listing has a published row sharing its
+ * documentId (listing.ts's create() always publishes immediately), and
+ * that published row is the ONLY one any real reader (the public
+ * content-API, every GET request, search/discovery) ever sees. Because
+ * this handler wrote via raw entityService directly (unlike listing.ts's
+ * update()/create(), which go through Strapi's content-API-aware core
+ * controller actions via `super.update(ctx)`/`super.create(ctx)` and so
+ * correctly target/produce the published version), every prior
+ * offline-sync UPDATE silently modified an invisible draft while the
+ * real, publicly-visible listing never changed -- and every offline-sync
+ * CREATE produced a draft-only listing with no published counterpart at
+ * all, invisible everywhere (search, the owner's own listing list,
+ * everything), despite this endpoint returning 200 OK throughout.
+ *
+ * Fixed by explicitly publishing after the raw entityService write
+ * (`documents(uid).publish`, the same Documents Service API this
+ * codebase's own agri-data-ingestion persister already uses for a fresh
+ * document -- see strapi-persister.ts's `publishDraftDocument`), then
+ * re-reading the FRESH published row (a new physical row each publish,
+ * per Strapi v5's own document-versioning -- confirmed live the numeric
+ * `id` changes on every publish, exactly like it already does on every
+ * direct-path edit via `super.update()`, so this introduces no new
+ * id-instability class the app doesn't already handle) for the API
+ * response, instead of returning the stale draft entity.
+ */
+const publishAndFetchListing = async (strapi: any, documentId: string) => {
+  await (strapi.documents(LISTING_UID) as any).publish({ documentId });
+  return strapi.db.query(LISTING_UID).findOne({
+    where: { documentId, ...PUBLISHED_ONLY_FILTER },
+  } as any);
 };
 
 /**
@@ -551,9 +593,12 @@ export default {
         location: safeListing.location ?? existing.location,
         ownerCity: safeListing.ownerCity ?? existing.ownerCity,
       });
-      const entity = await strapi.entityService.update(LISTING_UID as any, existing.id, {
+      await strapi.entityService.update(LISTING_UID as any, existing.id, {
         data: { ...safeListing, ...searchFields },
       });
+      // İlan 1B — MEDIA (P0/P1 fix): see publishAndFetchListing's own
+      // comment -- entityService.update() alone only writes the draft.
+      const entity = await publishAndFetchListing(strapi, existing.documentId);
       ctx.body = { data: { ok: true, operation: 'update', listing: entity } };
       return;
     }
@@ -793,6 +838,13 @@ export default {
       }
     }
     if (lastCreateError) throw lastCreateError;
+
+    // İlan 1B — MEDIA (P0/P1 fix): see publishAndFetchListing's own
+    // comment -- without this, entityService.create() (no `publishedAt`
+    // in its data above) leaves a DRAFT-ONLY row, invisible everywhere
+    // (search, discovery, the owner's own listing list) forever, since
+    // nothing else in this codebase ever publishes it.
+    entity = await publishAndFetchListing(strapi, (entity as any).documentId);
 
     // Links the ledger claim to the real created row so a later retry (a
     // genuine duplicate hit) can resolve to it -- same self-healing
