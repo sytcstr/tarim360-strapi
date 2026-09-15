@@ -19,9 +19,11 @@ import { fetchPopularListingsPage } from '../../../utils/listing-popular-query';
 import { fetchSimilarListingsPage } from '../../../utils/listing-similar-query';
 import {
   cleanupOrphanedPhotoIds,
+  exceedsMaxListingPhotos,
   extractRequestedPhotoIds,
   findNonImageFileId,
   isPhotoOwnedByIdentity,
+  MAX_LISTING_PHOTOS,
 } from '../../../utils/listing-media';
 import { fingerprintPayload, isValidOperationId, resolveOperation } from '../../../utils/operation-idempotency';
 
@@ -459,6 +461,12 @@ export default factories.createCoreController(
       // not-yet-attached file (the normal case) or the identity's own
       // existing photo remain allowed.
       const requestedPhotoIds = extractRequestedPhotoIds((clientPayload as any).photos);
+      // İlan 1B (Madde 47): backend now enforces the same 5-photo cap the
+      // Flutter form's fixed-length array already enforces client-side --
+      // see exceedsMaxListingPhotos's own comment.
+      if (exceedsMaxListingPhotos(requestedPhotoIds)) {
+        return ctx.badRequest(`En fazla ${MAX_LISTING_PHOTOS} fotograf eklenebilir.`);
+      }
       for (const fileId of requestedPhotoIds) {
         const owned = await isPhotoOwnedByIdentity(strapi, fileId, identity);
         if (!owned) {
@@ -849,6 +857,12 @@ export default factories.createCoreController(
       }
       if (photosProvided) {
         const requestedPhotoIds = extractRequestedPhotoIds((cleanInput as any).photos);
+        // İlan 1B (Madde 47): same cap as create() -- checked against the
+        // FULL requested set (not just newly-referenced ids), since this
+        // is what the listing will end up with after the update applies.
+        if (exceedsMaxListingPhotos(requestedPhotoIds)) {
+          return ctx.badRequest(`En fazla ${MAX_LISTING_PHOTOS} fotograf eklenebilir.`);
+        }
         const newlyReferencedIds = requestedPhotoIds.filter(
           (id) => !previousPhotoIds.includes(id),
         );

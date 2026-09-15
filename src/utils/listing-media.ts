@@ -30,6 +30,25 @@ export const extractRequestedPhotoIds = (rawPhotos: unknown): number[] => {
 };
 
 /**
+ * LISTING_AZ_REVALIDATION_PART3_41_60.md Madde 47 -- confirmed live gap:
+ * the 5-photo cap was enforced only client-side (create_listing_page.dart's
+ * fixed-length `photos` array), with no backend column constraint or
+ * controller check, so a direct API call with a valid JWT could attach
+ * 6+ photo ids to a single listing. Explicitly classified P2/product-limit
+ * (not a security vulnerability -- every id still passes the ownership/
+ * image-type checks above) and deliberately left unfixed during that
+ * audit pass pending İlan 1. This is that fix: a single shared limit,
+ * checked identically on every write path that accepts a `photos` array
+ * (listing.ts's create()/update(), engagement.ts's syncOfflineListing).
+ * Counts DISTINCT ids -- a client accidentally repeating the same id
+ * must never be rejected for a limit it hasn't actually reached.
+ */
+export const MAX_LISTING_PHOTOS = 5;
+
+export const exceedsMaxListingPhotos = (ids: number[]): boolean =>
+  new Set(ids).size > MAX_LISTING_PHOTOS;
+
+/**
  * L13.3: resolves whose listing (if any) a given upload file id is
  * CURRENTLY attached to, via Strapi's own built-in `related` morphToMany
  * relation on `plugin::upload.file` -- never a raw SQL/table-name

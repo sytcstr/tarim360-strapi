@@ -24,9 +24,11 @@ import {
 import { computeListingSearchFields } from '../../../utils/listing-search-fields';
 import { isPremiumActiveFromProfile, loadPremiumProfile } from '../../../utils/premium-sync';
 import {
+  exceedsMaxListingPhotos,
   extractRequestedPhotoIds,
   findNonImageFileId,
   isPhotoOwnedByIdentity,
+  MAX_LISTING_PHOTOS,
 } from '../../../utils/listing-media';
 import {
   fingerprintPayload,
@@ -512,6 +514,11 @@ export default {
     // entityService call, so a rejected operation never produces a
     // partial/corrupted listing.
     const requestedPhotoIds = extractRequestedPhotoIds(safeListing.photos);
+    // İlan 1B (Madde 47): same cap as the direct listing.ts path -- this
+    // is a second real create/update path and must enforce it identically.
+    if (exceedsMaxListingPhotos(requestedPhotoIds)) {
+      return ctx.badRequest(`En fazla ${MAX_LISTING_PHOTOS} fotograf eklenebilir.`);
+    }
     for (const fileId of requestedPhotoIds) {
       const owned = await isPhotoOwnedByIdentity(strapi, fileId, identity);
       if (!owned) return ctx.forbidden('Bu fotograf baska bir kullaniciya ait.');
