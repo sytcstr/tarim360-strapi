@@ -401,16 +401,24 @@ export const denyForbidden = (ctx: any, message: string): false => {
 };
 
 export const mergeScopeOrFilter = (ctx: any, orClauses: object[]) => {
-  const query = (ctx.query ?? {}) as Record<string, unknown>;
+  // Strapi's core find reads the filters from ctx.request.query, NOT ctx.query
+  // (undefined inside a policy context). Writing only ctx.query made every
+  // caller of this helper a silent no-op: any signed-in user could list other
+  // users' notifications, messages, threads, offers and support tickets (the
+  // same SEC-1 bug profile-setting-ownership already fixed for itself). Read
+  // the client's filters from, and force the scope onto, both.
+  const query = ((ctx.request?.query ?? ctx.query) ?? {}) as Record<string, unknown>;
   const filters = (query.filters ?? {}) as Record<string, unknown>;
   const hasExistingFilters = Object.keys(filters).length > 0;
   const nextFilter = hasExistingFilters
     ? { $and: [filters, { $or: [...orClauses] }] }
     : { $or: [...orClauses] };
-  ctx.query = {
+  const forced = {
     ...query,
     filters: nextFilter,
   };
+  ctx.query = forced;
+  if (ctx.request) ctx.request.query = forced;
 };
 
 export const matchesIdentity = (
