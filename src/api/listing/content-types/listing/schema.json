@@ -24,15 +24,6 @@
         "buy"
       ]
     },
-    "status": {
-      "type": "enumeration",
-      "enum": [
-        "pending",
-        "active",
-        "rejected"
-      ],
-      "default": "active"
-    },
     "listingStatus": {
       "type": "enumeration",
       "enum": [

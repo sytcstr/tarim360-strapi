@@ -105,9 +105,21 @@ async function createListing(owner: { jwt: string }, title: string) {
   return r.body.data as { documentId: string; id: number; listingStatus?: string };
 }
 
-// The exact admin-panel flow: save the DRAFT, then Publish it.
+// The exact admin-panel flow: the edit form loads the DRAFT, the admin
+// changes one field, and Save PUTs the WHOLE payload back (every field the
+// form knows, not just the changed one -- including the Content Manager's
+// own computed publication `status` key), then Publish. Echoing the full
+// payload matters: with a business attribute named `status` still in the
+// schema, that echo failed with 400 (the attribute's value was masked by
+// the publication state) -- a single-field PUT would have hidden the bug.
 async function moderate(documentId: string, listingStatus: 'pending' | 'active' | 'rejected') {
-  const save = await call('PUT', `${CM}/${documentId}?status=draft`, adminToken, { listingStatus });
+  const draft = await call('GET', `${CM}/${documentId}?status=draft`, adminToken);
+  assert.equal(draft.status, 200, JSON.stringify(draft.body));
+  assert.ok(
+    ['pending', 'active', 'rejected'].includes(draft.body.data.listingStatus),
+    'the admin form must load the real stored lifecycle value (never a publication state)',
+  );
+  const save = await call('PUT', `${CM}/${documentId}?status=draft`, adminToken, { ...draft.body.data, listingStatus });
   assert.equal(save.status, 200, `Content Manager rejected listingStatus=${listingStatus}: ${JSON.stringify(save.body)}`);
   const publish = await call('POST', `${CM}/${documentId}/actions/publish`, adminToken, {});
   assert.equal(publish.status, 200, JSON.stringify(publish.body));
@@ -241,7 +253,12 @@ test('migration copies real legacy status values (schema default would otherwise
   const store = strapiInstance.store({ type: 'core', name: 'bootstrap' });
   const key = 'listing_status_to_listing_status_v1_done';
 
-  // Simulate a production row that only carries the legacy value.
+  // Production still has the legacy `status` column (the attribute is gone
+  // from the schema, and Strapi's sync only drops it on a later boot) --
+  // recreate that state, then simulate a row that only carries the legacy value.
+  if (!(await knex.schema.hasColumn('listings', 'status'))) {
+    await knex.schema.alterTable('listings', (t: any) => t.string('status'));
+  }
   await knex('listings').where({ document_id: listing.documentId }).update({ status: 'pending', listing_status: 'active' });
   await store.set({ key, value: false });
 
