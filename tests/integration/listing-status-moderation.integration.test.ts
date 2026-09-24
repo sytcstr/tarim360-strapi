@@ -27,6 +27,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
 import { runListingStatusToListingStatusMigrationOnce } from '../../src/utils/listing-status-migration';
+import { ensureListingStatusInContentManagerLayoutOnce } from '../../src/utils/listing-status-cm-layout';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { createStrapi, compileStrapi } = require('@strapi/strapi');
@@ -272,4 +273,79 @@ test('migration copies real legacy status values (schema default would otherwise
   await moderate(listing.documentId, 'active');
   await runListingStatusToListingStatusMigrationOnce(strapiInstance);
   assert.equal((await call('GET', `${BASE_URL}/listings/${listing.documentId}`, stranger.jwt)).status, 200);
+});
+
+// Production's stored Listing layout never received `listingStatus` (the edit
+// view ends at the last pre-existing field), so admins could not reach the
+// moderation field even though the API/schema had it. The bootstrap step must
+// add it to the edit view (first row) and the list view WITHOUT disturbing
+// anything else, exactly once.
+test('bootstrap adds listingStatus to a stored Content Manager layout that lacks it, preserving everything else, once', async () => {
+  const cm = strapiInstance.plugin('content-manager').service('content-types');
+  const contentType = strapiInstance.contentType('api::listing.listing');
+  const store = strapiInstance.store({ type: 'core', name: 'bootstrap' });
+  const key = 'listing_status_cm_layout_v1_done';
+  const flat = (rows: Array<Array<{ name: string }>>) => rows.flat().map((f) => f.name);
+  const readConfig = async () => {
+    const r = await call('GET', `${ORIGIN}/content-manager/content-types/api::listing.listing/configuration`, adminToken);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    return r.body.data.contentType;
+  };
+
+  // 1. Recreate production's stored state: no listingStatus anywhere in the layout/metadatas.
+  const before = await cm.findConfiguration(contentType);
+  const stripped = {
+    settings: before.settings,
+    metadatas: Object.fromEntries(Object.entries(before.metadatas).filter(([k]) => k !== 'listingStatus')),
+    layouts: {
+      ...before.layouts,
+      edit: before.layouts.edit
+        .map((row: any[]) => row.filter((f) => f.name !== 'listingStatus'))
+        .filter((row: any[]) => row.length > 0),
+      list: before.layouts.list.filter((n: string) => n !== 'listingStatus'),
+    },
+  };
+  await cm.updateConfiguration(contentType, stripped);
+  await store.set({ key, value: false });
+  const lacking = await readConfig();
+  assert.equal(flat(lacking.layouts.edit).includes('listingStatus'), false, 'precondition: layout lacks the field');
+  assert.equal(lacking.layouts.list.includes('listingStatus'), false);
+  const otherFieldsBefore = flat(lacking.layouts.edit);
+  const otherListBefore = lacking.layouts.list;
+
+  // 2. Bootstrap step.
+  await ensureListingStatusInContentManagerLayoutOnce(strapiInstance);
+  const after = await readConfig();
+  const editAfter = flat(after.layouts.edit);
+  assert.equal(editAfter[0], 'listingStatus', 'listingStatus is the first field of the edit view');
+  assert.deepEqual(editAfter.slice(1), otherFieldsBefore, 'every other edit-view field is preserved, in order');
+  assert.ok(after.layouts.list.includes('listingStatus'), 'listingStatus is a list-view column');
+  assert.deepEqual(
+    after.layouts.list.filter((n: string) => n !== 'listingStatus'),
+    otherListBefore,
+    'every other list column is preserved, in order',
+  );
+  assert.equal(after.metadatas.listingStatus.edit.visible, true);
+  assert.equal(after.metadatas.listingStatus.edit.editable, true);
+
+  // 3. The admin can really use it: the enum is offered and Save+Publish works.
+  const ctRes = await call('GET', `${ORIGIN}/content-manager/content-types`, adminToken);
+  const attr = ctRes.body.data.find((t: any) => t.uid === 'api::listing.listing').attributes.listingStatus;
+  assert.deepEqual(attr.enum, ['pending', 'active', 'rejected']);
+
+  // 4. Second run is a no-op (no duplicate), and a later deliberate removal is respected.
+  await ensureListingStatusInContentManagerLayoutOnce(strapiInstance);
+  const again = await readConfig();
+  assert.deepEqual(flat(again.layouts.edit), editAfter, 'no duplicate on a second run');
+  await cm.updateConfiguration(contentType, {
+    settings: again.settings,
+    metadatas: again.metadatas,
+    layouts: { ...again.layouts, edit: again.layouts.edit.map((r: any[]) => r.filter((f) => f.name !== 'listingStatus')).filter((r: any[]) => r.length) },
+  });
+  await ensureListingStatusInContentManagerLayoutOnce(strapiInstance);
+  assert.equal(flat((await readConfig()).layouts.edit).includes('listingStatus'), false, 'an admin who later hides the field is not overridden');
+
+  // restore the normal layout for any later test
+  await store.set({ key, value: false });
+  await ensureListingStatusInContentManagerLayoutOnce(strapiInstance);
 });

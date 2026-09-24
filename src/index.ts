@@ -12,6 +12,7 @@ import { runListingNoBackfillOnce } from './utils/listing-number-backfill';
 import { runListingSearchFieldsBackfillOnce } from './utils/listing-search-fields-backfill';
 import { runListingStatusBackfillOnce } from './utils/listing-status-backfill';
 import { runListingStatusToListingStatusMigrationOnce } from './utils/listing-status-migration';
+import { ensureListingStatusInContentManagerLayoutOnce } from './utils/listing-status-cm-layout';
 
 /**
  * Faz B-V: reliable, idempotent composite-unique-index creation for the
@@ -1038,6 +1039,9 @@ export default {
     await runListingStatusToListingStatusMigrationOnce(strapi);
     await runListingStatusBackfillOnce(strapi);
     await ensureListingDiscoveryIndexes(strapi);
+    // Admin-only cosmetic config (never listing data); runs after the
+    // content-manager plugin's own layout sync, and never fails the boot.
+    await ensureListingStatusInContentManagerLayoutOnce(strapi);
     registerUserDeleteCleanupLifecycle(strapi);
     await syncUsersPermissionsRoleConfig(strapi);
     const cleanupEnabled =
