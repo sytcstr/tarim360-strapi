@@ -96,6 +96,71 @@ async function createListing(jwt: string, operationId: string, overrides: Record
   return { status: res.status, body: json };
 }
 
+// İlan1 Group G (Madde 90 / Item 58): the two offline-sync tests below
+// used to hand-roll a `listing: { id, operationId, ...listingPayload() }`
+// object that did not match the real field shape
+// ListingPendingSyncQueue.enqueue() (Flutter) actually persists and sends
+// as `listing` to POST /offline-sync/listings -- real rows carry
+// `operation`/`category`/`attrs`/`ownerName`/`ownerCity`/`queuedAt` among
+// several others `listingPayload()` below never had at all (see
+// listings_store.dart's enqueue() row builder). A backend regression that
+// only broke on some real-shape field the old synthetic object never
+// included could have passed here unnoticed. Same real-shape field set as
+// listing-offline-sync-fingerprint-parity.integration.test.ts's own
+// offlineQueueRow(). The category-typed fields below are also sent, with
+// identical values, to the DIRECT create call in the two tests that need
+// cross-path fingerprint parity (via offlineParityContentFields()) -- the
+// fingerprint hash is sensitive to a key being present-with-null vs.
+// absent-entirely, so both sides must send the exact same key set.
+function offlineParityContentFields(overrides: Record<string, unknown> = {}) {
+  return {
+    subType: null,
+    description: null,
+    hasatYear: null,
+    hasatDate: null,
+    qualityGrade: null,
+    moisture: null,
+    protein: null,
+    certificateType: null,
+    analysisNote: null,
+    packaging: null,
+    storage: null,
+    delivery: null,
+    minOrder: null,
+    minOrderUnit: null,
+    animalAge: null,
+    animalWeight: null,
+    equipCondition: null,
+    equipWorkHour: null,
+    equipModelYear: null,
+    ...overrides,
+  };
+}
+
+function offlineQueueRow(overrides: Record<string, unknown> = {}) {
+  return {
+    operation: 'create',
+    id: `l_${Date.now()}_${randomUUID()}`,
+    title: 'F1.6 Test Ilani',
+    category: 'Bitkisel Üretim',
+    priceText: '100 TL',
+    city: 'Konya',
+    mainType: 'bitkisel',
+    mode: 'sell',
+    price: 100,
+    location: 'Konya',
+    localImagePath: null,
+    localPhotoPaths: null,
+    attrs: {},
+    createdAt: new Date().toISOString(),
+    ownerName: 'F1.6 Test Ciftci',
+    ownerCity: 'Konya',
+    queuedAt: new Date().toISOString(),
+    ...offlineParityContentFields(),
+    ...overrides,
+  };
+}
+
 // A minimal valid 1x1 PNG, real image bytes (same fixture as
 // listing-media-lifecycle.integration.test.ts) so a real upload happens.
 const ONE_PX_PNG = Buffer.from(
@@ -259,8 +324,16 @@ test('offline-sync retry (syncOfflineListing, operation:create) with the SAME op
 
   // Simulates the real bug scenario: the initial POST /listings actually
   // succeeded server-side, but the client never saw the response and
-  // believes it needs to retry via the offline-sync queue.
-  const first = await createListing(user.jwt, opId, { title });
+  // believes it needs to retry via the offline-sync queue. The direct
+  // payload's content fields must match offlineQueueRow()'s below
+  // exactly (offlineParityContentFields()) -- a genuinely identical
+  // resubmission must fingerprint-match across paths.
+  const first = await createListing(user.jwt, opId, {
+    title,
+    price: 100,
+    location: 'Konya',
+    ...offlineParityContentFields(),
+  });
   assert.equal(first.status, 201);
   const realId = first.body.data.documentId ?? first.body.data.id;
 
@@ -270,11 +343,10 @@ test('offline-sync retry (syncOfflineListing, operation:create) with the SAME op
     body: JSON.stringify({
       data: {
         operation: 'create',
-        listing: {
-          id: `l_${Date.now()}`, // the client's own new local-only id -- must NOT be used to look anything up
-          operationId: opId,
-          ...listingPayload({ title }),
-        },
+        // the client's own new local-only `id` -- must NOT be used to
+        // look anything up -- plus the operationId, both merged onto the
+        // real row shape below.
+        listing: { ...offlineQueueRow({ title }), id: `l_${Date.now()}`, operationId: opId },
       },
     }),
   });
@@ -296,11 +368,7 @@ test('offline-sync retry with no matching operationId still creates normally (ge
     body: JSON.stringify({
       data: {
         operation: 'create',
-        listing: {
-          id: `l_${Date.now()}`,
-          operationId: randomUUID(),
-          ...listingPayload({ title }),
-        },
+        listing: { ...offlineQueueRow({ title }), id: `l_${Date.now()}`, operationId: randomUUID() },
       },
     }),
   });
