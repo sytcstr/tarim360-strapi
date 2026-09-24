@@ -77,7 +77,7 @@ async function createOwnedListing(owner: { ownerId: string; email: string }) {
       ownerEmail: owner.email,
       ownerName: 'Satici Adi',
       ownerCity: 'Konya',
-      status: 'active',
+      listingStatus: 'active',
       publishedAt: new Date().toISOString(),
     },
   });

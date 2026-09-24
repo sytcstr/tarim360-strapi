@@ -5,7 +5,7 @@
  * already forced `status:active`, but ONLY when the request used one of
  * the whitelisted param names (search/mainType/mode/etc). If a caller
  * sent NONE of those -- including RAW Strapi filter syntax like
- * `?filters[status][$eq]=pending`, which uses a DIFFERENT top-level
+ * `?filters[listingStatus][$eq]=pending`, which uses a DIFFERENT top-level
  * `filters` key the whitelist never inspected -- `ctx.query` was passed
  * through to `super.find(ctx)` completely untouched, with zero status
  * restriction. `api::listing.listing.find` is granted to Strapi's
@@ -92,7 +92,7 @@ async function createListing(jwt: string, overrides: Record<string, unknown> = {
 const setListingStatus = (documentId: string, status: string) =>
   strapiInstance.db.query('api::listing.listing').updateMany({
     where: { documentId },
-    data: { status },
+    data: { listingStatus: status },
   });
 
 async function rawFind(jwt: string | null, query: string) {
@@ -111,22 +111,22 @@ const titlesIn = (body: any): string[] =>
 // The actual exploit shape: an anonymous caller, raw filter syntax.
 // ---------------------------------------------------------------------
 
-test('anonymous raw filters[status][$eq]=pending cannot see a pending listing', async () => {
+test('anonymous raw filters[listingStatus][$eq]=pending cannot see a pending listing', async () => {
   const seller = await registerAndLogin(`m34-anon-pending-${randomUUID()}@test.local`);
   const listing = await createListing(seller.jwt);
   await setListingStatus(listing.documentId, 'pending');
 
-  const { status, body } = await rawFind(null, '?filters[status][$eq]=pending');
+  const { status, body } = await rawFind(null, '?filters[listingStatus][$eq]=pending');
   assert.equal(status, 200);
   assert.ok(!titlesIn(body).includes(listing.title), 'the pending listing must never appear');
 });
 
-test('anonymous raw filters[status][$ne]=active cannot see a rejected listing', async () => {
+test('anonymous raw filters[listingStatus][$ne]=active cannot see a rejected listing', async () => {
   const seller = await registerAndLogin(`m34-anon-rejected-${randomUUID()}@test.local`);
   const listing = await createListing(seller.jwt);
   await setListingStatus(listing.documentId, 'rejected');
 
-  const { status, body } = await rawFind(null, '?filters[status][$ne]=active');
+  const { status, body } = await rawFind(null, '?filters[listingStatus][$ne]=active');
   assert.equal(status, 200);
   assert.ok(!titlesIn(body).includes(listing.title), 'the rejected listing must never appear');
 });
@@ -198,7 +198,7 @@ test('even the real owner\'s own-listings query is rebuilt server-side, not trus
   // smuggled $or trying to also pull in the stranger's pending listing.
   const query =
     `?filters[ownerProfileId][$eq]=${encodeURIComponent(ownListing.ownerProfileId)}` +
-    `&filters[$or][0][status][$eq]=pending`;
+    `&filters[$or][0][listingStatus][$eq]=pending`;
   const { status, body } = await rawFind(seller.jwt, query);
   assert.equal(status, 200);
   const titles = titlesIn(body);

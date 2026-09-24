@@ -160,7 +160,7 @@ export const buildListingDiscoveryQuery = (
 ): ListingDiscoveryQuery | null => {
   if (!hasAnyListingDiscoveryParam(rawQuery)) return null;
 
-  const filters: Record<string, unknown> = { status: { $eq: 'active' } };
+  const filters: Record<string, unknown> = { listingStatus: { $eq: 'active' } };
 
   const documentIds = asTrimmedStringArray(rawQuery.documentIds);
   const listingNos = asPositiveIntArray(rawQuery.listingNos);

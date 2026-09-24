@@ -389,7 +389,7 @@ test('runListingNoBackfillOnce assigns unique sequential numbers to pre-existing
         ownerProfileId: user.ownerId,
         ownerId: user.ownerId,
         ownerEmail: user.email,
-        status: 'active',
+        listingStatus: 'active',
         publishedAt: new Date().toISOString(),
       },
     });
@@ -441,7 +441,7 @@ test('a pre-existing listing with no listingNo still reads normally (no crash) b
       ownerProfileId: user.ownerId,
       ownerId: user.ownerId,
       ownerEmail: user.email,
-      status: 'active',
+      listingStatus: 'active',
       publishedAt: new Date().toISOString(),
     },
   });

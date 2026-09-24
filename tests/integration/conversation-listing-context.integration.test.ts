@@ -151,7 +151,7 @@ test('starting a brand-new conversation about a pending listing is rejected', as
   const listing = await createListing(seller.jwt, { title: `Pending Test ${randomUUID()}` });
   await strapiInstance.db.query('api::listing.listing').updateMany({
     where: { documentId: listing.documentId },
-    data: { status: 'pending' },
+    data: { listingStatus: 'pending' },
   });
 
   const { status, body } = await upsertConversation(buyer.jwt, { listingId: listing.documentId });
@@ -165,7 +165,7 @@ test('starting a brand-new conversation about a rejected listing is rejected', a
   const listing = await createListing(seller.jwt, { title: `Rejected Test ${randomUUID()}` });
   await strapiInstance.db.query('api::listing.listing').updateMany({
     where: { documentId: listing.documentId },
-    data: { status: 'rejected' },
+    data: { listingStatus: 'rejected' },
   });
 
   const { status } = await upsertConversation(buyer.jwt, { listingId: listing.documentId });
@@ -182,7 +182,7 @@ test('an EXISTING thread about a listing that later becomes inactive is complete
 
   await strapiInstance.db.query('api::listing.listing').updateMany({
     where: { documentId: listing.documentId },
-    data: { status: 'rejected' },
+    data: { listingStatus: 'rejected' },
   });
 
   const reply = await sendMessage(buyer.jwt, {

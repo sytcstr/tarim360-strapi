@@ -43,7 +43,7 @@ before(async () => {
   // once before any real assertion runs. See waitForRow below for why
   // the real tests still poll rather than assert once.
   const warmup = await strapiInstance.entityService.create('api::listing.listing', {
-    data: { title: 'warmup', status: 'active', publishedAt: new Date().toISOString() },
+    data: { title: 'warmup', listingStatus: 'active', publishedAt: new Date().toISOString() },
   });
   await strapiInstance.db.query('api::listing.listing').update({
     where: { id: warmup.id },
@@ -111,7 +111,7 @@ async function createOwnedListing(owner: { ownerId: string; email: string }, ove
       ownerProfileId: owner.ownerId,
       ownerId: owner.ownerId,
       ownerEmail: owner.email,
-      status: 'active',
+      listingStatus: 'active',
       isDoping: false,
       publishedAt: new Date().toISOString(),
       ...overrides,

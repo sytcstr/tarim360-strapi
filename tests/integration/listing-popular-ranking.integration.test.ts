@@ -88,7 +88,7 @@ async function createListing(
       ownerProfileId: owner.ownerId,
       ownerId: owner.ownerId,
       ownerEmail: owner.email,
-      status: 'active',
+      listingStatus: 'active',
       isDoping: false,
       isPremium: false,
       isPremiumOwner: false,
@@ -248,12 +248,12 @@ test('L12.11: pending and rejected listings never appear in popular results', as
   const pending = await createListing(owner, tag, { title: 'Pending Ineligible', viewCount: 999 });
   await strapiInstance.db.query('api::listing.listing').updateMany({
     where: { documentId: pending.documentId },
-    data: { status: 'pending' },
+    data: { listingStatus: 'pending' },
   });
   const rejected = await createListing(owner, tag, { title: 'Rejected Ineligible', viewCount: 999 });
   await strapiInstance.db.query('api::listing.listing').updateMany({
     where: { documentId: rejected.documentId },
-    data: { status: 'rejected' },
+    data: { listingStatus: 'rejected' },
   });
 
   const { body } = await fetchPopular(tag, '&pageSize=10');

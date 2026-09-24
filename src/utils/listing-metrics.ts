@@ -152,6 +152,15 @@ export const LISTING_CLIENT_PROTECTED_FIELDS = [
   // a self-sabotage/inconsistency gap before any future lifecycle
   // feature (e.g. a later "Pasife Al" phase) has to reason about it.
   'status',
+  // İlan1 lifecycle/moderation (status -> listingStatus): the business
+  // lifecycle field lives in `listingStatus` now (Strapi v5's Content
+  // Manager reserves the name `status` for draft/published, so a field
+  // literally called `status` cannot be edited from the admin panel).
+  // Only an admin in the Content Manager (RBAC) may change it -- never a
+  // client. The legacy `status` key stays listed so old Flutter builds
+  // that still send it keep being stripped (never reaching Strapi's
+  // "Invalid key" validation once the attribute is gone).
+  'listingStatus',
 ] as const;
 
 export const stripListingProtectedFields = (

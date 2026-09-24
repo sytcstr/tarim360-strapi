@@ -72,7 +72,7 @@ async function createOwnedListing(owner: { ownerId: string; email: string }, ove
       ownerProfileId: owner.ownerId,
       ownerId: owner.ownerId,
       ownerEmail: owner.email,
-      status: 'active',
+      listingStatus: 'active',
       // isDoping/isPremium/isPremiumOwner have no schema default (raw
       // `null` otherwise, matching listing-rocket-activation.integration.
       // test.ts's own explicit `isDoping: false` convention for the same

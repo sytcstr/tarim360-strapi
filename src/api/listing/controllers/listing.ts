@@ -346,8 +346,8 @@ export default factories.createCoreController(
           filters: ownField
             ? { [ownField]: { $eq: identity!.ownerId } }
             : rawFilters
-              ? { $and: [{ status: { $eq: 'active' } }, rawFilters] }
-              : { status: { $eq: 'active' } },
+              ? { $and: [{ listingStatus: { $eq: 'active' } }, rawFilters] }
+              : { listingStatus: { $eq: 'active' } },
           // Structural/response-shape/pagination/sort params are safe to
           // pass through verbatim -- they don't select which rows match,
           // only how many/which order/which fields of an already-matched
@@ -387,7 +387,7 @@ export default factories.createCoreController(
       const row = await findListingByAnyId(strapi, rawId, [
         'id',
         'documentId',
-        'status',
+        'listingStatus',
         'ownerEmail',
         'ownerProfileId',
         'ownerId',
@@ -403,7 +403,7 @@ export default factories.createCoreController(
           ['ownerEmail'],
           ['ownerProfileId', 'ownerId'],
         );
-      const status = String((row as any).status ?? '').trim().toLowerCase();
+      const status = String((row as any).listingStatus ?? '').trim().toLowerCase();
       if (!isOwner && status !== 'active') {
         return ctx.notFound('Ilan bulunamadi.');
       }
@@ -726,7 +726,7 @@ export default factories.createCoreController(
             ownerCity: ownerDisplay.ownerCity,
             isPremium,
             isPremiumOwner: isPremium,
-            status: 'active',
+            listingStatus: 'active',
             publishedAt,
             listingNo,
             ...searchFields,
@@ -1181,7 +1181,7 @@ export default factories.createCoreController(
       const row = await findListingByAnyId(strapi, rawId, [
         'id',
         'documentId',
-        'status',
+        'listingStatus',
         'ownerEmail',
         'ownerProfileId',
         'ownerId',
@@ -1203,7 +1203,7 @@ export default factories.createCoreController(
           ['ownerEmail'],
           ['ownerProfileId', 'ownerId'],
         );
-      const status = String((row as any).status ?? '').trim().toLowerCase();
+      const status = String((row as any).listingStatus ?? '').trim().toLowerCase();
       if (!isOwner && status !== 'active') {
         return ctx.notFound('Ilan bulunamadi.');
       }

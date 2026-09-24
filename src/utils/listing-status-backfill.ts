@@ -24,13 +24,13 @@ export const runListingStatusBackfillOnce = async (strapi: Core.Strapi) => {
   }
 
   const nullCount = await strapi.db.query(LISTING_UID).count({
-    where: { status: { $null: true } },
+    where: { listingStatus: { $null: true } },
   } as any);
 
   if (nullCount > 0) {
     await strapi.db.query(LISTING_UID).updateMany({
-      where: { status: { $null: true } },
-      data: { status: 'active' },
+      where: { listingStatus: { $null: true } },
+      data: { listingStatus: 'active' },
     } as any);
   }
 

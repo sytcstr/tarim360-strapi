@@ -107,7 +107,7 @@ async function getListing(jwt: string | null, documentId: string) {
 async function forceStatus(documentId: string, status: 'pending' | 'active' | 'rejected') {
   await strapiInstance.db.query('api::listing.listing').updateMany({
     where: { documentId },
-    data: { status },
+    data: { listingStatus: status },
   });
 }
 
@@ -116,7 +116,7 @@ test('L14.4: create cannot spoof status -- client-sent status is always ignored,
   for (const spoofed of ['rejected', 'pending', 'approved', 'archived']) {
     const { status, body } = await createListing(owner.jwt, { status: spoofed });
     assert.equal(status, 201);
-    assert.equal(body.data.status, 'active');
+    assert.equal(body.data.listingStatus, 'active');
   }
 });
 
@@ -132,7 +132,7 @@ test('L14.4: update cannot spoof status -- client-sent status in a PUT body neve
       title: `Retitled via ${spoofed} attempt`,
     });
     assert.equal(status, 200);
-    assert.equal(body.data.status, 'active');
+    assert.equal(body.data.listingStatus, 'active');
   }
 });
 
@@ -145,7 +145,7 @@ test('L14.14: owner can fetch their own listing regardless of status (sees the r
     await forceStatus(documentId, real);
     const { status, body } = await getListing(owner.jwt, documentId);
     assert.equal(status, 200);
-    assert.equal(body.data.status, real);
+    assert.equal(body.data.listingStatus, real);
   }
 });
 
@@ -175,7 +175,7 @@ test('L14.14 regression: an active listing is still fetchable by anyone (the new
 
   const asStranger = await getListing(stranger.jwt, documentId);
   assert.equal(asStranger.status, 200);
-  assert.equal(asStranger.body.data.status, 'active');
+  assert.equal(asStranger.body.data.listingStatus, 'active');
 
   const anonymous = await getListing(null, documentId);
   assert.equal(anonymous.status, 200);
@@ -216,5 +216,5 @@ test('L14.6/L14.7: the owner\'s own listing-management fetch (raw ownerProfileId
   const body = await res.json();
   const found = (body.data ?? []).find((row: any) => row.documentId === documentId);
   assert.ok(found, 'owner-scoped raw-filter fetch must still return their own pending listing');
-  assert.equal(found.status, 'pending');
+  assert.equal(found.listingStatus, 'pending');
 });

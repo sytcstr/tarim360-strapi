@@ -298,7 +298,7 @@ async function createOwnedListingFor(owner: { ownerId: string; email: string }) 
       ownerProfileId: owner.ownerId,
       ownerId: owner.ownerId,
       ownerEmail: owner.email,
-      status: 'active',
+      listingStatus: 'active',
       isDoping: false,
       publishedAt: new Date().toISOString(),
     },

@@ -33,6 +33,15 @@
       ],
       "default": "active"
     },
+    "listingStatus": {
+      "type": "enumeration",
+      "enum": [
+        "pending",
+        "active",
+        "rejected"
+      ],
+      "default": "active"
+    },
     "mainType": {
       "type": "string"
     },

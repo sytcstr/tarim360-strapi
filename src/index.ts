@@ -11,6 +11,7 @@ import { hasUniqueIndex } from './utils/engagement-index-support';
 import { runListingNoBackfillOnce } from './utils/listing-number-backfill';
 import { runListingSearchFieldsBackfillOnce } from './utils/listing-search-fields-backfill';
 import { runListingStatusBackfillOnce } from './utils/listing-status-backfill';
+import { runListingStatusToListingStatusMigrationOnce } from './utils/listing-status-migration';
 
 /**
  * Faz B-V: reliable, idempotent composite-unique-index creation for the
@@ -180,8 +181,8 @@ export const LISTING_DISCOVERY_INDEXES: Array<{
   // future phase actually starts producing pending/rejected rows.
   {
     table: 'listings',
-    name: 'listings_status_index',
-    columns: ['status'],
+    name: 'listings_listing_status_index',
+    columns: ['listing_status'],
   },
   // LISTING_L19_MARKETPLACE_PRODUCT_GAP_FOUNDATIONS_REPORT.md L19.36:
   // Seller's Other Listings filters by `ownerProfileId` combined with
@@ -1031,6 +1032,10 @@ export default {
     // new status index so a pre-existing null-status row is never
     // queried through the freshly-indexed column before it has a real
     // value.
+    // İlan1 lifecycle/moderation: copy the legacy `status` values onto the
+    // new `listingStatus` column FIRST (see listing-status-migration.ts),
+    // then the null-backfill below only ever sees real values there.
+    await runListingStatusToListingStatusMigrationOnce(strapi);
     await runListingStatusBackfillOnce(strapi);
     await ensureListingDiscoveryIndexes(strapi);
     registerUserDeleteCleanupLifecycle(strapi);

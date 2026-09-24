@@ -180,7 +180,7 @@ export const resolveListingContextByAnyId = async (
     'ownerId',
     'listingNo',
     'title',
-    'status',
+    'listingStatus',
     'mode',
   ]);
   if (!row) return null;
@@ -189,7 +189,7 @@ export const resolveListingContextByAnyId = async (
   return {
     ...identity,
     title: String(row.title ?? '').trim(),
-    status: String(row.status ?? '').trim().toLowerCase(),
+    status: String(row.listingStatus ?? '').trim().toLowerCase(),
     listingNo: numOrNull(row.listingNo),
     mode: String(row.mode ?? '').trim().toLowerCase(),
   };

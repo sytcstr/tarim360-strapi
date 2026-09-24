@@ -104,7 +104,7 @@ test('buildListingDiscoveryQuery returns null for a legacy/empty query (passthro
 
 test('buildListingDiscoveryQuery always scopes to status=active', () => {
   const q = buildListingDiscoveryQuery({ search: 'x' });
-  assert.deepEqual(q?.filters.status, { $eq: 'active' });
+  assert.deepEqual(q?.filters.listingStatus, { $eq: 'active' });
 });
 
 test('buildListingDiscoveryQuery: listingNo takes priority over search text', () => {

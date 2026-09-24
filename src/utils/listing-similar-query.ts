@@ -94,7 +94,7 @@ export const fetchSimilarListingsPage = async (
 
   const where: Record<string, unknown> = {
     ...PUBLISHED_ONLY_FILTER,
-    status: { $eq: 'active' },
+    listingStatus: { $eq: 'active' },
     mainType: { $eq: mainType },
   };
   if (reference.mode === 'sell' || reference.mode === 'buy') {

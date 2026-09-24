@@ -88,7 +88,7 @@ async function createListing(jwt: string, overrides: Record<string, unknown> = {
 async function forceStatus(documentId: string, status: 'pending' | 'active' | 'rejected') {
   await strapiInstance.db.query('api::listing.listing').updateMany({
     where: { documentId },
-    data: { status },
+    data: { listingStatus: status },
   });
 }
 

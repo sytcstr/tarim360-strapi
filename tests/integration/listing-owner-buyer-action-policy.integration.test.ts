@@ -178,7 +178,7 @@ test('L9.10: creating an offer on a listing that resolves but is not active is r
   const listing = await createListing(owner.jwt, { title: `Inactive Offer Test ${randomUUID()}` });
   await strapiInstance.db.query('api::listing.listing').updateMany({
     where: { documentId: listing.documentId },
-    data: { status: 'rejected' },
+    data: { listingStatus: 'rejected' },
   });
 
   const offerId = `offer_${randomUUID()}`;
@@ -277,15 +277,17 @@ test('L9.8 regression: an owner cannot like or favorite their own listing', asyn
 test('L9.10: a client PUT can no longer flip a listing\'s own status', async () => {
   const owner = await registerAndLogin(`l9-status-spoof-owner-${randomUUID()}@test.local`);
   const listing = await createListing(owner.jwt, { title: `Status Spoof Test ${randomUUID()}` });
-  assert.equal(listing.status ?? 'active', 'active');
+  assert.equal(listing.listingStatus ?? 'active', 'active');
 
+  // Both the legacy `status` key (old app builds) and the new
+  // `listingStatus` key must be ignored from a client PUT.
   const res = await fetch(`${BASE_URL}/listings/${listing.documentId}`, {
     method: 'PUT',
     headers: authed(owner.jwt),
-    body: JSON.stringify({ data: { status: 'rejected' } }),
+    body: JSON.stringify({ data: { status: 'rejected', listingStatus: 'rejected' } }),
   });
   assert.equal(res.status, 200);
   const body = await res.json();
-  assert.notEqual(body.data.status, 'rejected', 'status must not be settable by a client PUT');
-  assert.equal(body.data.status ?? 'active', 'active');
+  assert.notEqual(body.data.listingStatus, 'rejected', 'listingStatus must not be settable by a client PUT');
+  assert.equal(body.data.listingStatus ?? 'active', 'active');
 });

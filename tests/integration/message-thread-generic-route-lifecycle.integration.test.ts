@@ -91,7 +91,7 @@ async function createListing(jwt: string, overrides: Record<string, unknown> = {
 const setListingStatus = (documentId: string, status: string) =>
   strapiInstance.db.query('api::listing.listing').updateMany({
     where: { documentId },
-    data: { status },
+    data: { listingStatus: status },
   });
 
 async function genericCreateMessage(jwt: string | null, data: Record<string, unknown>) {

@@ -80,7 +80,7 @@ async function createOwnedListing(owner: { ownerId: string; email: string }, ove
       ownerId: owner.ownerId,
       ownerEmail: owner.email,
       ownerName: 'Test Sahibi',
-      status: 'active',
+      listingStatus: 'active',
       viewCount: 0,
       likeCount: 0,
       favoriteCount: 0,

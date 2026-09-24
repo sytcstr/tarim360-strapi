@@ -89,9 +89,9 @@ const handleMembership = async (
     // own precedent that an existing relationship with a listing survives
     // it later becoming non-active.
     const target = await loadEntityByRouteId(strapi, TARGET_UID.listing, targetId, [
-      'status',
+      'listingStatus',
     ]);
-    const status = String((target as any)?.status ?? '').trim().toLowerCase();
+    const status = String((target as any)?.listingStatus ?? '').trim().toLowerCase();
     if (target && status !== 'active') {
       return sendEngagementError(ctx, 'NOT_FOUND', `${targetType} bulunamadi: ${targetId}`);
     }
@@ -170,7 +170,7 @@ export default {
         !!identity &&
         !!target &&
         matchesIdentity(target, identity, ['ownerEmail'], ['ownerProfileId', 'ownerId']);
-      const status = String((target as any)?.status ?? '').trim().toLowerCase();
+      const status = String((target as any)?.listingStatus ?? '').trim().toLowerCase();
       if (target && !isOwner && status !== 'active') {
         return sendEngagementError(ctx, 'NOT_FOUND', `${targetType} bulunamadi: ${targetId}`);
       }
