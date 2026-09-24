@@ -849,6 +849,12 @@ export default {
     if (!senderIsParticipant(p)) {
       return ctx.forbidden('Sadece sohbet katilimcisi sohbet acabilir.');
     }
+    // A NEW conversation needs a counterpart; without one the row is a blank
+    // ghost thread in the caller's own list. Existing threads (re-upsert) are
+    // unaffected.
+    if (!verified.existingThread && !p.receiverEmail && !p.receiverProfileId) {
+      return ctx.badRequest('Alici bilgisi zorunlu.');
+    }
     const thread = await upsertThread(strapi, data, user);
     ctx.body = { data: thread };
   },

@@ -594,7 +594,13 @@ const syncUsersPermissionsRoleConfig = async (strapi: Core.Strapi) => {
   if (authenticatedRole?.id) {
     const current = await roleService.findOne(authenticatedRole.id);
     const permissions = current.permissions as PermissionsTree;
-    enableMany(permissions, authenticatedActions);
+    // The Authenticated role does not inherit Public: anything a visitor can
+    // read (Knowledge Hub taxonomy, agri data, ...) a signed-in user must be
+    // able to read too -- the app sends the JWT on those reads once logged in.
+    enableMany(permissions, [
+      ...publicActions.filter((action) => action.startsWith('api::')),
+      ...authenticatedActions,
+    ]);
     disableMany(permissions, authenticatedActionsToRevoke);
     await roleService.updateRole(authenticatedRole.id, {
       permissions,

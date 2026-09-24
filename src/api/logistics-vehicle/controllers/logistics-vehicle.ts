@@ -1,5 +1,6 @@
 ﻿import { factories } from '@strapi/strapi';
 import { readIdentity, matchesOwnerKey } from '../../../utils/identity';
+import { stripInternalFields } from '../../../utils/internal-fields';
 
 const VEHICLE_UID = 'api::logistics-vehicle.logistics-vehicle';
 
@@ -178,6 +179,16 @@ const distanceKm = (lat1: number, lng1: number, lat2: number, lng2: number): num
 };
 
 export default factories.createCoreController(VEHICLE_UID as any, ({ strapi }) => ({
+  // Public reads: moderator notes/admin status are internal (admin screens use
+  // /logistics-admin/*), never part of the public response.
+  async find(ctx) {
+    return stripInternalFields(await super.find(ctx));
+  },
+
+  async findOne(ctx) {
+    return stripInternalFields(await super.findOne(ctx));
+  },
+
   /**
    * FINAL_R1_TARGETED_RELEASE_FIX_REPORT.md R1.4 (FINAL-BUG-004, HIGH):
    * `transporterKey` used to pass straight through from stripEngagementFields
@@ -252,7 +263,7 @@ export default factories.createCoreController(VEHICLE_UID as any, ({ strapi }) =
       return distanceKm(lat, lng, rowLat, rowLng) <= km;
     });
 
-    ctx.body = { data };
+    ctx.body = { data: stripInternalFields(data) };
   },
 }));
 

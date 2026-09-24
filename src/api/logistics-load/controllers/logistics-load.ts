@@ -3,6 +3,7 @@ import { registerView } from '../../engagement/services/engagement-view-service'
 import { setMembership, MembershipResult } from '../../engagement/services/engagement-v1';
 import { requireAuthenticatedActorKey } from '../../../utils/engagement-contract';
 import { readIdentity, matchesOwnerKey } from '../../../utils/identity';
+import { stripInternalFields } from '../../../utils/internal-fields';
 
 const UID = 'api::logistics-load.logistics-load';
 
@@ -324,6 +325,16 @@ const distanceKm = (lat1: number, lng1: number, lat2: number, lng2: number): num
 };
 
 export default factories.createCoreController(UID as any, ({ strapi }) => ({
+  // Public reads: moderator notes/admin status are internal (admin screens use
+  // /logistics-admin/*), never part of the public response.
+  async find(ctx) {
+    return stripInternalFields(await super.find(ctx));
+  },
+
+  async findOne(ctx) {
+    return stripInternalFields(await super.findOne(ctx));
+  },
+
   /**
    * FINAL_R1_TARGETED_RELEASE_FIX_REPORT.md R1.4 (FINAL-BUG-004, HIGH):
    * `ownerKey` used to pass straight through from `sanitizeCreateData`
@@ -411,6 +422,6 @@ export default factories.createCoreController(UID as any, ({ strapi }) => ({
       .filter((row: any) => row.distanceKm <= km)
       .sort((a: any, b: any) => a.distanceKm - b.distanceKm);
 
-    ctx.body = { data };
+    ctx.body = { data: stripInternalFields(data) };
   },
 }));

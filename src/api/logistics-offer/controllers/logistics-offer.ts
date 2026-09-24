@@ -1,5 +1,6 @@
 import { factories } from '@strapi/strapi';
 import { readIdentity, matchesOwnerKey } from '../../../utils/identity';
+import { stripInternalFields } from '../../../utils/internal-fields';
 
 const OFFER_UID = 'api::logistics-offer.logistics-offer';
 const LOAD_UID = 'api::logistics-load.logistics-load';
@@ -52,6 +53,14 @@ const updateLoadStatus = async (
 export default factories.createCoreController(
   OFFER_UID as any,
   ({ strapi }) => ({
+    async find(ctx) {
+      return stripInternalFields(await super.find(ctx));
+    },
+
+    async findOne(ctx) {
+      return stripInternalFields(await super.findOne(ctx));
+    },
+
     async create(ctx) {
       const identity = readIdentity(ctx);
       if (!identity) return ctx.unauthorized('Kimlik dogrulanamadi.');
@@ -134,7 +143,7 @@ export default factories.createCoreController(
         pagination: { limit },
       } as any);
 
-      ctx.body = { data: rows };
+      ctx.body = { data: stripInternalFields(rows) };
     },
 
     async accept(ctx) {

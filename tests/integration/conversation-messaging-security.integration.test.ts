@@ -331,3 +331,38 @@ test('M5: two concurrent first-messages between the same new pair produce exactl
   const messages = await strapiInstance.db.query('api::message.message').findMany({ where: { contextId } } as any);
   assert.equal(messages.length, 2, 'both messages must have been recorded, on the single shared thread');
 });
+
+// Full-app reconciliation: POST /conversations/upsert with an empty body used
+// to persist a blank "ghost" conversation (the caller as requester, nobody as
+// receiver) that then showed up in the caller's own /conversations/mine.
+test('upsert without a receiver identity is rejected and leaves no ghost thread; a real upsert and a re-upsert of it still work', async () => {
+  const emailA = `ghost-a-${randomUUID()}@test.local`;
+  const emailB = `ghost-b-${randomUUID()}@test.local`;
+  const jwtA = await registerAndLogin(emailA);
+  await registerAndLogin(emailB);
+  const upsert = async (data: Record<string, unknown>) => {
+    const res = await fetch(`${BASE_URL}/conversations/upsert`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${jwtA}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ data }),
+    });
+    return { status: res.status, body: await res.json().catch(() => ({})) };
+  };
+  const mine = async () => {
+    const res = await fetch(`${BASE_URL}/conversations/mine`, { headers: { authorization: `Bearer ${jwtA}` } });
+    return ((await res.json()).data ?? []) as any[];
+  };
+
+  assert.equal((await upsert({})).status, 400);
+  assert.equal((await upsert({ threadId: `ghost-${randomUUID()}`, personName: 'Nobody' })).status, 400);
+  assert.deepEqual(await mine(), [], 'no blank conversation was persisted');
+
+  const threadId = `real-${randomUUID()}`;
+  const created = await upsert({ threadId, receiverEmail: emailB, personName: 'B' });
+  assert.equal(created.status, 200, JSON.stringify(created.body));
+  assert.equal((await mine()).length, 1);
+
+  const again = await upsert({ threadId, lastMessage: 'still the same thread' });
+  assert.equal(again.status, 200, JSON.stringify(again.body));
+  assert.equal((await mine()).length, 1, 're-upsert of an existing thread does not duplicate it');
+});
