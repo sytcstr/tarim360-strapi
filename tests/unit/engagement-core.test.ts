@@ -41,7 +41,7 @@ const fakeTrx = (row: Record<string, any>) => {
       for (const [col, val] of Object.entries(set)) {
         if (val && typeof val === 'object' && '__raw' in val) {
           const current = Number(row[col] ?? 0);
-          if (val.__raw.includes('MAX')) {
+          if (val.__raw.includes('- 1')) {
             row[col] = Math.max(current - 1, 0);
           } else {
             row[col] = current + 1;
@@ -77,6 +77,23 @@ test('incrementCounterAtomic clamps a decrement at zero, never goes negative', a
   const result = await incrementCounterAtomic(trx, 'listings', 1, 'likeCount', -1);
   assert.equal(result.count, 0); // clamped, not -1
   assert.equal(result.serverVersion, 4); // version still advances even on a clamped no-op decrement
+});
+
+// Regression: production (Postgres) answered 500 to every unfavorite/unlike
+// because the decrement used SQLite's scalar MAX(a, b), which Postgres does
+// not have. Every SQL fragment must stay dialect-portable.
+test('incrementCounterAtomic decrement SQL is dialect-portable (no SQLite-only scalar MAX, no GREATEST)', async () => {
+  const row = { like_count: 2, engagement_version: 1, updated_at: '2026-01-01T00:00:00.000Z' };
+  const trx = fakeTrx(row);
+  await incrementCounterAtomic(trx, 'listings', 1, 'likeCount', -1);
+  const set = trx.__calls.find((c: any) => c.update).update as Record<string, { __raw: string }>;
+  for (const val of Object.values(set)) {
+    assert.doesNotMatch(val.__raw, /\bMAX\s*\(/i, 'scalar MAX(a,b) is SQLite-only');
+    assert.doesNotMatch(val.__raw, /\bGREATEST\s*\(/i, 'GREATEST() is not available on SQLite');
+    assert.doesNotMatch(val.__raw, /\bMIN\s*\(/i, 'scalar MIN(a,b) is SQLite-only');
+  }
+  assert.match(set.like_count.__raw, /CASE WHEN/i);
+  assert.equal(row.like_count, 1);
 });
 
 test('incrementCounterAtomic issues exactly one update() call, not a read-then-write pair', async () => {

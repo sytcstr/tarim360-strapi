@@ -113,7 +113,13 @@ export const incrementCounterAtomic = async (
           [versionCol]: trx.raw(`?? + 1`, [versionCol]),
         }
       : {
-          [countCol]: trx.raw(`MAX(?? - 1, 0)`, [countCol]),
+          // CASE, not MAX(a, b): the two-argument scalar MAX() only exists
+          // in SQLite. Postgres (Strapi Cloud production) has no such
+          // function (it needs GREATEST(), which SQLite lacks), so the old
+          // `MAX(?? - 1, 0)` made EVERY decrement -- every unfavorite,
+          // unlike -- fail with a 500 on production while passing every
+          // local SQLite test. CASE WHEN is portable across all dialects.
+          [countCol]: trx.raw(`CASE WHEN ?? > 0 THEN ?? - 1 ELSE 0 END`, [countCol, countCol]),
           [versionCol]: trx.raw(`?? + 1`, [versionCol]),
         };
   await trx(collectionName).where('id', id).update(setClause);
