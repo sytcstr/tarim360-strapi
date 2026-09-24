@@ -32,13 +32,57 @@ import { EngagementTargetType, TARGET_UID, VERSION_FIELD } from '../../../utils/
  * is passed unconditionally below; for content-types without draft/publish
  * enabled this parameter has no special effect (there is only one row).
  */
+/**
+ * The Flutter app identifies a listing as `strapi_<numeric id>` (its
+ * ProfileProduct.id) and sends that string verbatim as the engagement
+ * targetId. The engagement resolver only understood a bare numeric id or a
+ * documentId, so in production every favorite/like/view from the app
+ * answered 404 "listing bulunamadi: strapi_64". Strip exactly one leading
+ * `strapi_`/`listing_` app prefix and nothing else -- deliberately NOT
+ * "extract the digits", which would let an arbitrary string resolve to the
+ * wrong listing.
+ */
+export const stripListingIdPrefix = (
+  targetType: EngagementTargetType,
+  id: string,
+): string => {
+  if (targetType !== 'listing') return id;
+  for (const prefix of ['strapi_', 'listing_']) {
+    if (id.startsWith(prefix)) {
+      const rest = id.slice(prefix.length).trim();
+      if (rest) return rest;
+    }
+  }
+  return id;
+};
+
+/**
+ * Stable storage key for a per-actor engagement record. A listing's numeric
+ * id is NOT stable: every publish (each owner edit) replaces the published
+ * row with a new one, so a key built from `target.id` orphaned every
+ * favorite/like/view on the listing's first edit. `documentId` survives.
+ * `legacy` is the old numeric key, still read so rows written before this
+ * change keep working.
+ */
+export const engagementRecordKeys = (
+  target: Record<string, any>,
+  targetType?: EngagementTargetType,
+): { key: string; legacy: string; both: string[] } => {
+  const legacy = String(target.id);
+  // Only listings are re-published under a new numeric id on every edit;
+  // every other target type keeps its numeric key (rows already stored so).
+  const doc = targetType === 'listing' ? String(target.documentId ?? '').trim() : '';
+  const key = doc || legacy;
+  return { key, legacy, both: key === legacy ? [key] : [key, legacy] };
+};
+
 export const resolveTargetRow = async (
   strapiInstance: any,
   targetType: EngagementTargetType,
   rawTargetId: string,
 ): Promise<Record<string, any> | null> => {
   const uid = TARGET_UID[targetType];
-  const id = String(rawTargetId ?? '').trim();
+  const id = stripListingIdPrefix(targetType, String(rawTargetId ?? '').trim());
   if (!id) return null;
   const opts = { status: 'published' as const };
 
@@ -103,6 +147,7 @@ export const incrementCounterAtomic = async (
   id: number,
   countField: string,
   delta: 1 | -1,
+  documentId?: string | null,
 ): Promise<{ count: number; serverVersion: number; updatedAt: string }> => {
   const countCol = toSnakeCase(countField);
   const versionCol = toSnakeCase(VERSION_FIELD);
@@ -124,9 +169,24 @@ export const incrementCounterAtomic = async (
         };
   await trx(collectionName).where('id', id).update(setClause);
   const row = await trx(collectionName).where('id', id).first(countCol, versionCol, 'updated_at');
+  const count = Number(row?.[countCol] ?? 0);
+  const serverVersion = Number(row?.[versionCol] ?? 0);
+  // Draft & Publish types keep TWO rows per documentId, and Strapi rebuilds
+  // the published row FROM THE DRAFT on every publish (each owner edit).
+  // Counters written only to the published row were therefore wiped back to
+  // the draft's creation-time zeros on the listing's first edit (measured in
+  // production: favorite 1 -> 0, like 1 -> 0, view 1 -> 0). Mirror the new
+  // values onto every sibling row so the draft is never behind. A no-op for
+  // content types without Draft & Publish (no sibling rows exist).
+  if (documentId) {
+    await trx(collectionName)
+      .where('document_id', documentId)
+      .whereNot('id', id)
+      .update({ [countCol]: count, [versionCol]: serverVersion });
+  }
   return {
-    count: Number(row?.[countCol] ?? 0),
-    serverVersion: Number(row?.[versionCol] ?? 0),
+    count,
+    serverVersion,
     updatedAt: row?.updated_at ?? new Date().toISOString(),
   };
 };

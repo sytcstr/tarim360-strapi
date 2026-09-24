@@ -166,7 +166,28 @@ export const buildListingDiscoveryQuery = (
   const listingNos = asPositiveIntArray(rawQuery.listingNos);
   const listingNo = asPositiveInt(rawQuery.listingNo);
   if (documentIds.length > 0) {
-    filters.documentId = { $in: documentIds };
+    // Favorites/Account hydration passes the app's own listing ids, which
+    // are `strapi_<numeric id>` (ProfileProduct.id), not documentIds -- so
+    // a pure `documentId IN (...)` filter could never match them and every
+    // favorite outside the ~60-row discovery cache was reported as
+    // "could not be loaded". Accept, per entry: a documentId, a bare
+    // numeric id, or the app's `strapi_`/`listing_` prefixed form. Only a
+    // 1-12 digit string after the prefix counts as a numeric id (a real
+    // documentId is a 24-char alphanumeric string).
+    const docKeys: string[] = [];
+    const numericIds: number[] = [];
+    for (const raw of documentIds) {
+      const stripped = raw.replace(/^(strapi_|listing_)/, '');
+      if (/^[0-9]{1,12}$/.test(stripped)) numericIds.push(Number(stripped));
+      else docKeys.push(stripped);
+    }
+    if (numericIds.length > 0 && docKeys.length > 0) {
+      filters.$or = [{ documentId: { $in: docKeys } }, { id: { $in: numericIds } }];
+    } else if (numericIds.length > 0) {
+      filters.id = { $in: numericIds };
+    } else {
+      filters.documentId = { $in: docKeys };
+    }
   } else if (listingNos.length > 0) {
     filters.listingNo = { $in: listingNos };
   } else if (listingNo !== null) {

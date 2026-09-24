@@ -439,8 +439,24 @@ export const loadEntityByRouteId = async (
   rawId: string,
   fields: string[],
 ): Promise<Record<string, unknown> | null> => {
-  const id = String(rawId ?? '').trim();
+  let id = String(rawId ?? '').trim();
   if (!id) return null;
+  // The Flutter app names a listing `strapi_<numeric id>` (ProfileProduct.id)
+  // and sends that verbatim. The engagement mutation resolver strips that
+  // app prefix; the ownership/lifecycle GUARDS resolve through here, and if
+  // they did not too they would find no row ("not the owner", "no lifecycle
+  // to enforce") and wave through exactly the requests they exist to stop
+  // -- e.g. an owner favoriting their own listing via `strapi_<id>`. One
+  // rule, applied at the shared guard resolver: exactly one app prefix,
+  // nothing else (never "extract the digits").
+  if (uid === 'api::listing.listing') {
+    for (const prefix of ['strapi_', 'listing_']) {
+      if (id.startsWith(prefix) && id.slice(prefix.length).trim()) {
+        id = id.slice(prefix.length).trim();
+        break;
+      }
+    }
+  }
 
   try {
     const viaEntity = await strapi.entityService.findOne(uid as any, id as any, { fields });

@@ -12,7 +12,7 @@ import {
   TARGET_COLLECTION,
   VERSION_FIELD,
 } from '../../../utils/engagement-contract';
-import { incrementCounterAtomic, resolveTargetRow } from './engagement-core';
+import { engagementRecordKeys, incrementCounterAtomic, resolveTargetRow } from './engagement-core';
 
 const INTERACTION_UID = 'api::engagement-interaction.engagement-interaction';
 
@@ -50,12 +50,25 @@ export const setMembership = async (
     if (!target) {
       return { found: false, active: false, changed: false, count: 0, updatedAt: '', serverVersion: 0 };
     }
-    const targetId = String(target.id);
+    // Keyed by the listing's stable documentId (its numeric id changes on
+    // every publish); rows written under the legacy numeric key are still
+    // found and adopted, so nothing recorded before this change is lost.
+    const { key: targetId, both: targetIdKeys } = engagementRecordKeys(target, targetType);
 
     const existing = await strapiInstance.db.query(INTERACTION_UID).findOne({
-      where: { actorKey, targetType, targetId, kind },
+      where: { actorKey, targetType, targetId: { $in: targetIdKeys }, kind },
     });
     const alreadyActive = !!existing;
+    if (existing && existing.targetId !== targetId) {
+      try {
+        await strapiInstance.db.query(INTERACTION_UID).update({
+          where: { id: existing.id },
+          data: { targetId },
+        });
+      } catch (_e) {
+        // A concurrent request already wrote the stable-key row; harmless.
+      }
+    }
 
     const currentCount = Math.max(0, Number(target[countField] ?? 0));
     const currentVersion = Number(target[VERSION_FIELD] ?? 0);
@@ -104,6 +117,7 @@ export const setMembership = async (
       target.id,
       countField,
       active ? 1 : -1,
+      target.documentId,
     );
 
     return {

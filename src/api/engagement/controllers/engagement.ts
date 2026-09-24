@@ -1,9 +1,9 @@
-import { matchesIdentity, readIdentity } from '../../../utils/identity';
+import { loadEntityByRouteId, matchesIdentity, readIdentity } from '../../../utils/identity';
 import {
   applyLoadActorMetric,
   resolveLoad as resolveLogisticsLoad,
 } from '../../logistics-load/controllers/logistics-load';
-import { requireAuthenticatedActorKey } from '../../../utils/engagement-contract';
+import { requireAuthenticatedActorKey, TARGET_UID } from '../../../utils/engagement-contract';
 import { setMembership } from '../services/engagement-v1';
 import { isOwnListingTarget } from './engagement-v1';
 // İlan 1A (Madde 98): reused, not duplicated -- this is the exact same
@@ -245,6 +245,13 @@ const delegateListingMembershipToggle = async (
     const ownTarget = await isOwnListingTarget(strapi, id, identity);
     if (ownTarget) {
       return ctx.forbidden('Kendi hedefinizi beğenemez/favorileyemezsiniz.');
+    }
+    // Same lifecycle guard as handleMembership: a pending/rejected listing
+    // cannot gain a NEW favorite/like through this legacy route either.
+    const lifecycleTarget = await loadEntityByRouteId(strapi, TARGET_UID.listing, id, ['listingStatus']);
+    const lifecycle = String((lifecycleTarget as any)?.listingStatus ?? '').trim().toLowerCase();
+    if (lifecycleTarget && lifecycle !== 'active') {
+      return ctx.notFound('listing bulunamadi.');
     }
   }
 

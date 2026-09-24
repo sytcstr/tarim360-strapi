@@ -311,7 +311,7 @@ test('view: after the 24h window elapses, a new view increments again (requires 
   });
   const staleDate = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
   await strapiInstance.db.query('api::engagement-view.engagement-view').updateMany({
-    where: { targetType: 'listing', targetId: String(listing.id) },
+    where: { targetType: 'listing', targetId: { $in: [String(listing.id), String(listing.documentId)] } },
     data: { lastViewedAt: staleDate },
   });
   const res = await fetch(`${BASE_URL}/engagements/view`, {
@@ -472,7 +472,7 @@ test('general: count matches the real engagement-interaction row count, not a cl
     body: JSON.stringify({ targetType: 'listing', targetId: listing.id }),
   });
   const rows = await strapiInstance.db.query('api::engagement-interaction.engagement-interaction').findMany({
-    where: { targetType: 'listing', targetId: String(listing.id), kind: 'like' },
+    where: { targetType: 'listing', targetId: { $in: [String(listing.id), String(listing.documentId)] }, kind: 'like' },
   });
   assert.equal(rows.length, 1);
 });

@@ -200,3 +200,25 @@ test('buildListingDiscoveryQuery: page defaults to 1 and ignores non-positive va
   assert.equal(buildListingDiscoveryQuery({ search: 'x', page: '0' })?.pagination.page, 1);
   assert.equal(buildListingDiscoveryQuery({ search: 'x', page: '3' })?.pagination.page, 3);
 });
+
+// Favorites hydration sends the app's own `strapi_<numeric id>` product ids.
+test('buildListingDiscoveryQuery: documentIds accepts documentIds, bare numeric ids and the app strapi_/listing_ prefixed ids', () => {
+  const doc = 'h9o2qkqj64r8lq9w4fdihma5';
+  const onlyDocs = buildListingDiscoveryQuery({ documentIds: doc });
+  assert.deepEqual(onlyDocs?.filters.documentId, { $in: [doc] });
+  assert.equal((onlyDocs?.filters as any).id, undefined);
+
+  const onlyNumeric = buildListingDiscoveryQuery({ documentIds: 'strapi_64,listing_65,66' });
+  assert.deepEqual((onlyNumeric?.filters as any).id, { $in: [64, 65, 66] });
+  assert.equal(onlyNumeric?.filters.documentId, undefined);
+
+  const mixed = buildListingDiscoveryQuery({ documentIds: `${doc},strapi_64` });
+  assert.deepEqual((mixed?.filters as any).$or, [{ documentId: { $in: [doc] } }, { id: { $in: [64] } }]);
+  assert.deepEqual(mixed?.filters.listingStatus, { $eq: 'active' }, 'the active-only guard is never dropped');
+});
+
+test('buildListingDiscoveryQuery: an id-shaped-but-not-numeric entry is treated as a documentId, never as digits pulled out of a string', () => {
+  const q = buildListingDiscoveryQuery({ documentIds: 'abc64def' });
+  assert.deepEqual(q?.filters.documentId, { $in: ['abc64def'] });
+  assert.equal((q?.filters as any).id, undefined);
+});

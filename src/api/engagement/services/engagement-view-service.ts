@@ -16,7 +16,7 @@
  * engagement-v1.ts.
  */
 import { VIEW_COUNT_FIELD, VERSION_FIELD, EngagementTargetType, TARGET_COLLECTION } from '../../../utils/engagement-contract';
-import { incrementCounterAtomic, resolveTargetRow } from './engagement-core';
+import { engagementRecordKeys, incrementCounterAtomic, resolveTargetRow } from './engagement-core';
 
 const VIEW_UID = 'api::engagement-view.engagement-view';
 const DEDUP_WINDOW_MS = 24 * 60 * 60 * 1000; // rolling 24h, not calendar day — contract §4.3
@@ -46,7 +46,9 @@ export const registerView = async (
     if (!target) {
       return { found: false, incremented: false, count: 0, updatedAt: '', serverVersion: 0 };
     }
-    const targetId = String(target.id);
+    // Stable documentId key (numeric ids change on every publish); legacy
+    // numeric-keyed rows are still honoured so nobody's 24h dedupe resets.
+    const { key: targetId, both: targetIdKeys } = engagementRecordKeys(target, targetType);
     const nowIso = new Date().toISOString();
     const cutoffIso = new Date(Date.now() - DEDUP_WINDOW_MS).toISOString();
 
@@ -57,7 +59,7 @@ export const registerView = async (
     // Step 1: conditional refresh — only affects a row if it exists AND
     // is stale (>= 24h old). The affected count is the unambiguous signal.
     const refreshed = await strapiInstance.db.query(VIEW_UID).updateMany({
-      where: { actorKey, targetType, targetId, lastViewedAt: { $lte: cutoffIso } },
+      where: { actorKey, targetType, targetId: { $in: targetIdKeys }, lastViewedAt: { $lte: cutoffIso } },
       data: { lastViewedAt: nowIso },
     });
 
@@ -65,7 +67,7 @@ export const registerView = async (
 
     if (!shouldIncrement) {
       const existing = await strapiInstance.db.query(VIEW_UID).findOne({
-        where: { actorKey, targetType, targetId },
+        where: { actorKey, targetType, targetId: { $in: targetIdKeys } },
       });
       if (!existing) {
         // Step 2: no row at all yet — first-ever view from this actor.
@@ -94,7 +96,7 @@ export const registerView = async (
       };
     }
 
-    const updated = await incrementCounterAtomic(trx, collectionName, target.id, viewField, 1);
+    const updated = await incrementCounterAtomic(trx, collectionName, target.id, viewField, 1, target.documentId);
     return {
       found: true,
       incremented: true,
