@@ -42,13 +42,18 @@ export const resolveTargetRow = async (
   if (!id) return null;
   const opts = { status: 'published' as const };
 
-  try {
-    const viaEntity = await strapiInstance.entityService.findOne(uid, id, opts);
-    if (viaEntity && typeof viaEntity === 'object') return viaEntity;
-  } catch (_e) {
-    // continue
-  }
-
+  // entityService.findOne(uid, id) is a `WHERE id = <id>` lookup on the
+  // INTEGER primary key. Handing it a documentId string is harmless on
+  // SQLite (loose typing just yields no row) but on Postgres -- the
+  // Strapi Cloud production dialect -- it raises `invalid input syntax
+  // for type integer`. Both callers (setMembership, recordView) run this
+  // function INSIDE a db.transaction, and a failed statement aborts a
+  // Postgres transaction: every later query in it (including the
+  // documentId fallback below) then fails too, this function returned
+  // null, and PUT /engagements/favorite|like|view and the legacy toggle
+  // routes answered 404 for any documentId target while numeric ids
+  // worked. The local SQLite integration suite could never see this.
+  // Only ever pass entityService a real integer id.
   const maybeNumeric = Number(id);
   if (Number.isInteger(maybeNumeric) && maybeNumeric > 0) {
     try {
