@@ -81,6 +81,7 @@ const premiumPayloadForProduct = (input: {
   planTitle: string;
   priceTl: number;
   premiumEndsAt?: string;
+  autoRenew?: boolean;
 }) => {
   const spec = PREMIUM_PRODUCTS[resolveCanonicalProductId(input.productId)];
   if (!spec) return null;
@@ -94,7 +95,7 @@ const premiumPayloadForProduct = (input: {
     priceTl: input.priceTl > 0 ? input.priceTl : spec.priceTl,
     startedAt: startsAt.toISOString(),
     endsAt: endsAt.toISOString(),
-    autoRenew: true,
+    autoRenew: input.autoRenew ?? true,
     smartAdIncludedTotal: spec.smartAdIncludedTotal,
     smartAdRemaining: spec.smartAdIncludedTotal,
     smartAdDays: spec.smartAdDays,
@@ -121,6 +122,7 @@ export const upsertProfilePurchase = async (
     productId: string;
     premiumEndsAt?: string;
     forcePremiumStatus?: PurchaseStatus;
+    autoRenew?: boolean;
   },
 ) => {
   const ownerId = asString(input.ownerId);
@@ -151,6 +153,7 @@ export const upsertProfilePurchase = async (
     planTitle: input.planTitle,
     priceTl: input.priceTl,
     premiumEndsAt: input.premiumEndsAt,
+    autoRenew: input.autoRenew,
   });
   if (premiumPayload && (!input.forcePremiumStatus || input.forcePremiumStatus === 'verified')) {
     nextPremium = premiumPayload;
@@ -195,4 +198,56 @@ export const upsertProfilePurchase = async (
   await strapi.entityService.create(PROFILE_SETTING_UID as any, {
     data: payload,
   });
+};
+
+/**
+ * Provider identity ownership. A real store purchase is identified by what the
+ * STORE says (Google purchaseToken / Apple original transaction id / the
+ * provider's transaction id), never by an id the client chose. Returns the first
+ * purchase event carrying any of these identities that belongs to a DIFFERENT
+ * account, or null when every match (if any) belongs to `ownerProfileId`.
+ */
+export const findConflictingOwnerEvent = async (
+  strapi: Core.Strapi,
+  ownerProfileId: string,
+  ids: { transactionIds?: string[]; purchaseTokens?: string[]; originalTransactionIds?: string[] },
+): Promise<Record<string, unknown> | null> => {
+  const clean = (list?: string[]) =>
+    Array.from(new Set((list ?? []).map((x) => asString(x)).filter(Boolean)));
+  const tx = clean(ids.transactionIds);
+  const tokens = clean(ids.purchaseTokens);
+  const originals = clean(ids.originalTransactionIds);
+  const or: Record<string, unknown>[] = [];
+  for (const id of [...tx, ...originals]) {
+    or.push({ transactionId: id }, { originalTransactionId: id });
+  }
+  for (const t of tokens) or.push({ purchaseToken: t });
+  if (or.length === 0) return null;
+  const rows = (await strapi.db
+    .query(PURCHASE_EVENT_UID)
+    .findMany({ where: { $or: or }, limit: 50 } as any)) as Record<string, unknown>[];
+  return rows.find((r) => asString(r.ownerProfileId) !== ownerProfileId) ?? null;
+};
+
+const identityLocks = new Map<string, Promise<unknown>>();
+
+/** Serialises work per purchase identity so two accounts cannot both bind one purchase. */
+export const withPurchaseIdentityLock = async <T>(
+  keys: string[],
+  fn: () => Promise<T>,
+): Promise<T> => {
+  const lockKeys = Array.from(new Set(keys.map((k) => asString(k)).filter(Boolean))).sort();
+  const previous = lockKeys.map((k) => identityLocks.get(k)).filter(Boolean) as Promise<unknown>[];
+  let release!: () => void;
+  const mine = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  for (const k of lockKeys) identityLocks.set(k, mine);
+  try {
+    await Promise.allSettled(previous);
+    return await fn();
+  } finally {
+    release();
+    for (const k of lockKeys) if (identityLocks.get(k) === mine) identityLocks.delete(k);
+  }
 };

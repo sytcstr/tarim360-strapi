@@ -13,6 +13,7 @@ import { runListingSearchFieldsBackfillOnce } from './utils/listing-search-field
 import { runListingStatusBackfillOnce } from './utils/listing-status-backfill';
 import { runListingStatusToListingStatusMigrationOnce } from './utils/listing-status-migration';
 import { ensureListingStatusInContentManagerLayoutOnce } from './utils/listing-status-cm-layout';
+import { isSoftVerifyRefused } from './api/purchase/lib/config';
 
 /**
  * Faz B-V: reliable, idempotent composite-unique-index creation for the
@@ -1020,6 +1021,11 @@ export default {
   register() {},
 
   async bootstrap({ strapi }: { strapi: Core.Strapi }) {
+    if (isSoftVerifyRefused()) {
+      strapi.log.error(
+        '[purchase] PURCHASE_VERIFY_SOFT is set but NODE_ENV is not development/test: the flag is IGNORED and real store verification is enforced. Remove PURCHASE_VERIFY_SOFT from this environment.',
+      );
+    }
     await ensureEngagementUniqueIndexes(strapi);
     // Order matters: the backfill must assign a real, unique listingNo to
     // every existing row BEFORE the unique index is created, or index

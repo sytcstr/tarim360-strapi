@@ -1,11 +1,6 @@
 import crypto from 'crypto';
-import {
-  asString,
-  parseIso,
-  Provider,
-  PurchaseStatus,
-  parseBool,
-} from './catalog';
+import { asString, parseIso, Provider, PurchaseStatus } from './catalog';
+import { appleConfig, googleConfig, isSoftVerifyActive } from './config';
 
 export type VerifyOutcome = {
   verified: boolean;
@@ -16,16 +11,19 @@ export type VerifyOutcome = {
   expiresAt?: string;
   purchaseToken?: string;
   payload?: unknown;
+  /** Store-reported auto-renew state when known (false once the user cancelled). */
+  autoRenew?: boolean;
   message: string;
 };
 
-const VERIFY_SOFT_MODE = parseBool(process.env.PURCHASE_VERIFY_SOFT, false);
-const GOOGLE_PACKAGE_NAME = asString(process.env.GOOGLE_PLAY_PACKAGE_NAME);
-const GOOGLE_SA_EMAIL = asString(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL);
-const GOOGLE_SA_PRIVATE_KEY = asString(
-  process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY,
-).replace(/\\n/g, '\n');
-const APPLE_SHARED_SECRET = asString(process.env.APPLE_SHARED_SECRET);
+/** A 5xx / 429 from a store is transient: surface it as an error so callers retry
+ * (never record it as a permanent "rejected" purchase). */
+const failIfTransient = (res: Response, what: string) => {
+  if (res.status >= 500 || res.status === 429) {
+    throw new Error(`${what} geçici olarak kullanılamıyor (${res.status}).`);
+  }
+};
+
 
 const signJwtRs256 = (
   payload: Record<string, unknown>,
@@ -44,7 +42,8 @@ const signJwtRs256 = (
 };
 
 const getGoogleAccessToken = async (): Promise<string> => {
-  if (!GOOGLE_PACKAGE_NAME || !GOOGLE_SA_EMAIL || !GOOGLE_SA_PRIVATE_KEY) {
+  const g = googleConfig();
+  if (!g.packageName || !g.serviceAccountEmail || !g.serviceAccountPrivateKey) {
     throw new Error(
       'Google doğrulama env eksik (GOOGLE_PLAY_PACKAGE_NAME/GOOGLE_SERVICE_ACCOUNT_EMAIL/GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY).',
     );
@@ -52,13 +51,13 @@ const getGoogleAccessToken = async (): Promise<string> => {
   const nowSec = Math.floor(Date.now() / 1000);
   const assertion = signJwtRs256(
     {
-      iss: GOOGLE_SA_EMAIL,
+      iss: g.serviceAccountEmail,
       scope: 'https://www.googleapis.com/auth/androidpublisher',
       aud: 'https://oauth2.googleapis.com/token',
       iat: nowSec,
       exp: nowSec + 3600,
     },
-    GOOGLE_SA_PRIVATE_KEY,
+    g.serviceAccountPrivateKey,
   );
   const form = new URLSearchParams();
   form.set('grant_type', 'urn:ietf:params:oauth:grant-type:jwt-bearer');
@@ -81,7 +80,7 @@ const getGoogleAccessToken = async (): Promise<string> => {
   return token;
 };
 
-const verifyGoogle = async (input: {
+export const verifyGoogle = async (input: {
   productId: string;
   purchaseToken: string;
   isSubscription: boolean;
@@ -96,6 +95,7 @@ const verifyGoogle = async (input: {
     };
   }
   const accessToken = await getGoogleAccessToken();
+  const GOOGLE_PACKAGE_NAME = googleConfig().packageName;
 
   if (input.isSubscription) {
     const url =
@@ -106,6 +106,7 @@ const verifyGoogle = async (input: {
       method: 'GET',
       headers: { Authorization: `Bearer ${accessToken}` },
     });
+    failIfTransient(res, 'Google subscription verify');
     const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) {
       return {
@@ -118,11 +119,22 @@ const verifyGoogle = async (input: {
       };
     }
     const lineItems = Array.isArray(body.lineItems) ? body.lineItems : [];
-    const matched =
-      (lineItems.find(
-        (x) => asString((x as Record<string, unknown>).productId) === input.productId,
-      ) as Record<string, unknown> | undefined) ||
-      (lineItems[0] as Record<string, unknown> | undefined);
+    // The purchased product must be EXACTLY the one being claimed. Falling back to
+    // the first line item let a cheap subscription's token be presented as a more
+    // expensive plan (product substitution).
+    const matched = lineItems.find(
+      (x) => asString((x as Record<string, unknown>).productId) === input.productId,
+    ) as Record<string, unknown> | undefined;
+    if (!matched) {
+      return {
+        verified: false,
+        status: 'rejected',
+        provider: 'google_play',
+        purchaseToken,
+        payload: body,
+        message: 'Google aboneliği talep edilen ürünle eşleşmiyor.',
+      };
+    }
     const exp = parseIso(asString(matched?.expiryTime));
     const state = asString(body.subscriptionState).toUpperCase();
     let status: PurchaseStatus = 'verified';
@@ -139,6 +151,7 @@ const verifyGoogle = async (input: {
       provider: 'google_play',
       transactionId: asString(body.latestOrderId) || asString(body.orderId),
       originalTransactionId: asString(body.linkedPurchaseToken) || undefined,
+      autoRenew: !state.includes('CANCELED') && status === 'verified',
       expiresAt: exp?.toISOString(),
       purchaseToken,
       payload: body,
@@ -154,6 +167,7 @@ const verifyGoogle = async (input: {
     method: 'GET',
     headers: { Authorization: `Bearer ${accessToken}` },
   });
+  failIfTransient(res, 'Google product verify');
   const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok) {
     return {
@@ -189,8 +203,9 @@ const callAppleVerifyReceipt = async (
     'receipt-data': receipt,
     'exclude-old-transactions': true,
   };
-  if (APPLE_SHARED_SECRET) {
-    body.password = APPLE_SHARED_SECRET;
+  const sharedSecret = appleConfig().sharedSecret;
+  if (sharedSecret) {
+    body.password = sharedSecret;
   }
   const res = await fetch(endpoint, {
     method: 'POST',
@@ -206,8 +221,12 @@ const verifyApple = async (input: {
   receipt: string;
   isSubscription: boolean;
 }): Promise<VerifyOutcome> => {
-  if (input.isSubscription && !APPLE_SHARED_SECRET) {
+  const apple = appleConfig();
+  if (input.isSubscription && !apple.sharedSecret) {
     throw new Error('APPLE_SHARED_SECRET tanımlı değil.');
+  }
+  if (!apple.bundleId) {
+    throw new Error('APPLE_BUNDLE_ID tanımlı değil.');
   }
   const receipt = asString(input.receipt);
   if (!receipt) {
@@ -230,6 +249,20 @@ const verifyApple = async (input: {
       provider: 'app_store',
       payload: body,
       message: `Apple verify status=${asString(body.status)}`,
+    };
+  }
+
+  // The receipt must belong to THIS app, not another app sharing product ids.
+  const receiptBundleId = asString(
+    (body.receipt as Record<string, unknown> | undefined)?.bundle_id,
+  );
+  if (receiptBundleId !== apple.bundleId) {
+    return {
+      verified: false,
+      status: 'rejected',
+      provider: 'app_store',
+      payload: body,
+      message: 'Apple receipt bu uygulamaya ait değil.',
     };
   }
 
@@ -304,7 +337,7 @@ export const verifyWithProvider = async (input: {
   isSubscription: boolean;
   fallbackTransactionId: string;
 }): Promise<VerifyOutcome> => {
-  if (VERIFY_SOFT_MODE) {
+  if (isSoftVerifyActive()) {
     return {
       verified: true,
       status: 'verified',
