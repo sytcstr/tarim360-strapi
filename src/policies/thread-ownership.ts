@@ -98,7 +98,7 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
     }
 
     if (!receiverEmail && !receiverProfileId) {
-      ctx.forbidden('Sohbet alicisi bulunamadi.');
+      denyForbidden(ctx, 'Sohbet alicisi bulunamadi.');
       return false;
     }
 
@@ -113,7 +113,7 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
       requesterProfileId === identity.ownerId || receiverProfileId === identity.ownerId;
 
     if (!(emailContainsMe || profileContainsMe)) {
-      ctx.forbidden('Sohbet katilimci bilgileri aktif oturumla uyusmuyor.');
+      denyForbidden(ctx, 'Sohbet katilimci bilgileri aktif oturumla uyusmuyor.');
       return false;
     }
 
@@ -130,7 +130,7 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
     const entity = await loadEntityByRouteId(strapi, UID, id, [...EMAIL_FIELDS, ...PROFILE_FIELDS]);
     const allowed = matchesIdentity(entity, identity, EMAIL_FIELDS, PROFILE_FIELDS);
     if (!allowed) {
-      ctx.forbidden('Bu sohbet kaydina erisim yetkin yok.');
+      denyForbidden(ctx, 'Bu sohbet kaydina erisim yetkin yok.');
       return false;
     }
   }

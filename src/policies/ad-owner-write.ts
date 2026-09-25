@@ -1,4 +1,4 @@
-import { denyNoIdentity, loadEntityByRouteId, normalizeEmail, readIdentity } from '../utils/identity';
+import { denyForbidden, denyNoIdentity, loadEntityByRouteId, normalizeEmail, readIdentity } from '../utils/identity';
 
 const UID = 'api::ad.ad';
 
@@ -40,7 +40,7 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
     'submitter',
   ]);
   if (!entity) {
-    ctx.forbidden('Bu reklama erisim yetkin yok.');
+    denyForbidden(ctx, 'Bu reklama erisim yetkin yok.');
     return false;
   }
 
@@ -55,7 +55,7 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
     ownerProfileId === identity.ownerId;
 
   if (!mine) {
-    ctx.forbidden('Bu reklama erisim yetkin yok.');
+    denyForbidden(ctx, 'Bu reklama erisim yetkin yok.');
     return false;
   }
 

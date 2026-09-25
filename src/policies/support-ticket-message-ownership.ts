@@ -1,4 +1,5 @@
 import {
+  denyForbidden,
   denyNoIdentity,
   loadEntityByRouteId,
   matchesIdentity,
@@ -76,7 +77,7 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
     if (ticketNo.length > 0) {
       const ok = await canAccessTicketNo(strapi, identity, ticketNo);
       if (!ok) {
-        ctx.forbidden('Bu destek talebine erisim yetkin yok.');
+        denyForbidden(ctx, 'Bu destek talebine erisim yetkin yok.');
         return false;
       }
       return true;
@@ -100,11 +101,11 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
     const requesterEmail = String(data.requesterEmail ?? '').trim().toLowerCase();
     const requesterProfileId = String(data.requesterProfileId ?? '').trim();
     if (requesterEmail && requesterEmail !== identity.email) {
-      ctx.forbidden('Baska kullanici adina destek mesaji gonderemezsiniz.');
+      denyForbidden(ctx, 'Baska kullanici adina destek mesaji gonderemezsiniz.');
       return false;
     }
     if (requesterProfileId && requesterProfileId !== identity.ownerId) {
-      ctx.forbidden('Destek mesaji profil bilgisi aktif oturumla uyusmuyor.');
+      denyForbidden(ctx, 'Destek mesaji profil bilgisi aktif oturumla uyusmuyor.');
       return false;
     }
 
@@ -142,7 +143,7 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
       ? await canAccessTicketNo(strapi, identity, ticketNo)
       : false;
     if (!byTicket) {
-      ctx.forbidden('Bu destek mesajina erisim yetkin yok.');
+      denyForbidden(ctx, 'Bu destek mesajina erisim yetkin yok.');
       return false;
     }
   }

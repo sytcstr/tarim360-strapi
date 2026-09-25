@@ -121,3 +121,25 @@ test('messages, threads, offers and support tickets: a user lists only rows they
     }
   }
 });
+
+// A non-owner reading another user's thread / support ticket by id is denied.
+// It used to answer 500 (measured in production) instead of 403.
+test('a non-owner reading someone else\'s thread or support ticket by id gets 403, never 500 or the data', async () => {
+  const owner = `owner3-${randomUUID()}@test.local`;
+  const stranger = `stranger3-${randomUUID()}@test.local`;
+  await register(owner);
+  const strangerJwt = await register(stranger);
+  const pid = `u_${owner.replace(/[^a-z0-9]/g, '_')}`;
+  const thread = await strapiInstance.entityService.create('api::thread.thread', {
+    data: { conversationKey: `k-${randomUUID()}`, threadId: `t-${randomUUID()}`, requesterEmail: owner, requesterProfileId: pid, receiverEmail: 'x@test.local', receiverProfileId: 'u_x' },
+  });
+  const ticket = await strapiInstance.entityService.create('api::support-ticket.support-ticket', {
+    data: { ticketNo: `s-${randomUUID()}`, subject: 'secret subject', ownerEmail: owner, ownerProfileId: pid },
+  });
+  for (const [url, doc] of [['/threads', thread.documentId], ['/support-tickets', ticket.documentId]] as const) {
+    const res = await fetch(`${BASE_URL}${url}/${doc}`, { headers: { authorization: `Bearer ${strangerJwt}` } });
+    const text = await res.text();
+    assert.equal(res.status, 403, `${url}/:id as non-owner -> ${res.status} ${text.slice(0, 200)}`);
+    assert.equal(text.includes('secret subject') || text.includes(owner), false, `${url}/:id leaked data`);
+  }
+});

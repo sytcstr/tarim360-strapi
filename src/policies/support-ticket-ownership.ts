@@ -1,4 +1,5 @@
 import {
+  denyForbidden,
   denyNoIdentity,
   loadEntityByRouteId,
   matchesIdentity,
@@ -32,11 +33,11 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
     const ownerEmail = String(data.ownerEmail ?? '').trim().toLowerCase();
     const ownerProfileId = String(data.ownerProfileId ?? '').trim();
     if (ownerEmail && ownerEmail !== identity.email) {
-      ctx.forbidden('Baska kullanici adina destek talebi acamazsiniz.');
+      denyForbidden(ctx, 'Baska kullanici adina destek talebi acamazsiniz.');
       return false;
     }
     if (ownerProfileId && ownerProfileId !== identity.ownerId) {
-      ctx.forbidden('Destek talebi profil bilgisi aktif oturumla uyusmuyor.');
+      denyForbidden(ctx, 'Destek talebi profil bilgisi aktif oturumla uyusmuyor.');
       return false;
     }
 
@@ -62,7 +63,7 @@ export default async (ctx: any, _config: unknown, { strapi }: any) => {
       PROFILE_FIELDS,
     );
     if (!allowed) {
-      ctx.forbidden('Bu destek talebine erisim yetkin yok.');
+      denyForbidden(ctx, 'Bu destek talebine erisim yetkin yok.');
       return false;
     }
   }
