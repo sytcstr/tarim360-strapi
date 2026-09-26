@@ -14,6 +14,7 @@ import { runListingStatusBackfillOnce } from './utils/listing-status-backfill';
 import { runListingStatusToListingStatusMigrationOnce } from './utils/listing-status-migration';
 import { ensureListingStatusInContentManagerLayoutOnce } from './utils/listing-status-cm-layout';
 import { isSoftVerifyRefused } from './api/purchase/lib/config';
+import { startUatAuditIfEnabled } from './utils/uat-audit';
 
 /**
  * Faz B-V: reliable, idempotent composite-unique-index creation for the
@@ -1092,6 +1093,8 @@ export default {
     await runOfferIdDedupeOnce(strapi);
     await runPremiumFlagsBackfill(strapi);
     strapi.log.info('Users & Permissions roles synced from bootstrap.');
+    // Read-only, env-gated (UAT_RESET_DRYRUN=1) audit; a no-op otherwise.
+    startUatAuditIfEnabled(strapi);
   },
 };
 
