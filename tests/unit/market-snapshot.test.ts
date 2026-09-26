@@ -179,3 +179,108 @@ test('TCMB parser reads USD and EUR blocks', () => {
   assert.equal(parseTcmbRate(TCMB_XML, 'EUR'), 55.8);
   assert.equal(parseTcmbRate(null, 'EUR'), null);
 });
+
+// ── gold fallback hardening (production 10967.28 incident) ──────────────────
+// Trimmed copy of the real truncgil v4 payload: gram gold is key GRA, and the
+// list also carries CEYREKALTIN (quarter coin, 10967.28 TRY per COIN).
+const TRUNCGIL = {
+  Update_Date: '2026-09-26 21:50:00',
+  USD: { Buying: 48.9, Selling: 48.95, Name: 'USD', Type: 'Currency' },
+  GRA: { Buying: 6739.97, Selling: 6740.8, Name: 'GRAMALTIN', Type: 'Gold', Change: 0.33 },
+  GUMUS: { Buying: 101.14, Selling: 101.18, Name: 'GUMUS', Type: 'Gold', Change: 0.84 },
+  ONS: { Buying: 0, Selling: 0, Name: 'ONS', Type: 'Gold' },
+  CEYREKALTIN: { Buying: 10722.45, Selling: 10967.28, Name: 'CEYREKALTIN', Type: 'Gold' },
+  YARIMALTIN: { Buying: 21377.89, Selling: 21934.56, Name: 'YARIMALTIN', Type: 'Gold' },
+  TAMALTIN: { Buying: 42889.81, Selling: 43734.95, Name: 'TAMALTIN', Type: 'Gold' },
+  '18AYARALTIN': { Buying: 4892.12, Selling: 4896.7, Name: '18AYARALTIN', Type: 'Gold' },
+};
+const { GRA: _gra, ...TRUNCGIL_WITHOUT_GRAM } = TRUNCGIL;
+
+test('truncgil: gram gold is selected by its exact name, silver by GUMUS', async () => {
+  const { parseTruncgilGramGoldTry, parseTruncgilSilverGramTry } = await import('../../src/utils/market-snapshot');
+  assert.equal(parseTruncgilGramGoldTry(TRUNCGIL), 6740.8);
+  assert.equal(parseTruncgilSilverGramTry(TRUNCGIL), 101.18);
+});
+
+test('truncgil: quarter/half/full/coin/ayar products are never taken as gram gold', async () => {
+  const { parseTruncgilGramGoldTry } = await import('../../src/utils/market-snapshot');
+  assert.equal(parseTruncgilGramGoldTry(TRUNCGIL_WITHOUT_GRAM as any), null);
+  assert.equal(parseTruncgilGramGoldTry(null), null);
+});
+
+test('bigpara + gold-api down, truncgil up: gold is the gram price, NOT the 10967.28 coin price', async () => {
+  const s = await buildMarketSnapshot(
+    io(
+      {
+        'https://open.er-api.com': OPEN_ER,
+        'https://api.gold-api.com': null,
+        'https://finans.truncgil.com': TRUNCGIL,
+      },
+      {},
+    ),
+  );
+  assert.equal(s.goldGramTry, 6740.8);
+  assert.notEqual(s.goldGramTry, 10967.28);
+  assert.equal(s.sources.gold, 'truncgil');
+  assert.equal(s.silverGramTry, 101.18);
+});
+
+test('bigpara unavailable and no reliable fallback for gram gold: gold is null', async () => {
+  const s = await buildMarketSnapshot(
+    io(
+      {
+        'https://open.er-api.com': OPEN_ER,
+        'https://api.gold-api.com': null,
+        'https://finans.truncgil.com': TRUNCGIL_WITHOUT_GRAM,
+      },
+      {},
+    ),
+  );
+  assert.equal(s.goldGramTry, null);
+  assert.equal(s.sources.gold, undefined);
+  // the other fields keep working (partial snapshot)
+  assert.equal(s.usdTry, 48.919186);
+  assert.ok(s.eurTry != null);
+  assert.equal(s.silverGramTry, 101.18);
+});
+
+test('correct gold responses still give the correct gram TRY (gold-api and bigpara)', async () => {
+  const viaGoldApi = await buildMarketSnapshot(
+    io(
+      { 'https://open.er-api.com': OPEN_ER, 'https://api.gold-api.com/price/XAU': { price: 4286.2 } },
+      {},
+    ),
+  );
+  assert.ok(Math.abs((viaGoldApi.goldGramTry as number) - 6741.3) < 1);
+  assert.equal(viaGoldApi.sources.gold, 'gold-api');
+  const viaBigpara = await buildMarketSnapshot(
+    io(
+      { 'https://open.er-api.com': OPEN_ER },
+      { 'https://bigpara.hurriyet.com.tr/altin': 'ALTIN (TL/GR) Alarm 6.740,80 %+0,33' },
+    ),
+  );
+  assert.equal(viaBigpara.goldGramTry, 6740.8);
+  assert.equal(viaBigpara.sources.gold, 'bigpara');
+});
+
+test('a provider failure for gold does not disturb Brent / fuel / crypto', async () => {
+  const s = await buildMarketSnapshot(
+    io(
+      {
+        'https://open.er-api.com': OPEN_ER,
+        'https://api.gold-api.com': new Error('down'),
+        'https://finans.truncgil.com': new Error('down'),
+        'https://api.binance.com': { price: '84160.00' },
+      },
+      {
+        'https://bigpara.hurriyet.com.tr/altin': new Error('down'),
+        'https://bigpara.hurriyet.com.tr/kobi': BRENT_PAGE,
+        'https://bigpara.hurriyet.com.tr/akaryakit': FUEL_PAGE,
+      },
+    ),
+  );
+  assert.equal(s.goldGramTry, null);
+  assert.equal(s.brentUsd, 104.45);
+  assert.equal(s.dieselTry, 93.44);
+  assert.equal(s.btcUsd, 84160);
+});

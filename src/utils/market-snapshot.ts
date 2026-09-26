@@ -269,19 +269,35 @@ export const parseBigparaFuel = (text: string): { gasoline: number | null; diese
     extractFirstNumberAfterLabel(text, 'Motorin Litre fiyatı', 140),
 });
 
-const extractTruncgil = (data: Record<string, unknown> | null, hints: string[]) => {
-  if (!data) return null;
-  for (const [key, value] of Object.entries(data)) {
-    if (!hasHint(key, hints)) continue;
-    if (value && typeof value === 'object' && !Array.isArray(value)) {
-      const map = value as Record<string, unknown>;
-      return parseNum(map.Selling) ?? parseNum(map.Buying) ?? extractPreferredValue(map);
-    }
-    const num = parseNum(value);
-    if (num != null) return num;
+/**
+ * truncgil v4 (https://finans.truncgil.com/v4/today.json) lists MANY gold
+ * instruments under keys such as GRA (gram), CEYREKALTIN (quarter coin),
+ * YARIMALTIN, TAMALTIN, CUMHURIYETALTINI, 14AYARALTIN ... The old code walked
+ * the keys and accepted the first one whose name merely CONTAINED "altin":
+ * that was CEYREKALTIN (10967.28 TRY per coin), which was then published as
+ * TRY per gram. The instrument is now selected by its exact `Name` field
+ * only (GRAMALTIN / GUMUS); anything else is ignored, and a missing entry
+ * means null (never a guess).
+ */
+const truncgilSelling = (
+  data: Record<string, unknown> | null,
+  instrumentName: 'gramaltin' | 'gumus',
+): number | null => {
+  if (!data || typeof data !== 'object') return null;
+  for (const value of Object.values(data)) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+    const row = value as Record<string, unknown>;
+    if (normalizeKey(row.Name) !== instrumentName) continue;
+    return parseNum(row.Selling) ?? parseNum(row.Buying);
   }
   return null;
 };
+
+export const parseTruncgilGramGoldTry = (data: Record<string, unknown> | null): number | null =>
+  truncgilSelling(data, 'gramaltin');
+
+export const parseTruncgilSilverGramTry = (data: Record<string, unknown> | null): number | null =>
+  truncgilSelling(data, 'gumus');
 
 // ── the pipeline ────────────────────────────────────────────────────────────
 export const buildMarketSnapshot = async (io: MarketIo): Promise<MarketSnapshot> => {
@@ -368,8 +384,8 @@ export const buildMarketSnapshot = async (io: MarketIo): Promise<MarketSnapshot>
       const data = await fetchJson('https://finans.truncgil.com/v4/today.json');
       return data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
     });
-    takeGold(extractTruncgil(truncgil, ['gram-altin', 'gram altin', 'altin']), 'truncgil');
-    takeSilver(extractTruncgil(truncgil, ['gumus', 'gram gumus', 'gumus-gr']), 'truncgil');
+    takeGold(parseTruncgilGramGoldTry(truncgil), 'truncgil');
+    takeSilver(parseTruncgilSilverGramTry(truncgil), 'truncgil');
   }
 
   // ── crypto ────────────────────────────────────────────────────────────────
