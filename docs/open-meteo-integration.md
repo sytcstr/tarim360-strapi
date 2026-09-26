@@ -11,7 +11,8 @@ must never be written to `agri-price-observation`.
 - No request is made unless both ingestion is enabled and a base URL is set.
 - The API key is used only in the outbound request and is removed from the
   stored `sourceUrl`.
-- Public role permissions are not enabled by this integration.
+- Public read (`find`/`findOne` on `agri-weather-cache`) is granted by the
+  bootstrap permission list in `src/index.ts` (not by this integration).
 
 ## Open-Meteo configuration
 

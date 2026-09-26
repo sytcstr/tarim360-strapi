@@ -15,6 +15,7 @@ import { runListingStatusToListingStatusMigrationOnce } from './utils/listing-st
 import { ensureListingStatusInContentManagerLayoutOnce } from './utils/listing-status-cm-layout';
 import { isSoftVerifyRefused } from './api/purchase/lib/config';
 import { startUatAuditIfEnabled } from './utils/uat-audit';
+import { runReferenceSeedIfEnabled } from './utils/reference-seed';
 
 /**
  * Faz B-V: reliable, idempotent composite-unique-index creation for the
@@ -1095,6 +1096,9 @@ export default {
     strapi.log.info('Users & Permissions roles synced from bootstrap.');
     // Read-only, env-gated (UAT_RESET_DRYRUN=1) audit; a no-op otherwise.
     startUatAuditIfEnabled(strapi);
+    // Reference seed (81 provinces + 52 products). REFERENCE_SEED_MODE defaults
+    // to off, in which case this does nothing (no query, no mutation).
+    await runReferenceSeedIfEnabled(strapi);
   },
 };
 

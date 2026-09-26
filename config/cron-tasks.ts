@@ -1,5 +1,9 @@
 import type { Core } from '@strapi/strapi';
 import { runMockAgriDataIngestion } from '../src/services/agri-data-ingestion';
+import {
+  decideMockAgriIngestion,
+  MOCK_INGESTION_DISABLED_LOG,
+} from '../src/services/agri-data-ingestion/production-guard';
 import { runOpenMeteoWeatherIngestion } from '../src/services/agri-weather';
 
 type EnvReader = {
@@ -30,7 +34,16 @@ export default (input: CronConfigInput) => {
     },
   };
 
+  // The only ingestion adapter that exists today is the MOCK one (fabricated
+  // prices). It is registered only where decideMockAgriIngestion() allows it
+  // (explicit development/test); in production it is never scheduled.
   if (env.bool('AGRI_INGESTION_ENABLED', false)) {
+    const decision = decideMockAgriIngestion();
+    if (!decision.allowed) {
+      console.warn(`[agri-ingestion] ${MOCK_INGESTION_DISABLED_LOG} (${decision.reason})`);
+    }
+  }
+  if (env.bool('AGRI_INGESTION_ENABLED', false) && decideMockAgriIngestion().allowed) {
     const rule = env('AGRI_INGESTION_CRON', '0 */6 * * *').trim();
     if (!rule || Object.prototype.hasOwnProperty.call(tasks, rule)) {
       throw new Error('AGRI_INGESTION_CRON is empty or conflicts with an existing task');

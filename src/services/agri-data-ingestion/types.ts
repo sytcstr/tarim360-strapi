@@ -41,4 +41,7 @@ export type AgriIngestionSummary = {
   invalid: number;
   startedAt: string;
   finishedAt: string;
+  /** Set when the run was refused (e.g. mock ingestion in production). */
+  skipped?: boolean;
+  skippedReason?: string;
 };
