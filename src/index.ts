@@ -16,6 +16,7 @@ import { ensureListingStatusInContentManagerLayoutOnce } from './utils/listing-s
 import { isSoftVerifyRefused } from './api/purchase/lib/config';
 import { startUatAuditIfEnabled } from './utils/uat-audit';
 import { runReferenceSeedIfEnabled } from './utils/reference-seed';
+import { startRealPriceIngestionIfEnabled } from './services/agri-real-price';
 
 /**
  * Faz B-V: reliable, idempotent composite-unique-index creation for the
@@ -1099,6 +1100,9 @@ export default {
     // Reference seed (81 provinces + 52 products). REFERENCE_SEED_MODE defaults
     // to off, in which case this does nothing (no query, no mutation).
     await runReferenceSeedIfEnabled(strapi);
+    // Real (TOBB) agricultural price ingestion: AGRI_REAL_PRICE_INGESTION_MODE
+    // defaults to off (no network, no database access).
+    startRealPriceIngestionIfEnabled(strapi);
   },
 };
 

@@ -1,0 +1,1116 @@
+[
+  {
+    "code": "BUGDAY",
+    "slug": "bugday",
+    "name": "Buğday",
+    "category": "Hububat",
+    "defaultUnit": "kg",
+    "class": "B",
+    "confidence": "AMBIGUOUS",
+    "tobb": null,
+    "candidates": [
+      {
+        "ana": 1,
+        "alt": 807,
+        "name": "BUĞDAY ANADOLU DURUM EKSTRA"
+      },
+      {
+        "ana": 1,
+        "alt": 808,
+        "name": "BUĞDAY ANADOLU KIRMIZI SERT (1.DERECE)"
+      },
+      {
+        "ana": 1,
+        "alt": 809,
+        "name": "BUĞDAY ANADOLU KIRMIZI SERT (2.DERECE)"
+      },
+      {
+        "ana": 1,
+        "alt": 810,
+        "name": "BUĞDAY ANADOLU KIRMIZI SERT (3.DERECE)"
+      },
+      {
+        "ana": 1,
+        "alt": 811,
+        "name": "BUĞDAY ANADOLU KIRMIZI SERT (4.DERECE)"
+      },
+      {
+        "ana": 1,
+        "alt": 812,
+        "name": "BUĞDAY ANADOLU BEYAZ SERT (2.DERECE)"
+      },
+      {
+        "ana": 1,
+        "alt": 813,
+        "name": "BUĞDAY EKMEKLİK KIRMIZI YARI SERT (1.DERECE)"
+      },
+      {
+        "ana": 1,
+        "alt": 814,
+        "name": "BUĞDAY EKMEKLİK KIRMIZI YARI SERT (2.DERECE)"
+      },
+      {
+        "ana": 1,
+        "alt": 815,
+        "name": "BUĞDAY EKMEKLİK KIRMIZI YARI SERT (3.DERECE)"
+      },
+      {
+        "ana": 1,
+        "alt": 816,
+        "name": "BUĞDAY EKMEKLİK KIRMIZI YARI SERT (4.DERECE)"
+      },
+      {
+        "ana": 1,
+        "alt": 817,
+        "name": "BUĞDAY EKMEKLİK BEYAZ YARI SERT (4.DERECE)"
+      },
+      {
+        "ana": 1,
+        "alt": 818,
+        "name": "BUĞDAY EKMEKLİK BEYAZ YARI SERT (3.DERECE)"
+      },
+      {
+        "ana": 1,
+        "alt": 819,
+        "name": "BUĞDAY DİĞER KIRMIZI (1.DERECE)"
+      },
+      {
+        "ana": 1,
+        "alt": 820,
+        "name": "BUĞDAY DİĞER KIRMIZI (2.DERECE)"
+      },
+      {
+        "ana": 1,
+        "alt": 821,
+        "name": "BUĞDAY DİĞER KIRMIZI (3.DERECE)"
+      },
+      {
+        "ana": 1,
+        "alt": 822,
+        "name": "BUĞDAY DİĞER KIRMIZI (4.DERECE)"
+      },
+      {
+        "ana": 1,
+        "alt": 823,
+        "name": "BUĞDAY EKMEKLİK BEYAZ YUMUŞAK (1.DERECE)"
+      },
+      {
+        "ana": 1,
+        "alt": 824,
+        "name": "BUĞDAY YEMLİK KIRMIZI"
+      },
+      {
+        "ana": 1,
+        "alt": 825,
+        "name": "BUĞDAY YEMLİK BEYAZ"
+      },
+      {
+        "ana": 1,
+        "alt": 831,
+        "name": "BUĞDAY BAREM DIŞI"
+      },
+      {
+        "ana": 1,
+        "alt": 835,
+        "name": "BUĞDAY ANADOLU BEYAZ SERT 1. DERECE"
+      },
+      {
+        "ana": 1,
+        "alt": 836,
+        "name": "BUĞDAY ANADOLU BEYAZ SERT 3. DERECE"
+      },
+      {
+        "ana": 1,
+        "alt": 837,
+        "name": "BUĞDAY ANADOLU BEYAZ SERT 4.DERECE"
+      }
+    ],
+    "notes": "Anadolu kırmızı sert / beyaz / ekmeklik / durum / yemlik and grades: no single \"Buğday\"."
+  },
+  {
+    "code": "ARPA",
+    "slug": "arpa",
+    "name": "Arpa",
+    "category": "Hububat",
+    "defaultUnit": "kg",
+    "class": "B",
+    "confidence": "AMBIGUOUS",
+    "tobb": null,
+    "candidates": [
+      {
+        "ana": 1,
+        "alt": 101,
+        "name": "ARPA BİRALIK"
+      },
+      {
+        "ana": 1,
+        "alt": 102,
+        "name": "ARPA YEMLİK"
+      },
+      {
+        "ana": 1,
+        "alt": 802,
+        "name": "ARPA BEYAZ (1. GRUP)"
+      },
+      {
+        "ana": 1,
+        "alt": 804,
+        "name": "ARPA BEYAZ (2.GRUP)"
+      },
+      {
+        "ana": 1,
+        "alt": 805,
+        "name": "ARPA BEYAZ (3. GRUP)"
+      },
+      {
+        "ana": 1,
+        "alt": 806,
+        "name": "ARPA ÇAKIR"
+      },
+      {
+        "ana": 1,
+        "alt": 832,
+        "name": "ARPA BAREM DIŞI"
+      }
+    ],
+    "notes": "Beyaz (grup), biralık, yemlik, çakır, barem dışı: no single \"Arpa\"."
+  },
+  {
+    "code": "MISIR",
+    "slug": "misir",
+    "name": "Mısır",
+    "category": "Hububat",
+    "defaultUnit": "kg",
+    "class": "B",
+    "confidence": "AMBIGUOUS",
+    "tobb": null,
+    "candidates": [
+      {
+        "ana": 1,
+        "alt": 601,
+        "name": "MISIR SARI"
+      },
+      {
+        "ana": 1,
+        "alt": 602,
+        "name": "MISIR BEYAZ"
+      },
+      {
+        "ana": 1,
+        "alt": 604,
+        "name": "MISIR KARIŞIK"
+      },
+      {
+        "ana": 1,
+        "alt": 830,
+        "name": "MISIR KURU"
+      }
+    ],
+    "notes": "Sarı / beyaz / karışık / kuru: no single \"Mısır\"."
+  },
+  {
+    "code": "CAVDAR",
+    "slug": "cavdar",
+    "name": "Çavdar",
+    "category": "Hububat",
+    "defaultUnit": "kg",
+    "class": "A",
+    "confidence": "EXACT",
+    "tobb": {
+      "ana": 1,
+      "alt": 301,
+      "name": "ÇAVDAR"
+    },
+    "candidates": [],
+    "notes": "Plain \"ÇAVDAR\"; the 2./3. GRUP items are grade variants and are not used."
+  },
+  {
+    "code": "YULAF",
+    "slug": "yulaf",
+    "name": "Yulaf",
+    "category": "Hububat",
+    "defaultUnit": "kg",
+    "class": "A",
+    "confidence": "EXACT",
+    "tobb": {
+      "ana": 1,
+      "alt": 801,
+      "name": "YULAF"
+    },
+    "candidates": [],
+    "notes": "Plain \"YULAF\"; 1./2. GRUP items are grade variants and are not used."
+  },
+  {
+    "code": "CELTIK",
+    "slug": "celtik",
+    "name": "Çeltik",
+    "category": "Hububat",
+    "defaultUnit": "kg",
+    "class": "A",
+    "confidence": "EXACT",
+    "tobb": {
+      "ana": 1,
+      "alt": 403,
+      "name": "ÇELTİK"
+    },
+    "candidates": [],
+    "notes": "Exact name."
+  },
+  {
+    "code": "TRITIKALE",
+    "slug": "tritikale",
+    "name": "Tritikale",
+    "category": "Hububat",
+    "defaultUnit": "kg",
+    "class": "D",
+    "confidence": "NO_MATCH",
+    "tobb": null,
+    "candidates": [],
+    "notes": "No triticale item in TOBB."
+  },
+  {
+    "code": "DARI",
+    "slug": "dari",
+    "name": "Darı",
+    "category": "Hububat",
+    "defaultUnit": "kg",
+    "class": "A",
+    "confidence": "SAFE_ALIAS",
+    "tobb": {
+      "ana": 1,
+      "alt": 501,
+      "name": "DARI NATÜREL"
+    },
+    "candidates": [],
+    "notes": "\"DARI NATÜREL\": the only millet item (natural = unprocessed)."
+  },
+  {
+    "code": "NOHUT",
+    "slug": "nohut",
+    "name": "Nohut",
+    "category": "Bakliyat",
+    "defaultUnit": "kg",
+    "class": "A",
+    "confidence": "EXACT",
+    "tobb": {
+      "ana": 3,
+      "alt": 704,
+      "name": "NOHUT"
+    },
+    "candidates": [],
+    "notes": "Plain \"NOHUT\"; İSPANYOL/KALBURALTI/NATÜREL/SIRA/TÜYLÜ are variants and are not used."
+  },
+  {
+    "code": "KURU_FASULYE",
+    "slug": "kuru-fasulye",
+    "name": "Kuru Fasulye",
+    "category": "Bakliyat",
+    "defaultUnit": "kg",
+    "class": "B",
+    "confidence": "AMBIGUOUS",
+    "tobb": null,
+    "candidates": [
+      {
+        "ana": 3,
+        "alt": 501,
+        "name": "KURU FASULYE NATÜREL"
+      },
+      {
+        "ana": 3,
+        "alt": 502,
+        "name": "K.FASULYE DERMASON"
+      },
+      {
+        "ana": 3,
+        "alt": 504,
+        "name": "K.FASULYE HOROZ"
+      },
+      {
+        "ana": 3,
+        "alt": 505,
+        "name": "K.FASULYE SELANİK"
+      },
+      {
+        "ana": 3,
+        "alt": 506,
+        "name": "K.FASULYE ÇALI"
+      },
+      {
+        "ana": 3,
+        "alt": 508,
+        "name": "K.FASULYE ŞEKER"
+      },
+      {
+        "ana": 3,
+        "alt": 509,
+        "name": "K.FASULYE BARBUNYA"
+      },
+      {
+        "ana": 3,
+        "alt": 510,
+        "name": "K.FASULYE BOMBAY"
+      },
+      {
+        "ana": 3,
+        "alt": 707,
+        "name": "FASULYA KURU"
+      }
+    ],
+    "notes": "Natürel vs many bean varieties."
+  },
+  {
+    "code": "KIRMIZI_MERCIMEK",
+    "slug": "kirmizi-mercimek",
+    "name": "Kırmızı Mercimek",
+    "category": "Bakliyat",
+    "defaultUnit": "kg",
+    "class": "B",
+    "confidence": "AMBIGUOUS",
+    "tobb": null,
+    "candidates": [
+      {
+        "ana": 3,
+        "alt": 601,
+        "name": "MERCİMEK KIRMIZI KABUKLU"
+      },
+      {
+        "ana": 3,
+        "alt": 602,
+        "name": "MERCİMEK KIRMIZI KIRILMIŞ İÇ."
+      }
+    ],
+    "notes": "Kabuklu (raw) vs kırılmış iç (processed)."
+  },
+  {
+    "code": "YESIL_MERCIMEK",
+    "slug": "yesil-mercimek",
+    "name": "Yeşil Mercimek",
+    "category": "Bakliyat",
+    "defaultUnit": "kg",
+    "class": "A",
+    "confidence": "EXACT",
+    "tobb": {
+      "ana": 3,
+      "alt": 609,
+      "name": "MERCİMEK YEŞİL"
+    },
+    "candidates": [],
+    "notes": "\"MERCİMEK YEŞİL\"; SULTANİ (608) is a distinct variety and is not used."
+  },
+  {
+    "code": "BAKLA",
+    "slug": "bakla",
+    "name": "Bakla",
+    "category": "Bakliyat",
+    "defaultUnit": "kg",
+    "class": "B",
+    "confidence": "AMBIGUOUS",
+    "tobb": null,
+    "candidates": [
+      {
+        "ana": 3,
+        "alt": 301,
+        "name": "KURU BAKLA KABUKLU"
+      },
+      {
+        "ana": 3,
+        "alt": 302,
+        "name": "KURU BAKLA İÇ"
+      }
+    ],
+    "notes": "Kabuklu vs iç."
+  },
+  {
+    "code": "BEZELYE",
+    "slug": "bezelye",
+    "name": "Bezelye",
+    "category": "Bakliyat",
+    "defaultUnit": "kg",
+    "class": "C",
+    "confidence": "NO_MATCH",
+    "tobb": null,
+    "candidates": [],
+    "notes": "Fresh pea (hal/HKS); TOBB lists no pea item."
+  },
+  {
+    "code": "AYCICEGI",
+    "slug": "aycicegi",
+    "name": "Ayçiçeği",
+    "category": "Yağlı Tohumlar",
+    "defaultUnit": "kg",
+    "class": "B",
+    "confidence": "AMBIGUOUS",
+    "tobb": null,
+    "candidates": [
+      {
+        "ana": 4,
+        "alt": 601,
+        "name": "AYÇİÇEĞİ TOHUMLUK"
+      },
+      {
+        "ana": 4,
+        "alt": 602,
+        "name": "AYÇİÇEĞİ YAĞLIK"
+      }
+    ],
+    "notes": "Tohumluk (planting seed) vs yağlık (oil crop)."
+  },
+  {
+    "code": "KANOLA",
+    "slug": "kanola",
+    "name": "Kanola",
+    "category": "Yağlı Tohumlar",
+    "defaultUnit": "kg",
+    "class": "A",
+    "confidence": "EXACT",
+    "tobb": {
+      "ana": 4,
+      "alt": 402,
+      "name": "KANOLA"
+    },
+    "candidates": [],
+    "notes": "Exact name."
+  },
+  {
+    "code": "SOYA_FASULYESI",
+    "slug": "soya-fasulyesi",
+    "name": "Soya Fasulyesi",
+    "category": "Yağlı Tohumlar",
+    "defaultUnit": "kg",
+    "class": "A",
+    "confidence": "EXACT",
+    "tobb": {
+      "ana": 4,
+      "alt": 501,
+      "name": "SOYA FASULYESİ"
+    },
+    "candidates": [],
+    "notes": "Exact name."
+  },
+  {
+    "code": "SUSAM",
+    "slug": "susam",
+    "name": "Susam",
+    "category": "Yağlı Tohumlar",
+    "defaultUnit": "kg",
+    "class": "D",
+    "confidence": "NO_MATCH",
+    "tobb": null,
+    "candidates": [],
+    "notes": "No sesame item in TOBB."
+  },
+  {
+    "code": "ASPIR",
+    "slug": "aspir",
+    "name": "Aspir",
+    "category": "Yağlı Tohumlar",
+    "defaultUnit": "kg",
+    "class": "D",
+    "confidence": "NO_MATCH",
+    "tobb": null,
+    "candidates": [],
+    "notes": "No safflower item in TOBB."
+  },
+  {
+    "code": "YER_FISTIGI",
+    "slug": "yer-fistigi",
+    "name": "Yer Fıstığı",
+    "category": "Yağlı Tohumlar",
+    "defaultUnit": "kg",
+    "class": "D",
+    "confidence": "NO_MATCH",
+    "tobb": null,
+    "candidates": [],
+    "notes": "No peanut item in TOBB."
+  },
+  {
+    "code": "DOMATES",
+    "slug": "domates",
+    "name": "Domates",
+    "category": "Sebze",
+    "defaultUnit": "kg",
+    "class": "C",
+    "confidence": "NO_MATCH",
+    "tobb": null,
+    "candidates": [],
+    "notes": "Fresh vegetable (hal/HKS)."
+  },
+  {
+    "code": "BIBER",
+    "slug": "biber",
+    "name": "Biber",
+    "category": "Sebze",
+    "defaultUnit": "kg",
+    "class": "C",
+    "confidence": "NO_MATCH",
+    "tobb": null,
+    "candidates": [],
+    "notes": "Fresh vegetable (hal/HKS)."
+  },
+  {
+    "code": "PATATES",
+    "slug": "patates",
+    "name": "Patates",
+    "category": "Sebze",
+    "defaultUnit": "kg",
+    "class": "B",
+    "confidence": "AMBIGUOUS",
+    "tobb": null,
+    "candidates": [
+      {
+        "ana": 8,
+        "alt": 101,
+        "name": "PATATES ESKİ ÜRÜN"
+      },
+      {
+        "ana": 8,
+        "alt": 102,
+        "name": "PATATES YENİ ÜRÜN"
+      }
+    ],
+    "notes": "Eski ürün vs yeni ürün (season variants)."
+  },
+  {
+    "code": "SOGAN",
+    "slug": "sogan",
+    "name": "Soğan",
+    "category": "Sebze",
+    "defaultUnit": "kg",
+    "class": "C",
+    "confidence": "NO_MATCH",
+    "tobb": null,
+    "candidates": [],
+    "notes": "Fresh vegetable (hal/HKS)."
+  },
+  {
+    "code": "SALATALIK",
+    "slug": "salatalik",
+    "name": "Salatalık",
+    "category": "Sebze",
+    "defaultUnit": "kg",
+    "class": "C",
+    "confidence": "NO_MATCH",
+    "tobb": null,
+    "candidates": [],
+    "notes": "Fresh vegetable (hal/HKS)."
+  },
+  {
+    "code": "PATLICAN",
+    "slug": "patlican",
+    "name": "Patlıcan",
+    "category": "Sebze",
+    "defaultUnit": "kg",
+    "class": "C",
+    "confidence": "NO_MATCH",
+    "tobb": null,
+    "candidates": [],
+    "notes": "Fresh vegetable (hal/HKS)."
+  },
+  {
+    "code": "HAVUC",
+    "slug": "havuc",
+    "name": "Havuç",
+    "category": "Sebze",
+    "defaultUnit": "kg",
+    "class": "C",
+    "confidence": "NO_MATCH",
+    "tobb": null,
+    "candidates": [],
+    "notes": "Fresh vegetable (hal/HKS)."
+  },
+  {
+    "code": "LAHANA",
+    "slug": "lahana",
+    "name": "Lahana",
+    "category": "Sebze",
+    "defaultUnit": "kg",
+    "class": "C",
+    "confidence": "NO_MATCH",
+    "tobb": null,
+    "candidates": [],
+    "notes": "Fresh vegetable (hal/HKS)."
+  },
+  {
+    "code": "ELMA",
+    "slug": "elma",
+    "name": "Elma",
+    "category": "Meyve",
+    "defaultUnit": "kg",
+    "class": "C",
+    "confidence": "NO_MATCH",
+    "tobb": null,
+    "candidates": [],
+    "notes": "Fresh fruit (hal/HKS)."
+  },
+  {
+    "code": "UZUM",
+    "slug": "uzum",
+    "name": "Üzüm",
+    "category": "Meyve",
+    "defaultUnit": "kg",
+    "class": "C",
+    "confidence": "NO_MATCH",
+    "tobb": null,
+    "candidates": [],
+    "notes": "Fresh grape (hal/HKS); TOBB lists only dried raisins."
+  },
+  {
+    "code": "PORTAKAL",
+    "slug": "portakal",
+    "name": "Portakal",
+    "category": "Meyve",
+    "defaultUnit": "kg",
+    "class": "C",
+    "confidence": "NO_MATCH",
+    "tobb": null,
+    "candidates": [],
+    "notes": "Fresh fruit (hal/HKS)."
+  },
+  {
+    "code": "MANDALINA",
+    "slug": "mandalina",
+    "name": "Mandalina",
+    "category": "Meyve",
+    "defaultUnit": "kg",
+    "class": "C",
+    "confidence": "NO_MATCH",
+    "tobb": null,
+    "candidates": [],
+    "notes": "Fresh fruit (hal/HKS)."
+  },
+  {
+    "code": "LIMON",
+    "slug": "limon",
+    "name": "Limon",
+    "category": "Meyve",
+    "defaultUnit": "kg",
+    "class": "C",
+    "confidence": "NO_MATCH",
+    "tobb": null,
+    "candidates": [],
+    "notes": "Fresh fruit (hal/HKS)."
+  },
+  {
+    "code": "KIRAZ",
+    "slug": "kiraz",
+    "name": "Kiraz",
+    "category": "Meyve",
+    "defaultUnit": "kg",
+    "class": "C",
+    "confidence": "NO_MATCH",
+    "tobb": null,
+    "candidates": [],
+    "notes": "Fresh fruit (hal/HKS)."
+  },
+  {
+    "code": "KAYISI",
+    "slug": "kayisi",
+    "name": "Kayısı",
+    "category": "Meyve",
+    "defaultUnit": "kg",
+    "class": "C",
+    "confidence": "NO_MATCH",
+    "tobb": null,
+    "candidates": [],
+    "notes": "Fresh apricot (hal/HKS); TOBB lists only dried apricot, a different product."
+  },
+  {
+    "code": "SEFTALI",
+    "slug": "seftali",
+    "name": "Şeftali",
+    "category": "Meyve",
+    "defaultUnit": "kg",
+    "class": "C",
+    "confidence": "NO_MATCH",
+    "tobb": null,
+    "candidates": [],
+    "notes": "Fresh fruit (hal/HKS)."
+  },
+  {
+    "code": "NAR",
+    "slug": "nar",
+    "name": "Nar",
+    "category": "Meyve",
+    "defaultUnit": "kg",
+    "class": "C",
+    "confidence": "NO_MATCH",
+    "tobb": null,
+    "candidates": [],
+    "notes": "Fresh fruit (hal/HKS)."
+  },
+  {
+    "code": "MUZ",
+    "slug": "muz",
+    "name": "Muz",
+    "category": "Meyve",
+    "defaultUnit": "kg",
+    "class": "C",
+    "confidence": "NO_MATCH",
+    "tobb": null,
+    "candidates": [],
+    "notes": "Fresh fruit (hal/HKS)."
+  },
+  {
+    "code": "PAMUK",
+    "slug": "pamuk",
+    "name": "Pamuk",
+    "category": "Endüstri Bitkileri",
+    "defaultUnit": "kg",
+    "class": "B",
+    "confidence": "AMBIGUOUS",
+    "tobb": null,
+    "candidates": [
+      {
+        "ana": 12,
+        "alt": 306,
+        "name": "PAMUK ÇEKİRDEKLİ ANTAKYA"
+      },
+      {
+        "ana": 12,
+        "alt": 307,
+        "name": "PAMUK ÇEKİRDEKLİ GÜNEYDOĞU"
+      },
+      {
+        "ana": 12,
+        "alt": 312,
+        "name": "PAMUK ÇEKİRDEKLİ EGE"
+      },
+      {
+        "ana": 12,
+        "alt": 313,
+        "name": "PAMUK ÇEKİRDEKLİ ÇUKUROVA"
+      },
+      {
+        "ana": 12,
+        "alt": 806,
+        "name": "PAMUK ROLL EGE EKSTRA"
+      },
+      {
+        "ana": 12,
+        "alt": 807,
+        "name": "PAMUK ROLL EGE ST-1"
+      },
+      {
+        "ana": 12,
+        "alt": 808,
+        "name": "PAMUK ROLL EGE ST-2"
+      },
+      {
+        "ana": 12,
+        "alt": 809,
+        "name": "PAMUK ROLL EGE ST-1-HB"
+      },
+      {
+        "ana": 12,
+        "alt": 811,
+        "name": "PAMUK ROLL ÇUK.STD. EKSTRA"
+      },
+      {
+        "ana": 12,
+        "alt": 812,
+        "name": "PAMUK ROLL ÇUK.STD. 1 B"
+      },
+      {
+        "ana": 12,
+        "alt": 813,
+        "name": "PAMUK ROLL ÇUK.STD. 1 HB"
+      },
+      {
+        "ana": 12,
+        "alt": 814,
+        "name": "PAMUK ROLL ÇUK.STD. 2 B"
+      },
+      {
+        "ana": 12,
+        "alt": 815,
+        "name": "PAMUK YAĞLIK ÇİĞİT ROLLEGİN"
+      },
+      {
+        "ana": 12,
+        "alt": 816,
+        "name": "PAMUK ROLL HATAY STD. 1"
+      }
+    ],
+    "notes": "Çekirdekli (by region) vs roll/lint grades."
+  },
+  {
+    "code": "SEKER_PANCARI",
+    "slug": "seker-pancari",
+    "name": "Şeker Pancarı",
+    "category": "Endüstri Bitkileri",
+    "defaultUnit": "kg",
+    "class": "D",
+    "confidence": "NO_MATCH",
+    "tobb": null,
+    "candidates": [],
+    "notes": "Contract crop (no exchange price)."
+  },
+  {
+    "code": "TUTUN",
+    "slug": "tutun",
+    "name": "Tütün",
+    "category": "Endüstri Bitkileri",
+    "defaultUnit": "kg",
+    "class": "D",
+    "confidence": "NO_MATCH",
+    "tobb": null,
+    "candidates": [],
+    "notes": "Regulated/contract crop (no exchange price)."
+  },
+  {
+    "code": "CAY",
+    "slug": "cay",
+    "name": "Çay",
+    "category": "Endüstri Bitkileri",
+    "defaultUnit": "kg",
+    "class": "D",
+    "confidence": "NO_MATCH",
+    "tobb": null,
+    "candidates": [],
+    "notes": "Contract crop (no exchange price)."
+  },
+  {
+    "code": "HASHAS",
+    "slug": "hashas",
+    "name": "Haşhaş",
+    "category": "Endüstri Bitkileri",
+    "defaultUnit": "kg",
+    "class": "B",
+    "confidence": "AMBIGUOUS",
+    "tobb": null,
+    "candidates": [
+      {
+        "ana": 4,
+        "alt": 201,
+        "name": "HAŞHAŞ TOHUMU MAVİ"
+      },
+      {
+        "ana": 4,
+        "alt": 202,
+        "name": "HAŞHAŞ TOHUMU BEYAZ"
+      },
+      {
+        "ana": 4,
+        "alt": 203,
+        "name": "HAŞHAŞ TOHUMU SARI"
+      }
+    ],
+    "notes": "Haşhaş tohumu by colour (mavi/beyaz/sarı)."
+  },
+  {
+    "code": "FINDIK",
+    "slug": "findik",
+    "name": "Fındık",
+    "category": "Kuruyemiş",
+    "defaultUnit": "kg",
+    "class": "B",
+    "confidence": "AMBIGUOUS",
+    "tobb": null,
+    "candidates": [
+      {
+        "ana": 9,
+        "alt": 202,
+        "name": "FINDIK KABUKLU SİVRİ"
+      },
+      {
+        "ana": 9,
+        "alt": 204,
+        "name": "FINDIK İÇ 11-13"
+      },
+      {
+        "ana": 9,
+        "alt": 205,
+        "name": "FINDIK İÇ 12-14"
+      },
+      {
+        "ana": 9,
+        "alt": 206,
+        "name": "FINDIK İÇ 13-15"
+      },
+      {
+        "ana": 9,
+        "alt": 904,
+        "name": "FINDIK KABUKLU TOMBUL (LEVANT)"
+      },
+      {
+        "ana": 9,
+        "alt": 905,
+        "name": "FINDIK İÇ 9-15 SIRAMALI EKSTRA"
+      },
+      {
+        "ana": 9,
+        "alt": 906,
+        "name": "FINDIK İÇ 9-15 SIRAMALI 1.SINIF"
+      },
+      {
+        "ana": 9,
+        "alt": 907,
+        "name": "FINDIK İÇ 9-15 SIRAMALI 2.SINIF"
+      },
+      {
+        "ana": 9,
+        "alt": 908,
+        "name": "FINDIK İÇ 9-11 (1.SINIF)"
+      },
+      {
+        "ana": 9,
+        "alt": 909,
+        "name": "FINDIK İÇ BURUŞUK"
+      },
+      {
+        "ana": 9,
+        "alt": 910,
+        "name": "FINDIK İÇ ÖZÜRLÜ"
+      },
+      {
+        "ana": 9,
+        "alt": 911,
+        "name": "FINDIK KABUKLU TOMBUL (GİRESUN)"
+      }
+    ],
+    "notes": "Kabuklu (tombul/sivri) vs iç by calibre/grade."
+  },
+  {
+    "code": "ANTEP_FISTIGI",
+    "slug": "antep-fistigi",
+    "name": "Antep Fıstığı",
+    "category": "Kuruyemiş",
+    "defaultUnit": "kg",
+    "class": "B",
+    "confidence": "AMBIGUOUS",
+    "tobb": null,
+    "candidates": [
+      {
+        "ana": 9,
+        "alt": 102,
+        "name": "ANTEP FISTIĞI ÇITLAK KAVLAK"
+      },
+      {
+        "ana": 9,
+        "alt": 105,
+        "name": "ANTEP FISTIĞI YEŞİL İÇ"
+      },
+      {
+        "ana": 9,
+        "alt": 106,
+        "name": "ANTEP FISTIĞI BOZ İÇ"
+      },
+      {
+        "ana": 9,
+        "alt": 108,
+        "name": "ANTEP FISTIĞI SARI İÇ"
+      },
+      {
+        "ana": 9,
+        "alt": 903,
+        "name": "ANTEP FISTIĞI KABUKLU"
+      }
+    ],
+    "notes": "Kabuklu vs iç (boz/sarı/yeşil)."
+  },
+  {
+    "code": "CEVIZ",
+    "slug": "ceviz",
+    "name": "Ceviz",
+    "category": "Kuruyemiş",
+    "defaultUnit": "kg",
+    "class": "B",
+    "confidence": "AMBIGUOUS",
+    "tobb": null,
+    "candidates": [
+      {
+        "ana": 9,
+        "alt": 801,
+        "name": "CEVİZ KABUKLU"
+      },
+      {
+        "ana": 9,
+        "alt": 802,
+        "name": "CEVİZ İÇ"
+      }
+    ],
+    "notes": "Kabuklu vs iç."
+  },
+  {
+    "code": "BADEM",
+    "slug": "badem",
+    "name": "Badem",
+    "category": "Kuruyemiş",
+    "defaultUnit": "kg",
+    "class": "B",
+    "confidence": "AMBIGUOUS",
+    "tobb": null,
+    "candidates": [
+      {
+        "ana": 9,
+        "alt": 902,
+        "name": "BADEM İÇ"
+      }
+    ],
+    "notes": "Only \"BADEM İÇ\" (shelled kernel) is listed; whether that is the intended product needs a decision."
+  },
+  {
+    "code": "KESTANE",
+    "slug": "kestane",
+    "name": "Kestane",
+    "category": "Kuruyemiş",
+    "defaultUnit": "kg",
+    "class": "D",
+    "confidence": "NO_MATCH",
+    "tobb": null,
+    "candidates": [],
+    "notes": "No chestnut item in TOBB."
+  },
+  {
+    "code": "YONCA",
+    "slug": "yonca",
+    "name": "Yonca",
+    "category": "Yem Bitkileri",
+    "defaultUnit": "kg",
+    "class": "D",
+    "confidence": "NO_MATCH",
+    "tobb": null,
+    "candidates": [],
+    "notes": "No item (küspeler group is empty)."
+  },
+  {
+    "code": "FIG",
+    "slug": "fig",
+    "name": "Fiğ",
+    "category": "Yem Bitkileri",
+    "defaultUnit": "kg",
+    "class": "A",
+    "confidence": "EXACT",
+    "tobb": {
+      "ana": 3,
+      "alt": 201,
+      "name": "FİĞ"
+    },
+    "candidates": [],
+    "notes": "\"FİĞ\" (listed under bakliyat in TOBB, the same commodity)."
+  },
+  {
+    "code": "KORUNGA",
+    "slug": "korunga",
+    "name": "Korunga",
+    "category": "Yem Bitkileri",
+    "defaultUnit": "kg",
+    "class": "D",
+    "confidence": "NO_MATCH",
+    "tobb": null,
+    "candidates": [],
+    "notes": "No item in TOBB."
+  },
+  {
+    "code": "SILAJLIK_MISIR",
+    "slug": "silajlik-misir",
+    "name": "Silajlık Mısır",
+    "category": "Yem Bitkileri",
+    "defaultUnit": "kg",
+    "class": "D",
+    "confidence": "NO_MATCH",
+    "tobb": null,
+    "candidates": [],
+    "notes": "Silage maize is not an exchange commodity."
+  }
+]

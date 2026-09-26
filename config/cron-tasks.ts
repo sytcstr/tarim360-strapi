@@ -1,5 +1,6 @@
 import type { Core } from '@strapi/strapi';
 import { runMockAgriDataIngestion } from '../src/services/agri-data-ingestion';
+import { readRealPriceMode, runRealPriceIngestionOnce } from '../src/services/agri-real-price';
 import {
   decideMockAgriIngestion,
   MOCK_INGESTION_DISABLED_LOG,
@@ -57,6 +58,18 @@ export default (input: CronConfigInput) => {
       } catch (error) {
         strapi.log.error(`Agri ingestion failed: ${String(error)}`);
       }
+    };
+  }
+
+  // Real TOBB price ingestion: registered only when the mode gate is dry-run/apply.
+  // Twice a day is plenty for exchange data and keeps the load on TOBB tiny.
+  if (readRealPriceMode() !== 'off') {
+    const rule = env('AGRI_REAL_PRICE_CRON', '20 5,14 * * *').trim();
+    if (!rule || Object.prototype.hasOwnProperty.call(tasks, rule)) {
+      throw new Error('AGRI_REAL_PRICE_CRON is empty or conflicts with an existing task');
+    }
+    tasks[rule] = async ({ strapi }) => {
+      await runRealPriceIngestionOnce(strapi);
     };
   }
 

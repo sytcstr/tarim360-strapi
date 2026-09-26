@@ -1,0 +1,786 @@
+[
+  {
+    "code": "5AD10",
+    "name": "ADANA TİCARET BORSASI",
+    "key": "ADANA",
+    "provinceSlug": "adana",
+    "displayName": "Adana Ticaret Borsası"
+  },
+  {
+    "code": "5AD30",
+    "name": "ADIYAMAN TİCARET BORSASI",
+    "key": "ADIYAMAN",
+    "provinceSlug": "adiyaman",
+    "displayName": "Adıyaman Ticaret Borsası"
+  },
+  {
+    "code": "5AF10",
+    "name": "AFYON TICARET BORSASI",
+    "key": "AFYON",
+    "provinceSlug": "afyonkarahisar",
+    "displayName": "Afyon Ticaret Borsası"
+  },
+  {
+    "code": "5AK10",
+    "name": "AKHISAR TICARET BORSASI",
+    "key": "AKHISAR",
+    "provinceSlug": "manisa",
+    "displayName": "Akhisar Ticaret Borsası"
+  },
+  {
+    "code": "5AK20",
+    "name": "AKSARAY TICARET BORSASI",
+    "key": "AKSARAY",
+    "provinceSlug": "aksaray",
+    "displayName": "Aksaray Ticaret Borsası"
+  },
+  {
+    "code": "5AK30",
+    "name": "AKSEHIR TICARET BORSASI",
+    "key": "AKSEHIR",
+    "provinceSlug": "konya",
+    "displayName": "Aksehir Ticaret Borsası"
+  },
+  {
+    "code": "5AK40",
+    "name": "AKYAZI TICARET BORSASI",
+    "key": "AKYAZI",
+    "provinceSlug": "sakarya",
+    "displayName": "Akyazi Ticaret Borsası"
+  },
+  {
+    "code": "5AL05",
+    "name": "ALACA TICARET BORSASI",
+    "key": "ALACA",
+    "provinceSlug": "corum",
+    "displayName": "Alaca Ticaret Borsası"
+  },
+  {
+    "code": "5AL10",
+    "name": "ALASEHIR TICARET BORSASI",
+    "key": "ALASEHIR",
+    "provinceSlug": "manisa",
+    "displayName": "Alasehir Ticaret Borsası"
+  },
+  {
+    "code": "5AN10",
+    "name": "ANKARA TICARET BORSASI",
+    "key": "ANKARA",
+    "provinceSlug": "ankara",
+    "displayName": "Ankara Ticaret Borsası"
+  },
+  {
+    "code": "5AN20",
+    "name": "ANTAKYA TICARET BORSASI",
+    "key": "ANTAKYA",
+    "provinceSlug": "hatay",
+    "displayName": "Antakya Ticaret Borsası"
+  },
+  {
+    "code": "5AN30",
+    "name": "ANTALYA TICARET BORSASI",
+    "key": "ANTALYA",
+    "provinceSlug": "antalya",
+    "displayName": "Antalya Ticaret Borsası"
+  },
+  {
+    "code": "5AY10",
+    "name": "AYDIN TICARET BORSASI",
+    "key": "AYDIN",
+    "provinceSlug": "aydin",
+    "displayName": "Aydın Ticaret Borsası"
+  },
+  {
+    "code": "5BA01",
+    "name": "BABAESKİ TİCARET BORSASI",
+    "key": "BABAESKI",
+    "provinceSlug": "kirklareli",
+    "displayName": "Babaeski Ticaret Borsası"
+  },
+  {
+    "code": "5BA05",
+    "name": "BAFRA TICARET BORSASI",
+    "key": "BAFRA",
+    "provinceSlug": "samsun",
+    "displayName": "Bafra Ticaret Borsası"
+  },
+  {
+    "code": "5BA10",
+    "name": "BALIKESIR TICARET BORSASI",
+    "key": "BALIKESIR",
+    "provinceSlug": "balikesir",
+    "displayName": "Balıkesir Ticaret Borsası"
+  },
+  {
+    "code": "5BA20",
+    "name": "BANDIRMA TICARET BORSASI",
+    "key": "BANDIRMA",
+    "provinceSlug": "balikesir",
+    "displayName": "Bandirma Ticaret Borsası"
+  },
+  {
+    "code": "5BA25",
+    "name": "BATMAN TİCARET BORSASI",
+    "key": "BATMAN",
+    "provinceSlug": "batman",
+    "displayName": "Batman Ticaret Borsası"
+  },
+  {
+    "code": "5BI10",
+    "name": "BIGA TICARET BORSASI",
+    "key": "BIGA",
+    "provinceSlug": "canakkale",
+    "displayName": "Biga Ticaret Borsası"
+  },
+  {
+    "code": "5BO10",
+    "name": "BOĞAZLIYAN TİCARET BORSASI",
+    "key": "BOGAZLIYAN",
+    "provinceSlug": "yozgat",
+    "displayName": "Boğazlıyan Ticaret Borsası"
+  },
+  {
+    "code": "5BO20",
+    "name": "BOLVADİN TİCARET BORSASI",
+    "key": "BOLVADIN",
+    "provinceSlug": "afyonkarahisar",
+    "displayName": "Bolvadin Ticaret Borsası"
+  },
+  {
+    "code": "5BU05",
+    "name": "BURDUR TICARET BORSASI",
+    "key": "BURDUR",
+    "provinceSlug": "burdur",
+    "displayName": "Burdur Ticaret Borsası"
+  },
+  {
+    "code": "5BU10",
+    "name": "BURSA TICARET BORSASI",
+    "key": "BURSA",
+    "provinceSlug": "bursa",
+    "displayName": "Bursa Ticaret Borsası"
+  },
+  {
+    "code": "5CA10",
+    "name": "CANAKKALE TICARET BORSASI",
+    "key": "CANAKKALE",
+    "provinceSlug": "canakkale",
+    "displayName": "Çanakkale Ticaret Borsası"
+  },
+  {
+    "code": "5CA30",
+    "name": "CANKIRI TİCARET BORSASI",
+    "key": "CANKIRI",
+    "provinceSlug": "cankiri",
+    "displayName": "Çankırı Ticaret Borsası"
+  },
+  {
+    "code": "5CA20",
+    "name": "CARSAMBA TICARET BORSASI",
+    "key": "CARSAMBA",
+    "provinceSlug": "samsun",
+    "displayName": "Carsamba Ticaret Borsası"
+  },
+  {
+    "code": "5CE10",
+    "name": "CEYHAN TICARET BORSASI",
+    "key": "CEYHAN",
+    "provinceSlug": "adana",
+    "displayName": "Ceyhan Ticaret Borsası"
+  },
+  {
+    "code": "5CI10",
+    "name": "CİHANBEYLİ TİCARET BORSASI",
+    "key": "CIHANBEYLI",
+    "provinceSlug": "konya",
+    "displayName": "Cihanbeyli Ticaret Borsası"
+  },
+  {
+    "code": "5CO10",
+    "name": "CORLU TICARET BORSASI",
+    "key": "CORLU",
+    "provinceSlug": "tekirdag",
+    "displayName": "Corlu Ticaret Borsası"
+  },
+  {
+    "code": "5CO20",
+    "name": "CORUM TICARET BORSASI",
+    "key": "CORUM",
+    "provinceSlug": "corum",
+    "displayName": "Çorum Ticaret Borsası"
+  },
+  {
+    "code": "5CU10",
+    "name": "CUBUK TICARET BORSASI",
+    "key": "CUBUK",
+    "provinceSlug": "ankara",
+    "displayName": "Cubuk Ticaret Borsası"
+  },
+  {
+    "code": "5DE10",
+    "name": "DENIZLI TICARET BORSASI",
+    "key": "DENIZLI",
+    "provinceSlug": "denizli",
+    "displayName": "Denizli Ticaret Borsası"
+  },
+  {
+    "code": "5DI10",
+    "name": "DIYARBAKIR TICARET BORSASI",
+    "key": "DIYARBAKIR",
+    "provinceSlug": "diyarbakir",
+    "displayName": "Diyarbakır Ticaret Borsası"
+  },
+  {
+    "code": "5ED10",
+    "name": "EDIRNE TICARET BORSASI",
+    "key": "EDIRNE",
+    "provinceSlug": "edirne",
+    "displayName": "Edirne Ticaret Borsası"
+  },
+  {
+    "code": "5ED20",
+    "name": "EDREMİT TİCARET BORSASI",
+    "key": "EDREMIT",
+    "provinceSlug": "balikesir",
+    "displayName": "Edremit Ticaret Borsası"
+  },
+  {
+    "code": "5EL10",
+    "name": "ELAZIG TICARET BORSASI",
+    "key": "ELAZIG",
+    "provinceSlug": "elazig",
+    "displayName": "Elazığ Ticaret Borsası"
+  },
+  {
+    "code": "5ER10",
+    "name": "EREGLI/KONYA TICARET BORSASI",
+    "key": "EREGLI/KONYA",
+    "provinceSlug": "konya",
+    "displayName": "Eregli/Konya Ticaret Borsası"
+  },
+  {
+    "code": "5ER15",
+    "name": "ERZİNCAN TİCARET BORSASI",
+    "key": "ERZINCAN",
+    "provinceSlug": "erzincan",
+    "displayName": "Erzincan Ticaret Borsası"
+  },
+  {
+    "code": "5ER20",
+    "name": "ERZURUM TICARET BORSASI",
+    "key": "ERZURUM",
+    "provinceSlug": "erzurum",
+    "displayName": "Erzurum Ticaret Borsası"
+  },
+  {
+    "code": "5ES10",
+    "name": "ESKISEHIR TICARET BORSASI",
+    "key": "ESKISEHIR",
+    "provinceSlug": "eskisehir",
+    "displayName": "Eskişehir Ticaret Borsası"
+  },
+  {
+    "code": "5FA10",
+    "name": "FATSA TICARET BORSASI",
+    "key": "FATSA",
+    "provinceSlug": "ordu",
+    "displayName": "Fatsa Ticaret Borsası"
+  },
+  {
+    "code": "5GA10",
+    "name": "GAZIANTEP TICARET BORSASI",
+    "key": "GAZIANTEP",
+    "provinceSlug": "gaziantep",
+    "displayName": "Gaziantep Ticaret Borsası"
+  },
+  {
+    "code": "5GE10",
+    "name": "GEMLIK TICARET BORSASI",
+    "key": "GEMLIK",
+    "provinceSlug": "bursa",
+    "displayName": "Gemlik Ticaret Borsası"
+  },
+  {
+    "code": "5GI10",
+    "name": "GIRESUN TICARET BORSASI",
+    "key": "GIRESUN",
+    "provinceSlug": "giresun",
+    "displayName": "Giresun Ticaret Borsası"
+  },
+  {
+    "code": "5GO10",
+    "name": "GÖNEN TİCARET BORSASI",
+    "key": "GONEN",
+    "provinceSlug": "balikesir",
+    "displayName": "Gönen Ticaret Borsası"
+  },
+  {
+    "code": "5HA20",
+    "name": "HAYMANA TICARET BORSASI",
+    "key": "HAYMANA",
+    "provinceSlug": "ankara",
+    "displayName": "Haymana Ticaret Borsası"
+  },
+  {
+    "code": "5HA10",
+    "name": "HAYRABOLU TICARET BORSASI",
+    "key": "HAYRABOLU",
+    "provinceSlug": "tekirdag",
+    "displayName": "Hayrabolu Ticaret Borsası"
+  },
+  {
+    "code": "5IG10",
+    "name": "IGDIR TICARET BORSASI",
+    "key": "IGDIR",
+    "provinceSlug": "igdir",
+    "displayName": "Iğdır Ticaret Borsası"
+  },
+  {
+    "code": "5IL10",
+    "name": "ILGIN TİCARET BORSASI",
+    "key": "ILGIN",
+    "provinceSlug": "konya",
+    "displayName": "Ilgin Ticaret Borsası"
+  },
+  {
+    "code": "5IP10",
+    "name": "IPSALA TICARET BORSASI",
+    "key": "IPSALA",
+    "provinceSlug": "edirne",
+    "displayName": "Ipsala Ticaret Borsası"
+  },
+  {
+    "code": "5IS10",
+    "name": "ISKENDERUN TICARET BORSASI",
+    "key": "ISKENDERUN",
+    "provinceSlug": "hatay",
+    "displayName": "Iskenderun Ticaret Borsası"
+  },
+  {
+    "code": "5IS15",
+    "name": "ISPARTA TİCARET BORSASI",
+    "key": "ISPARTA",
+    "provinceSlug": "isparta",
+    "displayName": "Isparta Ticaret Borsası"
+  },
+  {
+    "code": "5IS20",
+    "name": "ISTANBUL TICARET BORSASI",
+    "key": "ISTANBUL",
+    "provinceSlug": "istanbul",
+    "displayName": "İstanbul Ticaret Borsası"
+  },
+  {
+    "code": "5IZ10",
+    "name": "IZMIR TICARET BORSASI",
+    "key": "IZMIR",
+    "provinceSlug": "izmir",
+    "displayName": "İzmir Ticaret Borsası"
+  },
+  {
+    "code": "5KA05",
+    "name": "KADİRLİ TİCARET BORSASI",
+    "key": "KADIRLI",
+    "provinceSlug": "osmaniye",
+    "displayName": "Kadirli Ticaret Borsası"
+  },
+  {
+    "code": "5KA10",
+    "name": "KAHRAMANMARAS TICARET BORSASI",
+    "key": "KAHRAMANMARAS",
+    "provinceSlug": "kahramanmaras",
+    "displayName": "Kahramanmaraş Ticaret Borsası"
+  },
+  {
+    "code": "5KA20",
+    "name": "KARACABEY TICARET BORSASI",
+    "key": "KARACABEY",
+    "provinceSlug": "bursa",
+    "displayName": "Karacabey Ticaret Borsası"
+  },
+  {
+    "code": "5KA30",
+    "name": "KARAMAN TICARET BORSASI",
+    "key": "KARAMAN",
+    "provinceSlug": "karaman",
+    "displayName": "Karaman Ticaret Borsası"
+  },
+  {
+    "code": "5KA40",
+    "name": "KARAPINAR/KONYA TICARET BORSASI",
+    "key": "KARAPINAR/KONYA",
+    "provinceSlug": "konya",
+    "displayName": "Karapinar/Konya Ticaret Borsası"
+  },
+  {
+    "code": "5KA50",
+    "name": "KARS TICARET BORSASI",
+    "key": "KARS",
+    "provinceSlug": "kars",
+    "displayName": "Kars Ticaret Borsası"
+  },
+  {
+    "code": "5KA90",
+    "name": "KASTAMONU TİCARET BORSASI",
+    "key": "KASTAMONU",
+    "provinceSlug": "kastamonu",
+    "displayName": "Kastamonu Ticaret Borsası"
+  },
+  {
+    "code": "5KA60",
+    "name": "KAYSERI TICARET BORSASI",
+    "key": "KAYSERI",
+    "provinceSlug": "kayseri",
+    "displayName": "Kayseri Ticaret Borsası"
+  },
+  {
+    "code": "5KE10",
+    "name": "KESAN TICARET BORSASI",
+    "key": "KESAN",
+    "provinceSlug": "edirne",
+    "displayName": "Kesan Ticaret Borsası"
+  },
+  {
+    "code": "5KI05",
+    "name": "KIRIKKALE TİCARET BORSASI",
+    "key": "KIRIKKALE",
+    "provinceSlug": "kirikkale",
+    "displayName": "Kırıkkale Ticaret Borsası"
+  },
+  {
+    "code": "5KI10",
+    "name": "KIRKLARELI TICARET BORSASI",
+    "key": "KIRKLARELI",
+    "provinceSlug": "kirklareli",
+    "displayName": "Kırklareli Ticaret Borsası"
+  },
+  {
+    "code": "5KI20",
+    "name": "KIRŞEHİR TİCARET BORSASI",
+    "key": "KIRSEHIR",
+    "provinceSlug": "kirsehir",
+    "displayName": "Kırşehir Ticaret Borsası"
+  },
+  {
+    "code": "5KI30",
+    "name": "KIZILTEPE TİCARET BORSASI",
+    "key": "KIZILTEPE",
+    "provinceSlug": "mardin",
+    "displayName": "Kiziltepe Ticaret Borsası"
+  },
+  {
+    "code": "5KO10",
+    "name": "KONYA TİCARET BORSASI",
+    "key": "KONYA",
+    "provinceSlug": "konya",
+    "displayName": "Konya Ticaret Borsası"
+  },
+  {
+    "code": "5KO20",
+    "name": "KOZAN TİCARET BORSASI",
+    "key": "KOZAN",
+    "provinceSlug": "adana",
+    "displayName": "Kozan Ticaret Borsası"
+  },
+  {
+    "code": "5KU05",
+    "name": "KUMLUCA TİCARET BORSASI",
+    "key": "KUMLUCA",
+    "provinceSlug": "antalya",
+    "displayName": "Kumluca Ticaret Borsası"
+  },
+  {
+    "code": "5LU10",
+    "name": "LULEBURGAZ TICARET BORSASI",
+    "key": "LULEBURGAZ",
+    "provinceSlug": "kirklareli",
+    "displayName": "Luleburgaz Ticaret Borsası"
+  },
+  {
+    "code": "5MA10",
+    "name": "MALATYA TICARET BORSASI",
+    "key": "MALATYA",
+    "provinceSlug": "malatya",
+    "displayName": "Malatya Ticaret Borsası"
+  },
+  {
+    "code": "5MA20",
+    "name": "MALKARA TICARET BORSASI",
+    "key": "MALKARA",
+    "provinceSlug": "tekirdag",
+    "displayName": "Malkara Ticaret Borsası"
+  },
+  {
+    "code": "5MA30",
+    "name": "MANISA TICARET BORSASI",
+    "key": "MANISA",
+    "provinceSlug": "manisa",
+    "displayName": "Manisa Ticaret Borsası"
+  },
+  {
+    "code": "5ME10",
+    "name": "MERSIN TICARET BORSASI",
+    "key": "MERSIN",
+    "provinceSlug": "mersin",
+    "displayName": "Mersin Ticaret Borsası"
+  },
+  {
+    "code": "5MU20",
+    "name": "MUĞLA TİCARET BORSASI",
+    "key": "MUGLA",
+    "provinceSlug": "mugla",
+    "displayName": "Muğla Ticaret Borsası"
+  },
+  {
+    "code": "5MU10",
+    "name": "MUSTAFAKEMALPAŞA TİCARET BORSASI",
+    "key": "MUSTAFAKEMALPASA",
+    "provinceSlug": "bursa",
+    "displayName": "Mustafakemalpaşa Ticaret Borsası"
+  },
+  {
+    "code": "5NA10",
+    "name": "NAZILLI TICARET BORSASI",
+    "key": "NAZILLI",
+    "provinceSlug": "aydin",
+    "displayName": "Nazilli Ticaret Borsası"
+  },
+  {
+    "code": "5NE10",
+    "name": "NEVŞEHİR TİCARET BORSASI",
+    "key": "NEVSEHIR",
+    "provinceSlug": "nevsehir",
+    "displayName": "Nevşehir Ticaret Borsası"
+  },
+  {
+    "code": "5NI05",
+    "name": "NİĞDE TİCARET BORSASI",
+    "key": "NIGDE",
+    "provinceSlug": "nigde",
+    "displayName": "Niğde Ticaret Borsası"
+  },
+  {
+    "code": "5NI10",
+    "name": "NİZİP TİCARET BORSASI",
+    "key": "NIZIP",
+    "provinceSlug": "gaziantep",
+    "displayName": "Nizip Ticaret Borsası"
+  },
+  {
+    "code": "5NU10",
+    "name": "NUSAYBİN TİCARET BORSASI",
+    "key": "NUSAYBIN",
+    "provinceSlug": "mardin",
+    "displayName": "Nusaybin Ticaret Borsası"
+  },
+  {
+    "code": "5OD10",
+    "name": "ODEMIS TICARET BORSASI",
+    "key": "ODEMIS",
+    "provinceSlug": "izmir",
+    "displayName": "Odemis Ticaret Borsası"
+  },
+  {
+    "code": "5OR10",
+    "name": "ORDU TICARET BORSASI",
+    "key": "ORDU",
+    "provinceSlug": "ordu",
+    "displayName": "Ordu Ticaret Borsası"
+  },
+  {
+    "code": "5OS10",
+    "name": "OSMANIYE TICARET BORSASI",
+    "key": "OSMANIYE",
+    "provinceSlug": "osmaniye",
+    "displayName": "Osmaniye Ticaret Borsası"
+  },
+  {
+    "code": "5PO10",
+    "name": "POLATLI TICARET BORSASI",
+    "key": "POLATLI",
+    "provinceSlug": "ankara",
+    "displayName": "Polatli Ticaret Borsası"
+  },
+  {
+    "code": "5RE10",
+    "name": "REYHANLI TICARET BORSASI",
+    "key": "REYHANLI",
+    "provinceSlug": "hatay",
+    "displayName": "Reyhanli Ticaret Borsası"
+  },
+  {
+    "code": "5RI10",
+    "name": "RİZE TİCARET BORSASI",
+    "key": "RIZE",
+    "provinceSlug": "rize",
+    "displayName": "Rize Ticaret Borsası"
+  },
+  {
+    "code": "5AD20",
+    "name": "SAKARYA TICARET BORSASI",
+    "key": "SAKARYA",
+    "provinceSlug": "sakarya",
+    "displayName": "Sakarya Ticaret Borsası"
+  },
+  {
+    "code": "5SA10",
+    "name": "SALIHLI TICARET BORSASI",
+    "key": "SALIHLI",
+    "provinceSlug": "manisa",
+    "displayName": "Salihli Ticaret Borsası"
+  },
+  {
+    "code": "5SA20",
+    "name": "SAMSUN TICARET BORSASI",
+    "key": "SAMSUN",
+    "provinceSlug": "samsun",
+    "displayName": "Samsun Ticaret Borsası"
+  },
+  {
+    "code": "5SA25",
+    "name": "SANDIKLI TİCARET BORSASI",
+    "key": "SANDIKLI",
+    "provinceSlug": "afyonkarahisar",
+    "displayName": "Sandikli Ticaret Borsası"
+  },
+  {
+    "code": "5UR10",
+    "name": "SANLIURFA TICARET BORSASI",
+    "key": "SANLIURFA",
+    "provinceSlug": "sanliurfa",
+    "displayName": "Şanlıurfa Ticaret Borsası"
+  },
+  {
+    "code": "5SI10",
+    "name": "SIVAS TICARET BORSASI",
+    "key": "SIVAS",
+    "provinceSlug": "sivas",
+    "displayName": "Sivas Ticaret Borsası"
+  },
+  {
+    "code": "5SO10",
+    "name": "SOKE TICARET BORSASI",
+    "key": "SOKE",
+    "provinceSlug": "aydin",
+    "displayName": "Soke Ticaret Borsası"
+  },
+  {
+    "code": "5SU10",
+    "name": "SUNGURLU TICARET BORSASI",
+    "key": "SUNGURLU",
+    "provinceSlug": "corum",
+    "displayName": "Sungurlu Ticaret Borsası"
+  },
+  {
+    "code": "5SU20",
+    "name": "SUSURLUK TİCARET BORSASI",
+    "key": "SUSURLUK",
+    "provinceSlug": "balikesir",
+    "displayName": "Susurluk Ticaret Borsası"
+  },
+  {
+    "code": "5TA20",
+    "name": "TARSUS TICARET BORSASI",
+    "key": "TARSUS",
+    "provinceSlug": "mersin",
+    "displayName": "Tarsus Ticaret Borsası"
+  },
+  {
+    "code": "5TE10",
+    "name": "TEKIRDAG TICARET BORSASI",
+    "key": "TEKIRDAG",
+    "provinceSlug": "tekirdag",
+    "displayName": "Tekirdağ Ticaret Borsası"
+  },
+  {
+    "code": "5TE20",
+    "name": "TERME TICARET BORSASI",
+    "key": "TERME",
+    "provinceSlug": "samsun",
+    "displayName": "Terme Ticaret Borsası"
+  },
+  {
+    "code": "5TO10",
+    "name": "TOKAT TICARET BORSASI",
+    "key": "TOKAT",
+    "provinceSlug": "tokat",
+    "displayName": "Tokat Ticaret Borsası"
+  },
+  {
+    "code": "5TR10",
+    "name": "TRABZON TICARET BORSASI",
+    "key": "TRABZON",
+    "provinceSlug": "trabzon",
+    "displayName": "Trabzon Ticaret Borsası"
+  },
+  {
+    "code": "5TU10",
+    "name": "TURGUTLU TICARET BORSASI",
+    "key": "TURGUTLU",
+    "provinceSlug": "manisa",
+    "displayName": "Turgutlu Ticaret Borsası"
+  },
+  {
+    "code": "5UN10",
+    "name": "UNYE TICARET BORSASI",
+    "key": "UNYE",
+    "provinceSlug": "ordu",
+    "displayName": "Unye Ticaret Borsası"
+  },
+  {
+    "code": "5US10",
+    "name": "UŞAK TİCARET BORSASI",
+    "key": "USAK",
+    "provinceSlug": "usak",
+    "displayName": "Uşak Ticaret Borsası"
+  },
+  {
+    "code": "5UZ10",
+    "name": "UZUNKOPRU TICARET BORSASI",
+    "key": "UZUNKOPRU",
+    "provinceSlug": "edirne",
+    "displayName": "Uzunkopru Ticaret Borsası"
+  },
+  {
+    "code": "5VA10",
+    "name": "VAN TİCARET BORSASI",
+    "key": "VAN",
+    "provinceSlug": "van",
+    "displayName": "Van Ticaret Borsası"
+  },
+  {
+    "code": "5YE10",
+    "name": "YENISEHIR TICARET BORSASI",
+    "key": "YENISEHIR",
+    "provinceSlug": "bursa",
+    "displayName": "Yenisehir Ticaret Borsası"
+  },
+  {
+    "code": "5YE20",
+    "name": "YERKOY TICARET BORSASI",
+    "key": "YERKOY",
+    "provinceSlug": "yozgat",
+    "displayName": "Yerkoy Ticaret Borsası"
+  },
+  {
+    "code": "5YO10",
+    "name": "YOZGAT TICARET BORSASI",
+    "key": "YOZGAT",
+    "provinceSlug": "yozgat",
+    "displayName": "Yozgat Ticaret Borsası"
+  },
+  {
+    "code": "5ZI10",
+    "name": "ZİLE TİCARET BORSASI",
+    "key": "ZILE",
+    "provinceSlug": "tokat",
+    "displayName": "Zile Ticaret Borsası"
+  },
+  {
+    "code": "5DÜ10",
+    "name": "DÜZCE TİCARET BORSASI",
+    "key": "DUZCE",
+    "provinceSlug": "duzce",
+    "displayName": "Düzce Ticaret Borsası"
+  }
+]
