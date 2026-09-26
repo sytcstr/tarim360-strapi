@@ -16,7 +16,15 @@ function fakeStrapi(opts: { failOn?: string } = {}) {
       { id: 2, provider: 'apple', status: 'rejected', ownerProfileId: 'u_gone', ownerEmail: 'gone@example.invalid' },
       { id: 3, provider: 'google_play', status: 'verified', ownerProfileId: 'u_a', ownerEmail: 'secret-a@example.invalid' },
     ],
-    'api::profile-setting.profile-setting': [{ id: 1, profileId: 'u_a' }],
+    'api::profile-setting.profile-setting': [
+      // active premium, no endsAt, backed by a verified event
+      { id: 1, profileId: 'u_a', ownerEmail: 'secret-a@example.invalid', roleText: 'Premium Üye', activePremium: { paymentProvider: 'google_play' }, activePremiumSubscription: { paymentProvider: 'google_play' }, purchaseHistory: [{ paymentProvider: 'google_play' }] },
+      // active premium with a future endsAt and NO backing at all (orphan profile)
+      { id: 2, profileId: 'u_ghost', ownerEmail: 'ghost@example.invalid', roleText: 'Aktif Üye', activePremium: { paymentProvider: 'app_store', endsAt: '2999-01-01T00:00:00Z' }, purchaseHistory: [] },
+      // expired object
+      { id: 3, profileId: 'u_old', ownerEmail: 'old@example.invalid', roleText: 'Premium Üye', activePremium: { endsAt: '2001-01-01T00:00:00Z' }, purchaseHistory: [] },
+    ],
+    'api::promo-redemption.promo-redemption': [],
     'plugin::users-permissions.user': [{ id: 1, email: 'secret-a@example.invalid' }],
     'plugin::upload.file': [{ id: 1, size: 12.5 }],
   };
@@ -87,13 +95,20 @@ describe('UAT audit', () => {
       assert.ok(/^(count|findMany):/.test(c) || c.startsWith('entityService.findOne:'), c);
     }
     const text = logs.join('\n');
-    assert.match(text, /purchase-event: ?|purchase-event -- total=3/);
+    assert.match(text, /purchase-event total=3/);
     assert.match(text, /verified\+store payload=1 verified\+no payload=1/);
     assert.match(text, /owner exists=2 orphan=1/);
     assert.match(text, /by provider: google_play=2 apple=1/);
+    // profile-setting aggregate
+    assert.match(text, /profile-setting total=3 activePremium filled=3 activePremiumSubscription filled=1/);
+    assert.match(text, /active\(not expired\)=1 active\(no endsAt -> unlimited\)=1 expired-object=1/);
+    assert.match(text, /roleText="Premium Üye"=2 linked-to-app-user=1 orphan=2/);
+    assert.match(text, /active-without-verified-purchase-event=1 \(of which backed by promo redemption=0, NO backing at all=1\) backed by verified purchase-event=1/);
+    assert.match(text, /entitlement source: google_play=1 app_store=1/);
+    assert.equal(logs.filter((l) => l.startsWith('[UAT AUDIT] profile-setting ')).length, 2);
     assert.match(text, /orphan files=1/);
     // privacy: nothing identifying leaks into the log
-    for (const banned of ['secret-a', 'gone@', 'u_a', 'u_gone', '@example', 'boom']) {
+    for (const banned of ['secret-a', 'gone@', 'ghost@', 'old@', 'u_a', 'u_gone', 'u_ghost', 'u_old', '@example', 'boom']) {
       assert.ok(!text.includes(banned), `log must not contain ${banned}`);
     }
   });

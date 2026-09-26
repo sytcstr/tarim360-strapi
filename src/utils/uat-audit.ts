@@ -108,18 +108,148 @@ const tally = (m: Map<string, number>, key: unknown) => {
 const fmt = (m: Map<string, number>) =>
   [...m.entries()].map(([k, v]) => `${k}=${v}`).join(' ') || '-';
 
+const chunk = <T>(arr: T[], n: number): T[][] => {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
+  return out;
+};
+
+const parseDate = (v: unknown): Date | null => {
+  const raw = String(v ?? '').trim();
+  if (!raw) return null;
+  const d = new Date(raw);
+  return Number.isNaN(d.getTime()) ? null : d;
+};
+
+const asObject = (v: unknown): Record<string, unknown> | null =>
+  v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+
+/** Normalises a free-form provider string into a fixed, non-identifying bucket. */
+const sourceBucket = (raw: unknown): string => {
+  const s = String(raw ?? '').toLowerCase();
+  if (!s) return 'unknown';
+  if (s.includes('promo')) return 'promo_code';
+  if (s.includes('google') || s.includes('play')) return 'google_play';
+  if (s.includes('app') || s.includes('apple') || s.includes('ios')) return 'app_store';
+  return 'unknown';
+};
+
+/** Same activity rule as the backend's isPremiumActiveFromProfile. */
+const premiumOf = (row: any): Record<string, unknown> | null =>
+  asObject(row?.activePremium) ?? asObject(row?.activePremiumSubscription);
+
+/** profile-setting aggregate: counts only, no value that identifies anyone. */
+async function profileSettingAudit(strapi: any, log: (line: string) => void): Promise<void> {
+  const PROFILE_UID = 'api::profile-setting.profile-setting';
+  const total = await countOf(strapi, PROFILE_UID);
+  if (total <= 0) {
+    log(`profile-setting total=${total}`);
+    return;
+  }
+  const rows = await readAll(strapi, PROFILE_UID, [
+    'id',
+    'profileId',
+    'ownerEmail',
+    'roleText',
+    'activePremium',
+    'activePremiumSubscription',
+    'purchaseHistory',
+  ]);
+  const users = await readAll(strapi, USER_UID, ['id', 'email']);
+  const derived = new Set<string>();
+  const emails = new Set<string>();
+  for (const u of users) {
+    const e = String(u.email ?? '').toLowerCase();
+    if (!e) continue;
+    emails.add(e);
+    derived.add(`u_${e.replace(/[^a-z0-9]/g, '_')}`);
+  }
+  const verifiedOwners = new Set<string>(
+    (await readAll(strapi, PURCHASE_UID, ['id', 'ownerProfileId', 'status']))
+      .filter((r) => String(r.status ?? '').toLowerCase() === 'verified')
+      .map((r) => String(r.ownerProfileId ?? ''))
+      .filter(Boolean),
+  );
+  const promoOwners = new Set<string>(
+    (await readAll(strapi, 'api::promo-redemption.promo-redemption', ['id', 'ownerProfileId']))
+      .map((r) => String(r.ownerProfileId ?? ''))
+      .filter(Boolean),
+  );
+
+  const now = Date.now();
+  let apFilled = 0;
+  let apsFilled = 0;
+  let activeNotExpired = 0;
+  let activeNoEndsAt = 0;
+  let expiredWithObject = 0;
+  let historyFilled = 0;
+  let rolePremium = 0;
+  let linked = 0;
+  let orphanRows = 0;
+  let activeNoVerifiedEvent = 0;
+  let activeBackedVerified = 0;
+  let activeBackedPromo = 0;
+  let activeNoBacking = 0;
+  const providers = new Map<string, number>();
+  const sources = new Map<string, number>();
+
+  for (const r of rows) {
+    if (asObject(r.activePremium)) apFilled++;
+    if (asObject(r.activePremiumSubscription)) apsFilled++;
+    const hist = Array.isArray(r.purchaseHistory) ? r.purchaseHistory : [];
+    if (hist.length > 0) historyFilled++;
+    if (String(r.roleText ?? '').trim().toLowerCase() === 'premium üye') rolePremium++;
+    const pid = String(r.profileId ?? '');
+    const em = String(r.ownerEmail ?? '').toLowerCase();
+    if ((pid && derived.has(pid)) || (em && emails.has(em))) linked++;
+    else orphanRows++;
+
+    const prem = premiumOf(r);
+    if (!prem) continue;
+    const ends = parseDate(prem.endsAt);
+    const active = !ends || ends.getTime() > now;
+    if (!active) {
+      expiredWithObject++;
+      continue;
+    }
+    if (ends) activeNotExpired++;
+    else activeNoEndsAt++;
+    tally(providers, prem.paymentProvider ?? 'null');
+    const latest = asObject(hist[0]);
+    tally(sources, sourceBucket(prem.paymentProvider ?? latest?.paymentProvider));
+    const hasVerified = !!pid && verifiedOwners.has(pid);
+    const hasPromo = !!pid && promoOwners.has(pid);
+    if (!hasVerified) activeNoVerifiedEvent++;
+    if (hasVerified) activeBackedVerified++;
+    else if (hasPromo) activeBackedPromo++;
+    else activeNoBacking++;
+  }
+
+  log(
+    `profile-setting total=${total} activePremium filled=${apFilled} activePremiumSubscription filled=${apsFilled} ` +
+      `active(not expired)=${activeNotExpired} active(no endsAt -> unlimited)=${activeNoEndsAt} expired-object=${expiredWithObject} ` +
+      `purchaseHistory filled=${historyFilled} roleText="Premium Üye"=${rolePremium} linked-to-app-user=${linked} orphan=${orphanRows}`,
+  );
+  log(
+    `profile-setting premium backing: active-without-verified-purchase-event=${activeNoVerifiedEvent} ` +
+      `(of which backed by promo redemption=${activeBackedPromo}, NO backing at all=${activeNoBacking}) ` +
+      `backed by verified purchase-event=${activeBackedVerified} | paymentProvider: ${fmt(providers)} | entitlement source: ${fmt(sources)}`,
+  );
+}
+
 export async function runUatAudit(strapi: { db: any; entityService: any; log: Logger }): Promise<void> {
   const log = (line: string) => strapi.log.info(`[UAT AUDIT] ${line}`);
   log('BEGIN');
   try {
-    log('-- user/test data (rows the reset would target) --');
-    for (const [label, uid] of USER_DATA) {
-      log(`${label}: ${await countOf(strapi, uid)}`);
-    }
+    // user/test data: a few long lines instead of one line per collection
+    const counts: string[] = [];
+    for (const [label, uid] of USER_DATA) counts.push(`${label}=${await countOf(strapi, uid)}`);
+    chunk(counts, 8).forEach((c, i) => log(`user-data counts ${i + 1}: ${c.join(' ')}`));
+
+    await profileSettingAudit(strapi, log);
 
     // ---- purchase-event ----
     const purchaseTotal = await countOf(strapi, PURCHASE_UID);
-    log(`-- purchase-event -- total=${purchaseTotal}`);
     if (purchaseTotal > 0) {
       const rows = await readAll(strapi, PURCHASE_UID, [
         'id',
@@ -128,26 +258,19 @@ export async function runUatAudit(strapi: { db: any; entityService: any; log: Lo
         'ownerProfileId',
         'ownerEmail',
       ]);
-      const payloadIds = new Set<number>(
-        (
-          await (async () => {
-            const acc: any[] = [];
-            for (let offset = 0; ; offset += PAGE) {
-              const page: any[] = await strapi.db.query(PURCHASE_UID).findMany({
-                select: ['id'],
-                where: { payload: { $notNull: true } },
-                orderBy: { id: 'asc' },
-                offset,
-                limit: PAGE,
-              });
-              if (!page.length) break;
-              acc.push(...page);
-              if (page.length < PAGE) break;
-            }
-            return acc;
-          })()
-        ).map((r) => Number(r.id)),
-      );
+      const payloadIds = new Set<number>();
+      for (let offset = 0; ; offset += PAGE) {
+        const page: any[] = await strapi.db.query(PURCHASE_UID).findMany({
+          select: ['id'],
+          where: { payload: { $notNull: true } },
+          orderBy: { id: 'asc' },
+          offset,
+          limit: PAGE,
+        });
+        if (!page.length) break;
+        for (const r of page) payloadIds.add(Number(r.id));
+        if (page.length < PAGE) break;
+      }
       const profileIds = new Set<string>(
         (await readAll(strapi, 'api::profile-setting.profile-setting', ['id', 'profileId']))
           .map((r) => String(r.profileId ?? ''))
@@ -178,13 +301,16 @@ export async function runUatAudit(strapi: { db: any; entityService: any; log: Lo
         if (known) ownerExists++;
         else orphan++;
       }
-      log(`purchase-event by status: ${fmt(byStatus)}`);
-      log(`purchase-event by provider: ${fmt(byProvider)}`);
-      log(`purchase-event verified+store payload=${verifiedWithPayload} verified+no payload=${verifiedNoPayload}`);
-      log(`purchase-event owner exists=${ownerExists} orphan=${orphan}`);
+      log(
+        `purchase-event total=${purchaseTotal} by status: ${fmt(byStatus)} | by provider: ${fmt(byProvider)} | ` +
+          `verified+store payload=${verifiedWithPayload} verified+no payload=${verifiedNoPayload} | ` +
+          `owner exists=${ownerExists} orphan=${orphan}`,
+      );
+    } else {
+      log(`purchase-event total=${purchaseTotal}`);
     }
 
-    // ---- hub-content ----
+    // ---- hub-content + seller-payout ----
     const hubTotal = await countOf(strapi, HUB_UID);
     const hubUser = await countOf(strapi, HUB_UID, {
       $or: [
@@ -192,16 +318,13 @@ export async function runUatAudit(strapi: { db: any; entityService: any; log: Lo
         { ownerProfileId: { $notNull: true, $ne: '' } },
       ],
     });
-    log(`-- hub-content -- total=${hubTotal} user-owned=${hubUser} editorial/config kept=${hubTotal >= 0 && hubUser >= 0 ? hubTotal - hubUser : -1}`);
-
-    // ---- seller-payout ----
     log(
-      `-- seller-payout -- total=${await countOf(strapi, PAYOUT_UID)} sellerId set=${await countOf(strapi, PAYOUT_UID, { sellerId: { $notNull: true, $ne: '' } })} orderId set=${await countOf(strapi, PAYOUT_UID, { orderId: { $notNull: true, $ne: '' } })}`,
+      `hub-content total=${hubTotal} user-owned=${hubUser} editorial/config kept=${hubTotal >= 0 && hubUser >= 0 ? hubTotal - hubUser : -1} | ` +
+        `seller-payout total=${await countOf(strapi, PAYOUT_UID)} sellerId set=${await countOf(strapi, PAYOUT_UID, { sellerId: { $notNull: true, $ne: '' } })} orderId set=${await countOf(strapi, PAYOUT_UID, { orderId: { $notNull: true, $ne: '' } })}`,
     );
 
     // ---- uploads ----
     const fileTotal = await countOf(strapi, FILE_UID);
-    log(`-- uploads -- total=${fileTotal}`);
     if (fileTotal > 0) {
       let scanned = 0;
       let orphanFiles = 0;
@@ -228,15 +351,16 @@ export async function runUatAudit(strapi: { db: any; entityService: any; log: Lo
         if (rows.length < PAGE) break;
       }
       log(
-        `uploads scanned=${scanned}${scanned < fileTotal ? ' (capped)' : ''} orphan files=${orphanFiles} approx orphan size=${orphanKb.toFixed(1)}KB`,
+        `uploads total=${fileTotal} scanned=${scanned}${scanned < fileTotal ? ' (capped)' : ''} orphan files=${orphanFiles} approx orphan size=${orphanKb.toFixed(1)}KB`,
       );
+    } else {
+      log(`uploads total=${fileTotal}`);
     }
 
     // ---- protected ----
-    log('-- protected config/reference records (count only, never touched) --');
-    for (const [label, uid] of PROTECTED) {
-      log(`${label}: ${await countOf(strapi, uid)}`);
-    }
+    const prot: string[] = [];
+    for (const [label, uid] of PROTECTED) prot.push(`${label}=${await countOf(strapi, uid)}`);
+    log(`protected config/reference counts (never touched): ${prot.join(' ')}`);
   } catch {
     // Deliberately no exception text/body: it could echo row data.
     strapi.log.error('[UAT AUDIT] FAILED');
