@@ -167,6 +167,28 @@ test('UAT #11: DELETE by an id that matches no real row deletes nothing (pre-exi
   assert.ok(stillThere, 'the unrelated real listing must be completely untouched');
 });
 
+// ---------------------------------------------------------------------
+// UAT #12 CORRECTION: READ != WRITE. A real, valid, someone-else's-
+// listing DELETE attempt must still be denied (this is unaffected by
+// this file's own fix, which only ever changes WHICH row a legitimate
+// owner's delete targets -- never who is allowed to delete it).
+// ---------------------------------------------------------------------
+
+test('UAT #12: a stranger cannot delete another user\'s real, valid, active listing (READ != WRITE)', async () => {
+  const owner = await registerAndLogin(`uat12-owner-${randomUUID()}@test.local`);
+  const stranger = await registerAndLogin(`uat12-stranger-${randomUUID()}@test.local`);
+  const created = await createListing(owner.jwt);
+
+  const res = await fetch(`${BASE_URL}/listings/${created.documentId}`, {
+    method: 'DELETE',
+    headers: authed(stranger.jwt),
+  });
+  assert.equal(res.status, 403);
+
+  const stillThere = await findByDocumentId(created.documentId);
+  assert.ok(stillThere, 'the owner\'s listing must survive a stranger\'s delete attempt');
+});
+
 test('UAT #11 regression: DELETE by the real documentId (the already-correct path) still works', async () => {
   const owner = await registerAndLogin(`uat11-docid-${randomUUID()}@test.local`);
   const created = await createListing(owner.jwt);
