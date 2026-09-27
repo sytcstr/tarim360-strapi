@@ -13,6 +13,7 @@ import path from 'node:path';
 import { runReferenceSeed } from '../../src/utils/reference-seed';
 import { runRealPriceIngestion, OBSERVATION_UID } from '../../src/services/agri-real-price/runner';
 import { createTobbFetcher, type HttpGet } from '../../src/services/agri-real-price/tobb/fetcher';
+import { startRealPriceIngestionIfEnabled } from '../../src/services/agri-real-price';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { createStrapi, compileStrapi } = require('@strapi/strapi');
@@ -183,4 +184,124 @@ test('user data and hub content are untouched', async () => {
   assert.equal(rows.length, 1);
   assert.equal(rows[0].documentId, hub.documentId);
   assert.equal(rows[0].title, 'Kullanici icerigi');
+});
+
+// ── BOOT WIRING (production report: dry-run produced no log at all) ─────────
+//
+// Root cause: startRealPriceIngestionIfEnabled required BOTH mode != 'off' AND
+// an undocumented AGRI_REAL_PRICE_RUN_ON_BOOT=true flag before scheduling
+// anything -- unlike its sibling runReferenceSeedIfEnabled, which runs on
+// every boot from the mode alone. Setting only
+// AGRI_REAL_PRICE_INGESTION_MODE=dry-run (exactly what production had)
+// therefore scheduled nothing at all; the summary log only existed on the
+// (twice-daily) cron path. These tests drive the exact boot entry point,
+// against the real Strapi instance, with the mode env read fresh each time.
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+const withMode = async (
+  mode: string,
+  runOnBoot: string | undefined,
+  fn: (logs: string[], bootStrapi: any) => Promise<void>,
+) => {
+  const prevMode = process.env.AGRI_REAL_PRICE_INGESTION_MODE;
+  const prevBoot = process.env.AGRI_REAL_PRICE_RUN_ON_BOOT;
+  const prevEnv = process.env.NODE_ENV;
+  process.env.AGRI_REAL_PRICE_INGESTION_MODE = mode;
+  process.env.NODE_ENV = 'production'; // exactly the reported production scenario
+  if (runOnBoot === undefined) delete process.env.AGRI_REAL_PRICE_RUN_ON_BOOT;
+  else process.env.AGRI_REAL_PRICE_RUN_ON_BOOT = runOnBoot;
+  const logs: string[] = [];
+  const bootStrapi = new Proxy(strapi, {
+    get(target, prop, receiver) {
+      if (prop === 'log') {
+        return { info: (m: string) => logs.push(m), error: (m: string) => logs.push('ERROR: ' + m) };
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+  try {
+    await fn(logs, bootStrapi);
+  } finally {
+    if (prevMode === undefined) delete process.env.AGRI_REAL_PRICE_INGESTION_MODE;
+    else process.env.AGRI_REAL_PRICE_INGESTION_MODE = prevMode;
+    if (prevBoot === undefined) delete process.env.AGRI_REAL_PRICE_RUN_ON_BOOT;
+    else process.env.AGRI_REAL_PRICE_RUN_ON_BOOT = prevBoot;
+    if (prevEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = prevEnv;
+  }
+};
+
+test('BOOT WIRING production+off: nothing is scheduled (no log, no network, no write)', async () => {
+  await withMode('off', undefined, async (logs) => {
+    startRealPriceIngestionIfEnabled(strapi, { delayMs: 5, fetcher: fetcher() });
+    await sleep(80);
+    assert.equal(logs.length, 0);
+    assert.equal(calls, 0);
+    assert.equal(await count(), 0);
+  });
+});
+
+test('BOOT WIRING production+dry-run, NO run-on-boot flag (the exact reported scenario): '
+  + 'still fetches TOBB and logs a summary; zero writes', async () => {
+  await withMode('dry-run', undefined, async (logs, bootStrapi) => {
+    const before = await count();
+    startRealPriceIngestionIfEnabled(bootStrapi, { delayMs: 5, fetcher: fetcher() });
+    await sleep(400);
+    assert.ok(calls >= 9, 'TOBB pages were fetched');
+    assert.equal(await count(), before, 'dry-run never writes');
+    const summary = logs.find((l) => l.startsWith('[agri-real-price] mode=dry-run'));
+    assert.ok(summary, `expected a dry-run summary log, got: ${JSON.stringify(logs)}`);
+    assert.match(summary!, /status=dry-run/);
+    assert.match(summary!, /wouldCreate=\d+/);
+  });
+});
+
+test('BOOT WIRING production+apply, NO run-on-boot flag: NOT scheduled '
+  + '(a redeploy alone never writes to production)', async () => {
+  await withMode('apply', undefined, async (logs) => {
+    const before = await count();
+    startRealPriceIngestionIfEnabled(strapi, { delayMs: 5, fetcher: fetcher() });
+    await sleep(300);
+    assert.equal(logs.length, 0);
+    assert.equal(calls, 0);
+    assert.equal(await count(), before);
+  });
+});
+
+test('BOOT WIRING production+apply WITH explicit AGRI_REAL_PRICE_RUN_ON_BOOT=true: '
+  + 'runs on boot and writes the valid observations', async () => {
+  await withMode('apply', 'true', async (logs, bootStrapi) => {
+    const before = await count();
+    startRealPriceIngestionIfEnabled(bootStrapi, { delayMs: 5, fetcher: fetcher() });
+    await sleep(400);
+    assert.ok((await count()) > before);
+    assert.ok(logs.some((l) => l.startsWith('[agri-real-price] mode=apply') && l.includes('status=applied')));
+  });
+});
+
+test('BOOT WIRING invalid mode value: treated as off, nothing scheduled', async () => {
+  await withMode('YES_PLEASE', undefined, async (logs) => {
+    startRealPriceIngestionIfEnabled(strapi, { delayMs: 5, fetcher: fetcher() });
+    await sleep(80);
+    assert.equal(logs.length, 0);
+    assert.equal(calls, 0);
+  });
+});
+
+test('BOOT WIRING provider completely unreachable in dry-run: still logs a summary '
+  + '(provider-failed), zero writes -- never silent', async () => {
+  await withMode('dry-run', undefined, async (logs, bootStrapi) => {
+    const before = await count();
+    startRealPriceIngestionIfEnabled(bootStrapi, {
+      delayMs: 5,
+      fetcher: fetcher(() => html(503)),
+    });
+    await sleep(300);
+    assert.equal(await count(), before);
+    // errors are logged via strapi.log.error, which the boot proxy tags "ERROR: "
+    const summary = logs.find((l) => l.includes('[agri-real-price]'));
+    assert.ok(summary, `expected a summary log even on total provider failure, got: ${JSON.stringify(logs)}`);
+    assert.match(summary!, /^ERROR: /);
+    assert.match(summary!, /status=provider-failed/);
+  });
 });

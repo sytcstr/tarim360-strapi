@@ -441,3 +441,29 @@ test('provider-failed run (every page unreachable) writes nothing and reports it
   assert.equal(report.status, 'provider-failed');
   assert.equal(report.created, 0);
 });
+
+// ── mock production guard must never gate the real provider (source guard) ──
+test('the real (TOBB) provider never imports the mock production guard', () => {
+  const files = [
+    'runner.ts',
+    'index.ts',
+    'types.ts',
+    'freshness.ts',
+    'tobb/provider.ts',
+    'tobb/fetcher.ts',
+    'tobb/parser.ts',
+    'tobb/normalize.ts',
+    'tobb/maps.ts',
+    'tobb/dates.ts',
+    'tobb/numbers.ts',
+    'tobb/tls.ts',
+  ];
+  for (const file of files) {
+    const src = readFileSync(
+      path.join(__dirname, '..', '..', 'src', 'services', 'agri-real-price', file),
+      'utf8',
+    );
+    assert.ok(!src.includes('decideMockAgriIngestion'), file);
+    assert.ok(!src.includes('agri-data-ingestion'), file);
+  }
+});
