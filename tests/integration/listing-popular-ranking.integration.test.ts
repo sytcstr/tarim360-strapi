@@ -299,3 +299,49 @@ test('L12.10 regression: a client still cannot spoof favoriteCount/viewCount to 
   assert.equal(body.data.favoriteCount, 0, 'favoriteCount must remain server-authoritative regardless of the new popular sort');
   assert.equal(body.data.viewCount, 0, 'viewCount must remain server-authoritative regardless of the new popular sort');
 });
+
+// ---------------------------------------------------------------------
+// UAT #1 (real-device 1.0.85 report): a listing's photo never rendered
+// on the Popular surface specifically. Root cause: fetchPopularListingsPage
+// reads via the low-level Query Engine (db.query), which -- unlike
+// entityService/documents() -- returns no relations at all unless one is
+// explicitly named in `populate`. Every other listing surface goes
+// through buildListingDiscoveryQuery -> super.find(), which populates
+// `photos` implicitly; this was the one path that never did.
+// ---------------------------------------------------------------------
+
+const ONE_PX_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64',
+);
+
+async function uploadOnePhoto(jwt: string): Promise<number> {
+  const form = new FormData();
+  form.append('files', new Blob([ONE_PX_PNG], { type: 'image/png' }), `${randomUUID()}.png`);
+  const res = await fetch(`${BASE_URL}/upload`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${jwt}` },
+    body: form as any,
+  });
+  const body = await res.json();
+  if (res.status >= 400) throw new Error(`upload failed (${res.status}): ${JSON.stringify(body)}`);
+  return (body as any[])[0].id;
+}
+
+test('UAT #1: a Popular-sorted row carries its real photo (photos relation populated)', async () => {
+  const tag = uniqueTag();
+  const owner = await registerAndLogin(`uat1-photo-owner-${randomUUID()}@test.local`);
+  const fileId = await uploadOnePhoto(owner.jwt);
+  await createListing(owner, tag, { title: 'Fotografli Ilan', photos: [fileId] });
+
+  const { status, body } = await fetchPopular(tag, '&pageSize=10');
+  assert.equal(status, 200);
+  const row = (body.data as any[]).find((r) => r.title === 'Fotografli Ilan');
+  assert.ok(row, 'the fixture listing must be present in the popular response');
+  assert.ok(Array.isArray(row.photos), 'photos relation must be populated on a Popular-sorted row');
+  assert.equal(row.photos.length, 1);
+  assert.ok(
+    typeof row.photos[0].url === 'string' && row.photos[0].url.length > 0,
+    'the populated photo must carry a resolvable url, same flat shape every other listing surface already returns',
+  );
+});

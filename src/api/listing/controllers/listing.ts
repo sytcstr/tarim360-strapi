@@ -932,7 +932,29 @@ export default factories.createCoreController(
         'id',
         'documentId',
       ]);
-      const documentId = String((existing as any)?.documentId ?? '').trim();
+      // UAT #11 (real-device 1.0.85 report): `ctx.params.id` was passed
+      // through to `super.delete(ctx)` UNRESOLVED. Strapi 5's document
+      // service deletes by `documentId` (`deleteDocument` in
+      // @strapi/core's repository.js builds `where: { documentId }` and
+      // maps over whatever `findMany` returns for it) -- given anything
+      // else (a raw numeric row id, or the "strapi_"/"listing_"-prefixed
+      // string the Flutter client's id-guessing used to send), zero rows
+      // match and it silently deletes NOTHING, with no thrown error and a
+      // normal-looking success response. The client believed the delete
+      // succeeded (masking it in every locally-tracked surface: Profile,
+      // Popular, Home) while the row stayed fully `active`/published on
+      // the server -- exactly why it kept reappearing from a genuine
+      // fresh server query (category browsing's `discoverListings`, which
+      // has no client-side "remembered as deleted" filter to hide it).
+      // `findListingByAnyId` above already resolves the real `documentId`
+      // from either id form -- reusing it here (never a plain not-found,
+      // which would leave the exact same silent-no-op hole for ANY future
+      // caller that sends the wrong id shape).
+      if (!existing) return ctx.notFound('Ilan bulunamadi.');
+      const documentId = String((existing as any).documentId ?? '').trim();
+      if (!documentId) return ctx.notFound('Ilan bulunamadi.');
+      ctx.params = { ...(ctx.params ?? {}), id: documentId };
+
       let photoIds: number[] = [];
       if (existing?.id) {
         const withPhotos = await strapi.entityService.findOne(LISTING_UID as any, (existing as any).id, {

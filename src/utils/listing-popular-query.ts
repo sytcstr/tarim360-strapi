@@ -112,6 +112,20 @@ export const fetchPopularListingsPage = async (
   let tier1Rows: Record<string, unknown>[] = [];
   let tier2Rows: Record<string, unknown>[] = [];
 
+  // UAT #1: this reads via the low-level Query Engine (db.query), which --
+  // unlike entityService/documents() -- returns ONLY scalar columns unless
+  // a relation is explicitly named in `populate`. Every other listing
+  // surface (Home/Category/Search/Favorites/Detail, all via
+  // buildListingDiscoveryQuery -> super.find()) populates `photos`
+  // implicitly through Strapi's normal find pipeline; this was the one
+  // path that never did, so `_extractListingImageUrl`/`photoUrls` on the
+  // Flutter side always saw an absent `photos` relation for a
+  // Popular-sorted row and fell back to the no-image placeholder --
+  // confirmed by reading the exact populate-shape Flutter's
+  // `_fromStrapiRow` expects (an array of `{id, url, formats, ...}`, the
+  // same flat shape `photos` already has everywhere else).
+  const popularRowPopulate = { photos: true } as any;
+
   if (globalOffset < tier1Count) {
     const tier1Take = Math.min(pageSize, tier1Count - globalOffset);
     tier1Rows = await strapi.db.query(LISTING_UID).findMany({
@@ -119,6 +133,7 @@ export const fetchPopularListingsPage = async (
       orderBy: ENGAGEMENT_TIEBREAK_SORT as any,
       offset: globalOffset,
       limit: tier1Take,
+      populate: popularRowPopulate,
     });
     if (tier1Take < pageSize) {
       tier2Rows = await strapi.db.query(LISTING_UID).findMany({
@@ -126,6 +141,7 @@ export const fetchPopularListingsPage = async (
         orderBy: TIER2_SORT as any,
         offset: 0,
         limit: pageSize - tier1Take,
+        populate: popularRowPopulate,
       });
     }
   } else {
@@ -135,6 +151,7 @@ export const fetchPopularListingsPage = async (
       orderBy: TIER2_SORT as any,
       offset: tier2Offset,
       limit: pageSize,
+      populate: popularRowPopulate,
     });
   }
 
