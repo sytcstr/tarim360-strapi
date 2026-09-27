@@ -17,6 +17,7 @@ import { isSoftVerifyRefused } from './api/purchase/lib/config';
 import { startUatAuditIfEnabled } from './utils/uat-audit';
 import { runReferenceSeedIfEnabled } from './utils/reference-seed';
 import { startRealPriceIngestionIfEnabled } from './services/agri-real-price';
+import { runHubContentSeedIfEnabled } from './utils/hub-content-seed';
 
 /**
  * Faz B-V: reliable, idempotent composite-unique-index creation for the
@@ -1103,6 +1104,9 @@ export default {
     // Real (TOBB) agricultural price ingestion: AGRI_REAL_PRICE_INGESTION_MODE
     // defaults to off (no network, no database access).
     startRealPriceIngestionIfEnabled(strapi);
+    // Bilgi Bankası initial content (8 categories, 16 articles, 1 banner).
+    // HUB_CONTENT_SEED_MODE defaults to off, in which case this does nothing.
+    await runHubContentSeedIfEnabled(strapi);
   },
 };
 

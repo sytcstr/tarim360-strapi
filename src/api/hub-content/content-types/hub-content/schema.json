@@ -88,6 +88,22 @@
     "engagementVersion": {
       "type": "integer",
       "default": 0
+    },
+    "slug": {
+      "type": "string"
+    },
+    "contentType": {
+      "type": "string"
+    },
+    "isFeatured": {
+      "type": "boolean",
+      "default": false
+    },
+    "featuredOrder": {
+      "type": "integer"
+    },
+    "readingTimeMinutes": {
+      "type": "integer"
     }
   }
 }

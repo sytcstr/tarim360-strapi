@@ -1,0 +1,66 @@
+[
+  {
+    "name": "Bitkisel Üretim",
+    "slug": "bitkisel-uretim",
+    "description": "Tarla ve bahçe bitkilerinde ekim, bakım ve hasat süreçlerine dair pratik bilgiler.",
+    "iconName": "eco_rounded",
+    "colorHex": "#2E7D32",
+    "sortOrder": 1
+  },
+  {
+    "name": "Hayvancılık",
+    "slug": "hayvancilik",
+    "description": "Büyükbaş ve küçükbaş yetiştiriciliğinde besleme, barınak ve sağlık yönetimi.",
+    "iconName": "pets_rounded",
+    "colorHex": "#8B5A2B",
+    "sortOrder": 2
+  },
+  {
+    "name": "Tarım Teknolojileri",
+    "slug": "tarim-teknolojileri",
+    "description": "Hassas tarım, sensör ve uydu verisi gibi teknolojik gelişmeler.",
+    "iconName": "precision_manufacturing_rounded",
+    "colorHex": "#2F5E7E",
+    "sortOrder": 3
+  },
+  {
+    "name": "Hastalık ve Zararlılar",
+    "slug": "hastalik-ve-zararlilar",
+    "description": "Bitki hastalıkları ve zararlılarını erken fark etme, entegre yönetim yaklaşımları.",
+    "iconName": "bug_report_rounded",
+    "colorHex": "#C62828",
+    "sortOrder": 4
+  },
+  {
+    "name": "Gübreleme ve Toprak",
+    "slug": "gubreleme-ve-toprak",
+    "description": "Toprak analizi, gübreleme planlaması ve toprak sağlığı.",
+    "iconName": "terrain_rounded",
+    "colorHex": "#6D4321",
+    "sortOrder": 5
+  },
+  {
+    "name": "Sulama",
+    "slug": "sulama",
+    "description": "Sulama yöntemleri, verimlilik ve bitki su ihtiyacının belirlenmesi.",
+    "iconName": "water_drop_rounded",
+    "colorHex": "#0277BD",
+    "sortOrder": 6
+  },
+  {
+    "name": "Tarım Ekonomisi",
+    "slug": "tarim-ekonomisi",
+    "description": "Üretim maliyeti, fiyat ve piyasa takibi, işletme yönetimi.",
+    "iconName": "trending_up_rounded",
+    "colorHex": "#1B5E20",
+    "sortOrder": 7
+  },
+  {
+    "name": "Destekler ve Mevzuat",
+    "slug": "destekler-ve-mevzuat",
+    "description": "Tarımsal destekler, üretici kayıtları ve güncel mevzuat takibi.",
+    "iconName": "gavel_rounded",
+    "colorHex": "#455A64",
+    "sortOrder": 8
+  }
+]
