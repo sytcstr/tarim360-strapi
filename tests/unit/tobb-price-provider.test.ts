@@ -242,17 +242,24 @@ test('product map covers the 52 reference products exactly once; A+B+C+D = 52', 
   assert.deepEqual(productMap.map((p) => p.code).sort(), products.map((p) => p.code).sort());
   const by = (c: string) => productMap.filter((p) => p.class === c).length;
   assert.equal(by('A') + by('B') + by('C') + by('D'), 52);
-  assert.equal(by('A'), 9);
+  assert.equal(by('A'), 13);
 });
 
 test('only EXACT / SAFE_ALIAS single-item products are auto-ingested; ambiguous never', () => {
   const auto = autoIngestProducts();
-  assert.equal(auto.length, 9);
+  assert.equal(auto.length, 13);
   for (const p of auto) {
     assert.ok(p.tobb && (p.confidence === 'EXACT' || p.confidence === 'SAFE_ALIAS'));
     assert.equal(p.candidates.length, 0);
   }
-  for (const code of ['BUGDAY', 'ARPA', 'MISIR', 'AYCICEGI']) {
+  // real-crop coverage phase: MISIR / AYÇİÇEĞİ / PATATES / BADEM were promoted
+  // (single real-data variant each -- see tobb-product-map.json notes); products
+  // with several genuinely active variants stay ambiguous.
+  for (const code of ['MISIR', 'AYCICEGI', 'PATATES', 'BADEM']) {
+    assert.equal(productByCode(code).confidence, 'SAFE_ALIAS', code);
+    assert.ok(auto.some((p) => p.code === code), code);
+  }
+  for (const code of ['BUGDAY', 'ARPA', 'KURU_FASULYE', 'PAMUK', 'CEVIZ']) {
     const p = productByCode(code);
     assert.equal(p.confidence, 'AMBIGUOUS');
     assert.equal(p.tobb, null);
@@ -363,12 +370,12 @@ test('provider: ingests only the auto-mapped products; ambiguous products are ne
     delayMs: 0,
   });
   const { observations, report } = await collectTobbObservations({ fetcher, now: NOW });
-  assert.equal(report.productsInScope, 9);
-  assert.equal(seen.length, 9, 'one page per auto-mapped product, nothing else');
+  assert.equal(report.productsInScope, 13);
+  assert.equal(seen.length, 13, 'one page per auto-mapped product, nothing else');
   assert.ok(observations.length >= 1);
   assert.ok(observations.every((o) => o.provider === 'tobb' && o.unit === 'kg'));
   assert.ok(observations.every((o) => ['NOHUT', 'CAVDAR'].includes(o.productCode)));
-  assert.equal(report.pagesNoData, 7);
+  assert.equal(report.pagesNoData, 11);
   assert.ok(report.rejected['too-old']! >= 1, 'the Alaca row from April is too old');
   assert.ok(report.rejected['amount-mismatch']! >= 1, 'the Eskişehir çavdar row is corrupt');
 });
@@ -399,7 +406,7 @@ test('provider: timeout / malformed / empty / 4xx / 5xx responses produce zero o
     const { observations, report } = await collectTobbObservations({ fetcher, now: NOW });
     assert.equal(observations.length, 0, name);
     assert.equal(report.validObservations, 0, name);
-    assert.equal(report.pagesFailed, 9, name);
+    assert.equal(report.pagesFailed, 13, name);
   }
 });
 
@@ -466,4 +473,171 @@ test('the real (TOBB) provider never imports the mock production guard', () => {
     assert.ok(!src.includes('decideMockAgriIngestion'), file);
     assert.ok(!src.includes('agri-data-ingestion'), file);
   }
+});
+
+// ── real crop coverage phase: newly promoted SAFE_ALIAS products ────────────
+// Rows copied verbatim from a live fetch (2026-09-27) of each product's TOBB
+// page; kept as fixtures so the mapping decision is verified against the real
+// shape TOBB returns, not a hand-picked example.
+test('MISIR (promoted): only MISIR SARI trades; Eskişehir/Nazilli corrupt rows '
+  + 'and stale Ilgın/Konya rows are rejected, Bandırma is valid', () => {
+  const ctx = (over: Partial<ReturnType<typeof productByCode>> = {}) => ({
+    product: { ...productByCode('MISIR'), ...over },
+    tobbUnit: 'KG',
+    ana: 1,
+    alt: 601,
+    tobbProductName: 'MISIR SARI',
+    sourceUrl: 'https://borsa.tobb.org.tr/fiyat_urun3.php?ana_kod=1&alt_kod=601',
+    now: NOW,
+  });
+  const bandirma = normalizeTobbRow(
+    baseRow({
+      exchangeName: 'BANDIRMA TICARET BORSASI',
+      exchangeCode: '5BA20',
+      lastTradeText: '25.09.2026 11:28',
+      min: 16.21,
+      max: 16.21,
+      average: 16.21,
+      quantity: 6000,
+      transactionCount: 1,
+      amount: 97260,
+    }),
+    ctx(),
+  ) as any;
+  assert.equal(bandirma.ok, true);
+  assert.equal(bandirma.observation.price, 16.21);
+  assert.equal(bandirma.observation.provinceSlug, 'balikesir');
+
+  const eskisehir = normalizeTobbRow(
+    baseRow({
+      exchangeName: 'ESKISEHIR TICARET BORSASI',
+      lastTradeText: '25.09.2026 16:16',
+      min: 15000,
+      max: 16001,
+      average: 15526,
+      quantity: 19020,
+      transactionCount: 2,
+      amount: 295304.52,
+    }),
+    ctx(),
+  ) as any;
+  assert.equal(eskisehir.reason, 'amount-mismatch');
+
+  const nazilli = normalizeTobbRow(
+    baseRow({
+      exchangeName: 'NAZILLI TICARET BORSASI',
+      lastTradeText: '27.08.2026 09:44',
+      min: 25,
+      max: 25,
+      average: 25,
+      quantity: 5000,
+      transactionCount: 1,
+      amount: 125,
+    }),
+    ctx(),
+  ) as any;
+  assert.equal(nazilli.reason, 'amount-mismatch');
+
+  const ilgin = normalizeTobbRow(
+    baseRow({
+      exchangeName: 'ILGIN TİCARET BORSASI',
+      lastTradeText: '01.07.2026 08:08',
+      min: 11.513,
+      max: 11.513,
+      average: 11.513,
+      quantity: 1000,
+      transactionCount: 1,
+      amount: 11513,
+    }),
+    ctx(),
+  ) as any;
+  assert.equal(ilgin.reason, 'too-old'); // 88 days before NOW
+});
+
+test('AYCICEGI (promoted): only AYÇİÇEĞİ YAĞLIK trades; Edirne quantity-typo '
+  + 'and Eskişehir TL/ton rows rejected, four exchanges valid', () => {
+  const ctx = {
+    product: productByCode('AYCICEGI'),
+    tobbUnit: 'KG',
+    ana: 4,
+    alt: 602,
+    tobbProductName: 'AYÇİÇEĞİ YAĞLIK',
+    sourceUrl: 'https://borsa.tobb.org.tr/fiyat_urun3.php?ana_kod=4&alt_kod=602',
+    now: NOW,
+  };
+  const good = [
+    { exchangeName: 'BANDIRMA TICARET BORSASI', min: 33.7, max: 37.51, average: 35.605, quantity: 409750, transactionCount: 64, amount: 14589460 },
+    { exchangeName: 'ÇORUM TICARET BORSASI', min: 30.42, max: 34.71, average: 32.89, quantity: 125500, transactionCount: 42, amount: 4127695 },
+    { exchangeName: 'SUNGURLU TICARET BORSASI', min: 29.16, max: 29.16, average: 29.16, quantity: 2000, transactionCount: 1, amount: 58320 },
+    { exchangeName: 'UZUNKOPRU TICARET BORSASI', min: 34.413, max: 38.97, average: 36.476, quantity: 469000, transactionCount: 82, amount: 17107244 },
+  ];
+  for (const row of good) {
+    const r = normalizeTobbRow(baseRow({ ...row, lastTradeText: '26.09.2026 07:00' }), ctx) as any;
+    assert.equal(r.ok, true, row.exchangeName);
+  }
+  const edirne = normalizeTobbRow(
+    baseRow({ exchangeName: 'EDIRNE TICARET BORSASI', min: 34.12, max: 39.8, average: 36.905, quantity: 382, transactionCount: 64, amount: 14097556, lastTradeText: '25.09.2026 10:54' }),
+    ctx,
+  ) as any;
+  assert.equal(edirne.reason, 'amount-mismatch');
+  const eskisehir = normalizeTobbRow(
+    baseRow({ exchangeName: 'ESKISEHIR TICARET BORSASI', min: 32601, max: 36500, average: 34871, quantity: 353100, transactionCount: 27, amount: 12312950.1, lastTradeText: '25.09.2026 16:16' }),
+    ctx,
+  ) as any;
+  assert.equal(eskisehir.reason, 'amount-mismatch');
+});
+
+test('PATATES (promoted): YENİ ÜRÜN (current season) is valid; ESKİ ÜRÜN '
+  + '(last season carry-over) is a different TOBB item, not this mapping', () => {
+  const yeni = normalizeTobbRow(
+    baseRow({
+      exchangeName: 'NEVŞEHİR TİCARET BORSASI',
+      lastTradeText: '02.09.2026 10:18',
+      min: 2,
+      max: 50,
+      average: 14.93,
+      quantity: 12419803,
+      transactionCount: 106,
+      amount: 165644889,
+    }),
+    {
+      product: productByCode('PATATES'),
+      tobbUnit: 'KG',
+      ana: 8,
+      alt: 102,
+      tobbProductName: 'PATATES YENİ ÜRÜN',
+      sourceUrl: 'https://borsa.tobb.org.tr/fiyat_urun3.php?ana_kod=8&alt_kod=102',
+      now: NOW,
+    },
+  ) as any;
+  assert.equal(yeni.ok, true);
+  assert.equal(yeni.observation.freshness, 'stale'); // 25 days old
+  assert.equal(productByCode('PATATES').tobb?.alt, 102, 'ESKİ ÜRÜN (alt=101) is not the mapped item');
+});
+
+test('BADEM (promoted): BADEM İÇ (the only TOBB item for almonds) is valid', () => {
+  const r = normalizeTobbRow(
+    baseRow({
+      exchangeName: 'GAZIANTEP TICARET BORSASI',
+      lastTradeText: '25.09.2026 16:47',
+      min: 519.8,
+      max: 600,
+      average: 552.7,
+      quantity: 28341,
+      transactionCount: 34,
+      amount: 15664143.22,
+    }),
+    {
+      product: productByCode('BADEM'),
+      tobbUnit: 'KG',
+      ana: 9,
+      alt: 902,
+      tobbProductName: 'BADEM İÇ',
+      sourceUrl: 'https://borsa.tobb.org.tr/fiyat_urun3.php?ana_kod=9&alt_kod=902',
+      now: NOW,
+    },
+  ) as any;
+  assert.equal(r.ok, true);
+  assert.equal(r.observation.freshness, 'fresh');
+  assert.equal(r.observation.provinceSlug, 'gaziantep');
 });

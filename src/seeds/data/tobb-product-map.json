@@ -181,32 +181,15 @@
     "name": "Mısır",
     "category": "Hububat",
     "defaultUnit": "kg",
-    "class": "B",
-    "confidence": "AMBIGUOUS",
-    "tobb": null,
-    "candidates": [
-      {
-        "ana": 1,
-        "alt": 601,
-        "name": "MISIR SARI"
-      },
-      {
-        "ana": 1,
-        "alt": 602,
-        "name": "MISIR BEYAZ"
-      },
-      {
-        "ana": 1,
-        "alt": 604,
-        "name": "MISIR KARIŞIK"
-      },
-      {
-        "ana": 1,
-        "alt": 830,
-        "name": "MISIR KURU"
-      }
-    ],
-    "notes": "Sarı / beyaz / karışık / kuru: no single \"Mısır\"."
+    "class": "A",
+    "confidence": "SAFE_ALIAS",
+    "tobb": {
+      "ana": 1,
+      "alt": 601,
+      "name": "MISIR SARI"
+    },
+    "candidates": [],
+    "notes": "Only \"MISIR SARI\" (yellow/dent corn, the standard commercial grain corn) publishes real trades; BEYAZ/KARIŞIK/KURU are permanently no-data. Live-checked 2026-09-27: 5 rows, >=1 amount-consistent and fresh (Bandırma)."
   },
   {
     "code": "CAVDAR",
@@ -438,22 +421,15 @@
     "name": "Ayçiçeği",
     "category": "Yağlı Tohumlar",
     "defaultUnit": "kg",
-    "class": "B",
-    "confidence": "AMBIGUOUS",
-    "tobb": null,
-    "candidates": [
-      {
-        "ana": 4,
-        "alt": 601,
-        "name": "AYÇİÇEĞİ TOHUMLUK"
-      },
-      {
-        "ana": 4,
-        "alt": 602,
-        "name": "AYÇİÇEĞİ YAĞLIK"
-      }
-    ],
-    "notes": "Tohumluk (planting seed) vs yağlık (oil crop)."
+    "class": "A",
+    "confidence": "SAFE_ALIAS",
+    "tobb": {
+      "ana": 4,
+      "alt": 602,
+      "name": "AYÇİÇEĞİ YAĞLIK"
+    },
+    "candidates": [],
+    "notes": "Only \"AYÇİÇEĞİ YAĞLIK\" (oil-type sunflower seed, the standard commercial crop) publishes real trades; TOHUMLUK (planting seed, a different market) is permanently no-data. Live-checked 2026-09-27: 6 rows, 4 amount-consistent and fresh (Bandırma/Çorum/Sungurlu/Uzunköprü)."
   },
   {
     "code": "KANOLA",
@@ -553,22 +529,15 @@
     "name": "Patates",
     "category": "Sebze",
     "defaultUnit": "kg",
-    "class": "B",
-    "confidence": "AMBIGUOUS",
-    "tobb": null,
-    "candidates": [
-      {
-        "ana": 8,
-        "alt": 101,
-        "name": "PATATES ESKİ ÜRÜN"
-      },
-      {
-        "ana": 8,
-        "alt": 102,
-        "name": "PATATES YENİ ÜRÜN"
-      }
-    ],
-    "notes": "Eski ürün vs yeni ürün (season variants)."
+    "class": "A",
+    "confidence": "SAFE_ALIAS",
+    "tobb": {
+      "ana": 8,
+      "alt": 102,
+      "name": "PATATES YENİ ÜRÜN"
+    },
+    "candidates": [],
+    "notes": "TOBB splits potato into ESKİ/YENİ ÜRÜN (last season's carry-over stock vs the current harvest) -- the same commodity, not a variant/form difference. YENİ ÜRÜN is the current-season price; ESKİ ÜRÜN's only row is 60+ days old (permanently too-old today). Live-checked 2026-09-27: Nevşehir, amount-consistent."
   },
   {
     "code": "SOGAN",
@@ -1037,17 +1006,15 @@
     "name": "Badem",
     "category": "Kuruyemiş",
     "defaultUnit": "kg",
-    "class": "B",
-    "confidence": "AMBIGUOUS",
-    "tobb": null,
-    "candidates": [
-      {
-        "ana": 9,
-        "alt": 902,
-        "name": "BADEM İÇ"
-      }
-    ],
-    "notes": "Only \"BADEM İÇ\" (shelled kernel) is listed; whether that is the intended product needs a decision."
+    "class": "A",
+    "confidence": "SAFE_ALIAS",
+    "tobb": {
+      "ana": 9,
+      "alt": 902,
+      "name": "BADEM İÇ"
+    },
+    "candidates": [],
+    "notes": "TOBB lists only \"BADEM İÇ\" (shelled kernel) for almonds -- there is no alternative to be ambiguous against. sourceName/notes make the form explicit; the Flutter price card already shows the source label. Live-checked 2026-09-27: Gaziantep, amount-consistent, fresh."
   },
   {
     "code": "KESTANE",
