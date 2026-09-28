@@ -6,7 +6,11 @@
  *  - The webhooks trusted a static header secret no store can send, decoded Apple's JWS without
  *    verifying it, and derived entitlement dates from stale stored data.
  *
- * The Google / Apple network is intercepted (globalThis.fetch); everything else is the real app.
+ * Google's network is intercepted (globalThis.fetch). Apple purchase/webhook
+ * verification (UAT #14 fix) is local JWS chain-verification with no network
+ * call at all, so "faking Apple" here means signing test transactions with
+ * the same test-only certificate chain the verifier trusts (below) --
+ * everything else is the real app.
  */
 import test, { before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -35,7 +39,9 @@ process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = 'play-verify@tarim360.iam.gserviceacc
 process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY = (saKey.privateKey.export({ type: 'pkcs8', format: 'pem' }) as string).replace(/\n/g, '\\n');
 process.env.GOOGLE_PUBSUB_AUDIENCE = AUD;
 process.env.GOOGLE_PUBSUB_SERVICE_ACCOUNT_EMAIL = PUSH_SA;
-process.env.APPLE_SHARED_SECRET = 'test-shared-secret';
+// APPLE_SHARED_SECRET is no longer read by verify() (UAT #14 fix: JWS-based,
+// not the legacy shared-secret /verifyReceipt call) -- left unset deliberately
+// so a stray future read of it in prod code would fail loudly, not silently.
 process.env.APPLE_BUNDLE_ID = BUNDLE;
 process.env.APPLE_TRUSTED_ROOT_SHA256 = rootFp;
 delete process.env.PURCHASE_WEBHOOK_SECRET;
@@ -54,12 +60,21 @@ const BASE_URL = `http://127.0.0.1:${PORT}/api`;
 let strapiInstance: any;
 const realFetch = globalThis.fetch;
 
-// ---- fake Google / Apple ---------------------------------------------------------------
+// ---- fake Google / real (test-chain-signed) Apple ---------------------------------------
 type GoogleSub = { subscriptionState: string; latestOrderId: string; lineItems: { productId: string; expiryTime: string }[]; linkedPurchaseToken?: string };
 const googleSubs = new Map<string, GoogleSub>();
 const googleProducts = new Map<string, { purchaseState: number; orderId: string }>();
-const appleReceipts = new Map<string, any>();
 let googleFailing = false;
+
+// Apple verification (UAT #14 fix) is local JWS chain-verification, not a
+// network call -- so "faking Apple" here means signing a transaction with the
+// SAME test-only chain used by the webhook tests below, not intercepting fetch.
+const jws = (payload: object, opts: { key?: string; x5c?: string[] } = {}) => {
+  const h = b64u(JSON.stringify({ alg: 'ES256', x5c: opts.x5c ?? [der('leaf.pem'), der('intermediate.pem'), der('root.pem')] }));
+  const p = b64u(JSON.stringify(payload));
+  return `${h}.${p}.${b64u(crypto.sign('sha256', Buffer.from(`${h}.${p}`), { key: pem(opts.key ?? 'leaf.key'), dsaEncoding: 'ieee-p1363' }))}`;
+};
+const EVIL = { key: 'evil-leaf.key', x5c: [der('evil-leaf.pem'), der('evil-root.pem'), der('evil-root.pem')] };
 
 const isoIn = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString();
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -81,11 +96,6 @@ before(async () => {
     if (prodMatch) {
       const rec = googleProducts.get(decodeURIComponent(prodMatch[2]));
       return rec ? json(rec) : json({ error: { message: 'invalid token' } }, 400);
-    }
-    if (u.includes('itunes.apple.com/verifyReceipt')) {
-      const receipt = JSON.parse(String(init?.body ?? '{}'))['receipt-data'];
-      const rec = appleReceipts.get(receipt);
-      return json(rec ?? { status: 21002 });
     }
     return realFetch(url, init);
   }) as typeof fetch;
@@ -113,7 +123,6 @@ after(async () => {
 beforeEach(() => {
   googleSubs.clear();
   googleProducts.clear();
-  appleReceipts.clear();
   googleFailing = false;
 });
 
@@ -150,13 +159,26 @@ const isActive = (p: any) => !!p && new Date(p.endsAt).getTime() > Date.now();
 const googlePurchase = (token: string, productId: string, days: number, order = `GPA.${uid()}`) =>
   googleSubs.set(token, { subscriptionState: 'SUBSCRIPTION_STATE_ACTIVE', latestOrderId: order, lineItems: [{ productId, expiryTime: isoIn(days) }] });
 
-const applePurchase = (receipt: string, productId: string, days: number, orig = `100${uid()}`) => {
-  appleReceipts.set(receipt, {
-    status: 0,
-    receipt: { bundle_id: BUNDLE, in_app: [] },
-    latest_receipt_info: [{ product_id: productId, transaction_id: `T${orig}`, original_transaction_id: orig, expires_date_ms: String(Date.now() + days * 86_400_000) }],
+/** Builds a real, test-chain-signed StoreKit2 transaction JWS -- exactly the
+ * shape `verifyApple` now decodes (UAT #14 fix), replacing the old fake
+ * legacy-receipt-JSON fixture. Returns the JWS to send as `receipt`, plus the
+ * `originalTransactionId`/`transactionId` the caller needs for assertions. */
+const appleTransactionJws = (
+  productId: string,
+  days: number,
+  orig = `100${uid()}`,
+  over: { bundleId?: string; revoked?: number } = {},
+) => {
+  const transactionId = `T${orig}`;
+  const receipt = jws({
+    transactionId,
+    originalTransactionId: orig,
+    productId,
+    bundleId: over.bundleId ?? BUNDLE,
+    expiresDate: Date.now() + days * 86_400_000,
+    ...(over.revoked ? { revocationDate: over.revoked } : {}),
   });
-  return orig;
+  return { receipt, orig, transactionId };
 };
 
 // ======================================================================================
@@ -281,30 +303,35 @@ test('Google: a cheap subscription cannot be presented as a more expensive plan 
   assert.equal(await premiumOf(A.ownerId), null, 'no Pro entitlement from an Easy purchase');
 });
 
-test('Apple: valid receipt -> entitlement for A; another account presenting the same receipt is refused', async () => {
+test('Apple: valid (real signed StoreKit2 transaction) receipt -> entitlement for A; another account presenting the same receipt is refused', async () => {
   const A = await register('aa');
   const B = await register('ab');
-  const receipt = `receipt-${uid()}`;
-  applePurchase(receipt, 'pro_premium_12ay', 30, '9000001');
-  const r1 = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt, transactionId: 'T9000001' });
+  const { receipt, orig, transactionId } = appleTransactionJws('pro_premium_12ay', 30, '9000001');
+  const r1 = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt, transactionId });
   assert.equal(r1.body.verified, true, JSON.stringify(r1.body));
   assert.ok(isActive(await premiumOf(A.ownerId)));
-  assert.equal((await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt, transactionId: 'T9000001' })).body.idempotent, true);
+  assert.equal((await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt, transactionId })).body.idempotent, true);
 
   const rb = await verify(B.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt, transactionId: `chosen-${uid()}` });
   assert.equal(rb.status, 403, JSON.stringify(rb.body));
   assert.equal(await premiumOf(B.ownerId), null);
-  const owners = await strapiInstance.db.query('api::purchase-event.purchase-event').findMany({ where: { originalTransactionId: '9000001' } });
+  const owners = await strapiInstance.db.query('api::purchase-event.purchase-event').findMany({ where: { originalTransactionId: orig } });
   assert.deepEqual(owners.map((e: any) => e.ownerProfileId), [A.ownerId]);
 });
 
-test('Apple: a receipt from another app (wrong bundle id) is rejected', async () => {
+test('Apple: a transaction for another app (wrong bundle id) is rejected', async () => {
   const A = await register('bundle');
-  const receipt = `receipt-${uid()}`;
-  applePurchase(receipt, 'easy_premium_12ay', 30);
-  appleReceipts.get(receipt).receipt.bundle_id = 'com.someone.else';
+  const { receipt } = appleTransactionJws('easy_premium_12ay', 30, undefined, { bundleId: 'com.someone.else' });
   const r = await verify(A.jwt, { productId: 'easy_premium_12ay', platform: 'ios', receipt, transactionId: `t-${uid()}` });
   assert.notEqual(r.body.verified, true);
+  assert.equal(await premiumOf(A.ownerId), null);
+});
+
+test('Apple: a revoked/refunded transaction never grants an entitlement through verify()', async () => {
+  const A = await register('applerefundverify');
+  const { receipt } = appleTransactionJws('easy_premium_12ay', 30, undefined, { revoked: Date.now() - 1000 });
+  const r = await verify(A.jwt, { productId: 'easy_premium_12ay', platform: 'ios', receipt, transactionId: `t-${uid()}`, isSubscription: false });
+  assert.notEqual(r.body.verified, true, JSON.stringify(r.body));
   assert.equal(await premiumOf(A.ownerId), null);
 });
 
@@ -409,12 +436,6 @@ test('Google webhook: a forged pointer at an unknown token, a foreign package an
 // ======================================================================================
 // D. Apple App Store Server Notifications V2 (signed payload verified against the chain)
 // ======================================================================================
-const jws = (payload: object, opts: { key?: string; x5c?: string[] } = {}) => {
-  const h = b64u(JSON.stringify({ alg: 'ES256', x5c: opts.x5c ?? [der('leaf.pem'), der('intermediate.pem'), der('root.pem')] }));
-  const p = b64u(JSON.stringify(payload));
-  return `${h}.${p}.${b64u(crypto.sign('sha256', Buffer.from(`${h}.${p}`), { key: pem(opts.key ?? 'leaf.key'), dsaEncoding: 'ieee-p1363' }))}`;
-};
-const EVIL = { key: 'evil-leaf.key', x5c: [der('evil-leaf.pem'), der('evil-root.pem'), der('evil-root.pem')] };
 const anote = (orig: string, o: { type?: string; subtype?: string; signedDate?: number; expires?: number; revoked?: number; env?: string; bundle?: string; product?: string; signer?: typeof EVIL } = {}) => {
   const tx = {
     transactionId: `T${orig}-${uid()}`, originalTransactionId: orig, productId: o.product ?? 'pro_premium_12ay', bundleId: o.bundle ?? BUNDLE,
@@ -430,9 +451,8 @@ const anote = (orig: string, o: { type?: string; subtype?: string; signedDate?: 
 
 async function boundAppleUser(tag: string, days = 30) {
   const A = await register(tag);
-  const receipt = `receipt-${uid()}`;
-  const orig = applePurchase(receipt, 'pro_premium_12ay', days);
-  const r = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt, transactionId: `T${orig}` });
+  const { receipt, orig, transactionId } = appleTransactionJws('pro_premium_12ay', days);
+  const r = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt, transactionId });
   assert.equal(r.body.verified, true, JSON.stringify(r.body));
   return { A, orig };
 }

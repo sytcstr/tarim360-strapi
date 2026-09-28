@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { asString, parseIso, Provider, PurchaseStatus } from './catalog';
-import { appleConfig, googleConfig, isSoftVerifyActive } from './config';
+import { appleConfig, googleConfig, isSoftVerifyActive, trustedAppleRoots } from './config';
+import { verifyAppleJws } from './apple-jws';
 
 export type VerifyOutcome = {
   verified: boolean;
@@ -192,39 +193,35 @@ export const verifyGoogle = async (input: {
   };
 };
 
-const callAppleVerifyReceipt = async (
-  receipt: string,
-  sandbox: boolean,
-): Promise<Record<string, unknown>> => {
-  const endpoint = sandbox
-    ? 'https://sandbox.itunes.apple.com/verifyReceipt'
-    : 'https://buy.itunes.apple.com/verifyReceipt';
-  const body: Record<string, unknown> = {
-    'receipt-data': receipt,
-    'exclude-old-transactions': true,
-  };
-  const sharedSecret = appleConfig().sharedSecret;
-  if (sharedSecret) {
-    body.password = sharedSecret;
-  }
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(`Apple verifyReceipt HTTP ${res.status}`);
-  return (await res.json().catch(() => ({}))) as Record<string, unknown>;
-};
-
+/**
+ * UAT #14 (real-device 1.0.85 report) root cause: this used to POST
+ * `receipt` to Apple's LEGACY `/verifyReceipt` REST endpoint, expecting
+ * the old base64 App Store receipt blob (StoreKit1's format). But the
+ * Flutter app's `in_app_purchase_storekit` (0.4.8+1) defaults to
+ * `_useStoreKit2 = true` (confirmed: nothing in this app's own code
+ * overrides that) -- on StoreKit2, `PurchaseDetails.verificationData.
+ * serverVerificationData` (what the app sends as `receipt`) is the
+ * transaction's `jwsRepresentation`, a completely different format (a
+ * signed JWS, not a base64 PKCS#7 blob). Apple's legacy endpoint cannot
+ * parse a JWS as `receipt-data` -- every real purchase on a StoreKit2
+ * device (the default for any current build) was verified against the
+ * WRONG API and rejected, exactly matching "satın alma tamamlanmıyor".
+ *
+ * The App Store Server Notification webhook (`appleWebhook`, this same
+ * file's sibling) already had the CORRECT verification for this exact
+ * JWS shape (`verifyAppleJws`, root-pinned cert chain -- this is Apple's
+ * own documented model for StoreKit2: a transaction JWS is
+ * self-verifying, no server round trip to Apple needed at all). This
+ * now uses that same, already-tested verifier instead of a network call
+ * -- stronger (cryptographic chain verification pinned to Apple's real
+ * root) than the old shared-secret REST call, never weaker.
+ */
 const verifyApple = async (input: {
   productId: string;
   receipt: string;
   isSubscription: boolean;
 }): Promise<VerifyOutcome> => {
   const apple = appleConfig();
-  if (input.isSubscription && !apple.sharedSecret) {
-    throw new Error('APPLE_SHARED_SECRET tanımlı değil.');
-  }
   if (!apple.bundleId) {
     throw new Error('APPLE_BUNDLE_ID tanımlı değil.');
   }
@@ -238,94 +235,84 @@ const verifyApple = async (input: {
     };
   }
 
-  let body = await callAppleVerifyReceipt(receipt, false);
-  if (Number(body.status ?? -1) === 21007) {
-    body = await callAppleVerifyReceipt(receipt, true);
-  }
-  if (Number(body.status ?? -1) !== 0) {
+  let tx: Record<string, unknown>;
+  try {
+    tx = verifyAppleJws(receipt, { trustedRootSha256: trustedAppleRoots() });
+  } catch (e) {
     return {
       verified: false,
       status: 'rejected',
       provider: 'app_store',
-      payload: body,
-      message: `Apple verify status=${asString(body.status)}`,
+      message: `Apple işlem doğrulaması başarısız: ${String((e as Error)?.message ?? e)}`,
     };
   }
 
-  // The receipt must belong to THIS app, not another app sharing product ids.
-  const receiptBundleId = asString(
-    (body.receipt as Record<string, unknown> | undefined)?.bundle_id,
-  );
-  if (receiptBundleId !== apple.bundleId) {
+  // The transaction must belong to THIS app, not another app sharing product ids.
+  if (asString(tx.bundleId) !== apple.bundleId) {
     return {
       verified: false,
       status: 'rejected',
       provider: 'app_store',
-      payload: body,
-      message: 'Apple receipt bu uygulamaya ait değil.',
+      payload: tx,
+      message: 'Apple işlemi bu uygulamaya ait değil.',
     };
   }
 
+  // Product substitution guard: the JWS transaction's own claimed product
+  // must match what the client says it's paying for -- never trust the
+  // client's productId alone (mirrors the old code's equivalent filter).
+  const claimedProduct = asString(tx.productId);
+  if (input.productId && claimedProduct && claimedProduct !== input.productId) {
+    return {
+      verified: false,
+      status: 'rejected',
+      provider: 'app_store',
+      payload: tx,
+      message: 'Apple işlemi talep edilen ürünle eşleşmiyor.',
+    };
+  }
+
+  const transactionId = asString(tx.transactionId);
+  const originalTransactionId = asString(tx.originalTransactionId);
+  const revoked = Number(tx.revocationDate ?? 0) > 0;
   const nowMs = Date.now();
+
   if (input.isSubscription) {
-    const latest = Array.isArray(body.latest_receipt_info) ? body.latest_receipt_info : [];
-    const matched = latest
-      .map((x) => x as Record<string, unknown>)
-      .filter((x) => asString(x.product_id) === input.productId || !input.productId)
-      .sort(
-        (a, b) =>
-          Number(asString(b.expires_date_ms) || '0') -
-          Number(asString(a.expires_date_ms) || '0'),
-      )[0];
-    if (!matched) {
+    if (revoked) {
       return {
         verified: false,
-        status: 'rejected',
+        status: 'refunded',
         provider: 'app_store',
-        payload: body,
-        message: 'Apple abonelik kaydı bulunamadı.',
+        transactionId,
+        originalTransactionId,
+        payload: tx,
+        message: 'Apple aboneliği iade/iptal edilmiş.',
       };
     }
-    const expiresMs = Number(asString(matched.expires_date_ms) || '0');
+    const expiresMs = Number(tx.expiresDate ?? 0) || 0;
     const isActive = Number.isFinite(expiresMs) && expiresMs > nowMs;
     return {
       verified: isActive,
       status: isActive ? 'verified' : 'expired',
       provider: 'app_store',
-      transactionId: asString(matched.transaction_id),
-      originalTransactionId: asString(matched.original_transaction_id),
-      expiresAt: Number.isFinite(expiresMs) && expiresMs > 0 ? new Date(expiresMs).toISOString() : undefined,
-      payload: body,
+      transactionId,
+      originalTransactionId,
+      expiresAt: expiresMs > 0 ? new Date(expiresMs).toISOString() : undefined,
+      payload: tx,
       message: isActive ? 'Apple abonelik doğrulandı.' : 'Apple abonelik süresi dolmuş.',
     };
   }
 
-  const receiptObj =
-    body.receipt && typeof body.receipt === 'object'
-      ? (body.receipt as Record<string, unknown>)
-      : {};
-  const inApp = Array.isArray(receiptObj.in_app) ? receiptObj.in_app : [];
-  const matched = inApp
-    .map((x) => x as Record<string, unknown>)
-    .find((x) => asString(x.product_id) === input.productId || !input.productId);
-  if (!matched) {
-    return {
-      verified: false,
-      status: 'rejected',
-      provider: 'app_store',
-      payload: body,
-      message: 'Apple ürün kaydı bulunamadı.',
-    };
-  }
-  const canceled = asString(matched.cancellation_date).length > 0;
+  // One-time (non-consumable/consumable) product: a single transaction JWS,
+  // valid unless the store has since revoked/refunded it.
   return {
-    verified: !canceled,
-    status: canceled ? 'refunded' : 'verified',
+    verified: !revoked,
+    status: revoked ? 'refunded' : 'verified',
     provider: 'app_store',
-    transactionId: asString(matched.transaction_id),
-    originalTransactionId: asString(matched.original_transaction_id),
-    payload: body,
-    message: canceled ? 'Apple ürün iade edilmiş.' : 'Apple ürün doğrulandı.',
+    transactionId,
+    originalTransactionId,
+    payload: tx,
+    message: revoked ? 'Apple ürün iade edilmiş.' : 'Apple ürün doğrulandı.',
   };
 };
 
