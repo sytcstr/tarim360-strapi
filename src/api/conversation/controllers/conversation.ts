@@ -42,8 +42,46 @@ const actorForUser = (user) => ({
         ownerIdFromEmail(user.email) ||
         user.id),
   ),
+  // Deliberately NOT the real, user-chosen display name -- this is the
+  // raw users-permissions auth identity (username, which registration
+  // normalizes from the email, stripping '@'), used ONLY as a last-
+  // resort identity-matching key (actorKey's third fallback, the
+  // read-receipts map key) where `profileId`/`email` are unavailable.
+  // Real display text for a human to read is resolved separately via
+  // `resolveActorDisplayName` below, from `profile-setting.displayName`
+  // -- the same field public-profile.ts already serves to everyone
+  // else. Conflating the two here was the root cause of messages/push
+  // notifications showing a username/email-like string instead of the
+  // name the person actually set on their profile.
   name: cleanId(user && (user.username || user.email || user.id)),
 });
+
+/**
+ * Madde 4 (messaging/push shows username/email, not the real profile
+ * name): resolves the SAME `profile-setting.displayName` field
+ * public-profile.ts already serves publicly, for a given profileId.
+ * Falls back to `fallbackName` (the raw actorForUser identity) if no
+ * profile-setting row exists yet or its displayName is empty -- never
+ * throws, never blocks message sending on this being unavailable.
+ */
+const resolveActorDisplayName = async (
+  strapiRef: any,
+  profileId: string,
+  fallbackName: string,
+): Promise<string> => {
+  const id = cleanId(profileId);
+  if (!id) return fallbackName;
+  try {
+    const rows = await strapiRef.db
+      .query('api::profile-setting.profile-setting')
+      .findMany({ where: { profileId: id }, select: ['displayName'], limit: 1 });
+    const displayName = String((rows && rows[0] && rows[0].displayName) || '').trim();
+    return displayName || fallbackName;
+  } catch (e) {
+    strapiRef.log.warn(`resolveActorDisplayName failed for ${id}: ${String(e)}`);
+    return fallbackName;
+  }
+};
 
 const ownerIdFromEmail = (email) => {
   const value = cleanEmail(email);
@@ -348,6 +386,16 @@ const applyVerifiedRequester = (data, requester) => {
  * found. */
 const verifyAndCorrectReceiver = async (strapi, data, user) => {
   const current = actorForUser(user);
+  // Madde 4 fix: the requester's PERSISTED display name must be the real
+  // profile-setting.displayName, not the raw username/email actorForUser
+  // carries for identity-matching purposes (current.profileId/.email,
+  // used throughout this function, are untouched by this).
+  const requesterRealName = await resolveActorDisplayName(
+    strapi,
+    current.profileId,
+    current.name,
+  );
+  const currentForDisplay = { ...current, name: requesterRealName };
   const conversationKey = conversationKeyFor(data, user);
   const threadId = threadIdFor(data, conversationKey);
   const existingThread = await findThread(strapi, data, conversationKey, threadId);
@@ -385,15 +433,15 @@ const verifyAndCorrectReceiver = async (strapi, data, user) => {
     // with senderEmail (already always forced to `current`) -- a
     // requester spoofing attempt can no longer smuggle a real third
     // party's identity into the thread by claiming it on a reply either.
-    applyVerifiedRequester(data, current);
-    return { existingThread, forbidden: false, rejected: null };
+    applyVerifiedRequester(data, currentForDisplay);
+    return { existingThread, forbidden: false, rejected: null, requesterRealName };
   }
 
   // Madde 21: a brand-new conversation's requester is always whoever is
   // actually creating it -- there is no legitimate "requesting on behalf
   // of someone else" scenario, unlike the receiver (the other party),
   // which genuinely has no server-known value yet for a first message.
-  applyVerifiedRequester(data, current);
+  applyVerifiedRequester(data, currentForDisplay);
 
   const owner = await resolveContextOwner(strapi, data);
   if (
@@ -465,7 +513,7 @@ const verifyAndCorrectReceiver = async (strapi, data, user) => {
     }
   }
 
-  return { existingThread: null, forbidden: false, rejected: null };
+  return { existingThread: null, forbidden: false, rejected: null, requesterRealName };
 };
 
 const normalizeThreadData = (data, user) => {
@@ -877,6 +925,14 @@ export default {
     const threadId = threadIdFor(data, conversationKey);
     const existingThread = verified.existingThread;
     const p = normalizeParticipants(data, user);
+    // Madde 4 fix: senderName is always `current` (MESSAGING M1 above),
+    // the exact same person verifyAndCorrectReceiver already resolved a
+    // real profile-setting.displayName for -- reuse it instead of a
+    // second lookup, overriding normalizeParticipants' own raw
+    // username/email-based senderName. This is what the push
+    // notification body (message/lifecycles.ts) and the message row's
+    // own senderName end up showing.
+    if (verified.requesterRealName) p.senderName = verified.requesterRealName;
     if (
       isSamePerson(
         p.requesterProfileId,

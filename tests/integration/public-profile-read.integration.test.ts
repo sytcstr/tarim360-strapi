@@ -367,6 +367,64 @@ test('resolves identically when called by a different logged-in user (non-owner)
 // SEC-1 regression -- must stay closed
 // ---------------------------------------------------------------------
 
+// ---------------------------------------------------------------------
+// avatarImage/coverImage media-relation fix (not the dead avatarUrl/
+// coverUrl string columns -- see services/public-profile.ts's own
+// comment). Flutter's profile_edit_page.dart upload flow writes to the
+// MEDIA RELATION, never to the plain string column, so a real-world
+// upload must surface here as `avatarUrl`/`coverUrl`.
+// ---------------------------------------------------------------------
+
+async function attachMediaRelation(
+  profileId: string,
+  field: 'avatarImage' | 'coverImage',
+  url: string,
+) {
+  const file = await strapiInstance.entityService.create('plugin::upload.file', {
+    data: {
+      name: `${field}.jpg`,
+      url,
+      mime: 'image/jpeg',
+      ext: '.jpg',
+      hash: `${field}-${randomUUID()}`,
+      size: 12,
+      provider: 'local',
+      folderPath: '/',
+    },
+  });
+  await strapiInstance.db.query('api::profile-setting.profile-setting').update({
+    where: { profileId },
+    data: { [field]: file.id },
+  });
+}
+
+test('avatarUrl resolves from the real avatarImage media relation, not the dead avatarUrl column', async () => {
+  const { profile } = await setupProfile(`pub-avatar-media-${randomUUID()}@test.local`);
+  await attachMediaRelation(profile.profileId, 'avatarImage', '/uploads/real_avatar_abc123.jpg');
+  const res = await fetch(`${BASE_URL}/public-profiles/${profile.profileId}`);
+  const body = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(body.profile.avatarUrl, '/uploads/real_avatar_abc123.jpg');
+});
+
+test('coverUrl resolves from the real coverImage media relation, not the dead coverUrl column', async () => {
+  const { profile } = await setupProfile(`pub-cover-media-${randomUUID()}@test.local`);
+  await attachMediaRelation(profile.profileId, 'coverImage', '/uploads/real_cover_xyz789.jpg');
+  const res = await fetch(`${BASE_URL}/public-profiles/${profile.profileId}`);
+  const body = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(body.profile.coverUrl, '/uploads/real_cover_xyz789.jpg');
+});
+
+test('a profile with no avatarImage/coverImage set still resolves with empty avatarUrl/coverUrl (no crash)', async () => {
+  const { profile } = await setupProfile(`pub-no-media-${randomUUID()}@test.local`);
+  const res = await fetch(`${BASE_URL}/public-profiles/${profile.profileId}`);
+  const body = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(body.profile.avatarUrl, '');
+  assert.equal(body.profile.coverUrl, '');
+});
+
 test('regression: SEC-1 is not reopened -- GET /profile-settings (filtered) still only returns the caller\'s own document', async () => {
   const { profile: target } = await setupProfile(`pub-sec1-target-${randomUUID()}@test.local`, {
     phone: 'still-secret-phone',

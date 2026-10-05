@@ -151,6 +151,25 @@ const computeRating = (row: Record<string, any>): { average: number; count: numb
   return { average: Math.min(5, Math.max(0, average)), count };
 };
 
+// The real uploaded photo lives in the `avatarImage`/`coverImage` MEDIA
+// RELATIONS (profile-setting schema), written by profile_edit_page.dart's
+// upload flow (`payload['avatarImage'] = avatarUploadId`). `avatarUrl`/
+// `coverUrl` are separate, plain string columns that nothing in this
+// backend ever writes to -- they stay empty forever. Same root cause and
+// same fix shape as UAT #1's `listing-popular-query.ts` `photos` gap:
+// `db.query` (the low-level Query Engine), unlike entityService/the
+// normal find pipeline, never auto-populates a relation unless it is
+// named in `populate`. Selecting the dead string column was therefore
+// never going to surface a real avatar for anyone but the profile owner
+// (whose OWN device reads `avatarImage` correctly via a different,
+// already-populated query in strapi_service.dart).
+const MEDIA_POPULATE = { avatarImage: true, coverImage: true } as any;
+
+const mediaUrl = (media: unknown): string => {
+  if (!media || typeof media !== 'object') return '';
+  return str((media as Record<string, unknown>).url);
+};
+
 export const resolvePublicProfile = async (
   strapiInstance: any,
   ownerId: string,
@@ -161,6 +180,7 @@ export const resolvePublicProfile = async (
   const rows = await strapiInstance.db.query(PROFILE_UID).findMany({
     where: { profileId: id },
     select: [...SELECT_FIELDS],
+    populate: MEDIA_POPULATE,
     limit: 2,
   });
 
@@ -193,8 +213,12 @@ export const resolvePublicProfile = async (
       aboutText: str(row.aboutText) || str(row.bio),
       logisticsAboutText: str(row.logisticsAboutText),
       accountType: str(row.accountType) || 'standard',
-      avatarUrl: str(row.avatarUrl),
-      coverUrl: str(row.coverUrl),
+      // Prefer the real uploaded media's URL; the plain string columns
+      // are kept as a fallback only (nothing writes them today, but this
+      // stays correct if that ever changes instead of silently ignoring
+      // a future legitimate write).
+      avatarUrl: mediaUrl(row.avatarImage) || str(row.avatarUrl),
+      coverUrl: mediaUrl(row.coverImage) || str(row.coverUrl),
       // Omitted entirely (not an empty string) unless the owner opted in
       // AND actually has a value on file -- a caller must never be able
       // to distinguish "opted out" from "no number on file" from the

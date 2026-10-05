@@ -366,3 +366,56 @@ test('upsert without a receiver identity is rejected and leaves no ghost thread;
   assert.equal(again.status, 200, JSON.stringify(again.body));
   assert.equal((await mine()).length, 1, 're-upsert of an existing thread does not duplicate it');
 });
+
+// ---------------------------------------------------------------------
+// Madde 4 (messages/push showed username/email, not the real profile
+// name): senderName/requesterName must resolve from profile-setting.
+// displayName, the same field public-profile.ts already serves to
+// everyone else -- never the raw users-permissions username/email.
+// ---------------------------------------------------------------------
+
+async function setDisplayName(jwt: string, displayName: string) {
+  const res = await fetch(`${BASE_URL}/profile-settings`, {
+    method: 'POST',
+    headers: authed(jwt),
+    body: JSON.stringify({ data: { displayName } }),
+  });
+  return res.json();
+}
+
+test('Madde 4: senderName/requesterName resolve from the real profile-setting.displayName, not username/email', async () => {
+  const aEmail = `m4-a-${randomUUID()}@test.local`;
+  const bEmail = `m4-b-${randomUUID()}@test.local`;
+  const aJwt = await registerAndLogin(aEmail);
+  await registerAndLogin(bEmail);
+  await setDisplayName(aJwt, 'Ayse Yilmaz');
+
+  const { status, body } = await sendMessage(aJwt, {
+    message: 'merhaba',
+    listingId: `listing-${randomUUID()}`,
+    receiverEmail: bEmail,
+  });
+
+  assert.equal(status, 200, JSON.stringify(body));
+  assert.equal(body.data.senderName, 'Ayse Yilmaz');
+  assert.equal(body.data.requesterName, 'Ayse Yilmaz');
+  assert.notEqual(body.data.senderName, aEmail);
+  assert.ok(!String(body.data.senderName).includes('@'), 'must never be email-shaped');
+});
+
+test('Madde 4: a sender with no profile-setting row yet falls back gracefully (no crash, no empty name)', async () => {
+  const aEmail = `m4-nofallback-${randomUUID()}@test.local`;
+  const bEmail = `m4-nofallback-b-${randomUUID()}@test.local`;
+  const aJwt = await registerAndLogin(aEmail);
+  await registerAndLogin(bEmail);
+  // Deliberately no setDisplayName call -- A has never touched profile-edit.
+
+  const { status, body } = await sendMessage(aJwt, {
+    message: 'merhaba',
+    listingId: `listing-${randomUUID()}`,
+    receiverEmail: bEmail,
+  });
+
+  assert.equal(status, 200, JSON.stringify(body));
+  assert.ok(String(body.data.senderName || '').trim().length > 0, 'must still have some sender name, never empty');
+});
