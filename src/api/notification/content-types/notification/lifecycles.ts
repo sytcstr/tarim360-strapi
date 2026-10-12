@@ -180,6 +180,7 @@ export const deliverPush = async (
 
   let totalAttempted = 0;
   let totalSuccess = 0;
+  let hadAnyRegisteredToken = false;
   const errorNotes: string[] = [];
 
   for (const profileSetting of targets) {
@@ -187,6 +188,7 @@ export const deliverPush = async (
     const targetProfileId = normalizeText(profileSetting.profileId);
     const tokens = normalizeFcmTokenList(profileSetting.fcmTokens);
     if (tokens.length === 0) continue;
+    hadAnyRegisteredToken = true;
 
     const result = await sendFcmLegacyPush({
       tokens,
@@ -227,14 +229,47 @@ export const deliverPush = async (
     }
   }
 
+  // "Çiftçiden Sorular" audit follow-up (push-reporting accuracy pass):
+  // `totalAttempted === 0` used to fall straight into the `'failed'`
+  // branch below regardless of WHY nothing was attempted -- no FCM
+  // credentials configured (`sendFcmLegacyPush` returns `skipped: true`
+  // for every target) and no target having a registered token at all
+  // (the per-target `continue` above, which never even calls
+  // `sendFcmLegacyPush`) both silently read as a genuine delivery
+  // *failure* in `pushStatus`, indistinguishable from "FCM rejected
+  // every real attempt". Confirmed concretely: this repo's own local
+  // `.env` has zero FCM credentials, so every notification created
+  // during any local/test run was unconditionally marked `'failed'`
+  // before this fix -- a false signal that would read as a broken
+  // integration when it was actually just not configured here.
+  // `'skipped'` (already an existing status value, used just above for
+  // "no target profile-setting at all") now also covers both of these
+  // "nothing was ever actually attempted" cases; `'failed'` is reserved
+  // for a genuine attempt FCM itself rejected.
+  const pushStatus =
+    totalAttempted === 0
+      ? 'skipped'
+      : totalSuccess === 0
+        ? 'failed'
+        : totalSuccess < totalAttempted
+          ? 'partial'
+          : 'sent';
+  if (totalAttempted === 0 && !hadAnyRegisteredToken && errorNotes.length === 0) {
+    errorNotes.push('hedeflerin hicbirinde kayitli FCM token yok');
+  }
+
   await markPushStatus(strapiRef, row, {
-    pushStatus: totalSuccess > 0 && totalSuccess < totalAttempted ? 'partial' : totalSuccess > 0 ? 'sent' : 'failed',
+    pushStatus,
     pushError: errorNotes.slice(0, 5).join('\n') || null,
+    // `sentAt`/`'sent'` only ever means "the FCM API accepted the
+    // request" -- there is no delivery receipt from this API, so neither
+    // this field nor `pushStatus` is ever proof the device actually
+    // received anything.
     sentAt: totalSuccess > 0 ? new Date().toISOString() : null,
   });
 
   strapiRef.log.info(
-    `FCM push sent: attempted=${totalAttempted} success=${totalSuccess} targets=${targets.length}`,
+    `FCM push ${pushStatus}: attempted=${totalAttempted} success=${totalSuccess} targets=${targets.length}`,
   );
 };
 

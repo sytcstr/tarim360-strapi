@@ -342,6 +342,128 @@ export const resolveThreadParticipantsByThreadId = async (
   }
 };
 
+/**
+ * Madde 1/3 (farmer-question answer identity + notification): resolves
+ * the REAL display name AND city for a profileId from its own
+ * profile-setting row (the same field public-profile.ts/conversation.ts's
+ * resolveActorDisplayName already serve/use) -- never trusts a client-
+ * supplied name/city for a NEW answer's embedded author fields. Falls
+ * back to the given defaults (never throws, never blocks on this being
+ * unavailable for a brand-new account with no profile-setting row yet).
+ */
+export const resolveActorProfile = async (
+  strapi: Core.Strapi,
+  profileId: string,
+  fallback: { name: string; city: string },
+): Promise<{ name: string; city: string }> => {
+  const id = String(profileId ?? '').trim();
+  if (!id) return fallback;
+  try {
+    const row = await strapi.db.query('api::profile-setting.profile-setting').findOne({
+      where: { profileId: id },
+      select: ['displayName', 'city'],
+    } as any);
+    const name = String((row as any)?.displayName ?? '').trim();
+    const city = String((row as any)?.city ?? '').trim();
+    return {
+      name: name || fallback.name,
+      city: city || fallback.city,
+    };
+  } catch (_) {
+    return fallback;
+  }
+};
+
+/**
+ * Madde 1/3/5: farmer questions are hub-content rows with
+ * kind='farmerQuestion' (answers/comments: 'farmerQuestionComment') --
+ * mirrors the Flutter client's OWN fuzzy kind matching
+ * (farmer_questions_repo.dart's _isQuestionKind/_isCommentKind) so legacy-
+ * shaped rows already in the database are still recognized, never a
+ * blog/report row misclassified as a question by a spoofed client kind.
+ */
+const normalizeKindForMatch = (value: unknown): string =>
+  String(value ?? '').trim().toLowerCase();
+
+export const isFarmerQuestionKind = (rawKind: unknown): boolean => {
+  const k = normalizeKindForMatch(rawKind);
+  if (!k) return false;
+  if (k === 'farmerquestion' || k === 'farmer_question' || k === 'ciftcisorusu') return true;
+  return k.includes('farmer') && k.includes('question') && !k.includes('comment') && !k.includes('report');
+};
+
+export const isFarmerQuestionCommentKind = (rawKind: unknown): boolean => {
+  const k = normalizeKindForMatch(rawKind);
+  if (!k) return false;
+  if (k === 'farmerquestioncomment' || k === 'farmer_question_comment') return true;
+  return k.includes('farmer') && (k.includes('comment') || k.includes('answer') || k.includes('reply'));
+};
+
+export const isDeletedOrHiddenState = (row: Record<string, unknown>): boolean => {
+  const state = String(row.state ?? (row as any).status ?? '').trim().toLowerCase();
+  return (
+    state.includes('delete') ||
+    state.includes('archive') ||
+    state.includes('block') ||
+    state.includes('remove') ||
+    state.includes('hidden') ||
+    state.includes('draft') ||
+    state.includes('unpublish')
+  );
+};
+
+/** The exact client-facing question id Flutter's own _parseQuestion
+ * derives (body.questionId if the row's body JSON carries one, else
+ * `fq_<rowId>`) -- computed here from the SAME loaded row so a
+ * notification's questionId always matches what the app would resolve
+ * the question as, whichever path loads it. */
+export const canonicalFarmerQuestionId = (row: Record<string, unknown>): string => {
+  try {
+    const bodyText = String(row.body ?? '').trim();
+    if (bodyText) {
+      const parsed = JSON.parse(bodyText);
+      const fromBody = String(parsed?.questionId ?? '').trim();
+      if (fromBody) return fromBody;
+    }
+  } catch (_) {
+    // fall through to the row-id-derived default
+  }
+  return `fq_${row.id ?? row.documentId ?? ''}`;
+};
+
+export type FarmerQuestionOwner = {
+  email: string;
+  ownerId: string;
+  canonicalQuestionId: string;
+  row: Record<string, unknown>;
+};
+
+/** Madde 3: loads the REAL hub-content row for a farmer-question entityId
+ * and returns its real, server-stored owner -- never a client-supplied
+ * targetEmail/targetProfileId. Rejects (returns null) anything that
+ * isn't actually a farmerQuestion-kind row (a spoofed domain='farmer_
+ * question' against an arbitrary blog/report row's id must not resolve
+ * to that row's unrelated owner), and anything deleted/archived/hidden
+ * (not "accessible"). */
+export const resolveFarmerQuestionOwnerByAnyId = async (
+  strapi: Core.Strapi,
+  rawQuestionId: unknown,
+): Promise<FarmerQuestionOwner | null> => {
+  const row = await loadEntityByRouteId(
+    strapi,
+    'api::hub-content.hub-content',
+    String(rawQuestionId ?? '').trim(),
+    ['id', 'documentId', 'kind', 'state', 'title', 'ownerEmail', 'ownerProfileId', 'body'],
+  );
+  if (!row) return null;
+  if (!isFarmerQuestionKind(row.kind)) return null;
+  if (isDeletedOrHiddenState(row)) return null;
+  const email = normalizeEmail(row.ownerEmail);
+  const ownerId = normalizeOwnerId(row.ownerProfileId) || ownerIdFromEmail(email);
+  if (!email && !ownerId) return null;
+  return { email, ownerId, canonicalQuestionId: canonicalFarmerQuestionId(row), row };
+};
+
 export const readIdentity = (ctx: any): SessionIdentity | null => {
   const email = normalizeEmail(ctx?.state?.user?.email);
   if (!email) return null;

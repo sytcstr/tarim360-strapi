@@ -7,6 +7,36 @@
 import { EngagementTargetType, TARGET_UID, VERSION_FIELD } from '../../../utils/engagement-contract';
 
 /**
+ * "Çiftçiden Sorular" audit follow-up -- found only by a genuine
+ * real-device end-to-end run (no mock/widget-test harness ever
+ * exercised this): `incrementCounterAtomic` below reads `updated_at`
+ * via a RAW Knex query (`trx(...).first(...)`), bypassing Strapi's own
+ * entity-service serialization layer entirely. On Postgres (Strapi
+ * Cloud production) the `pg` driver returns a native JS `Date`, which
+ * `JSON.stringify` always renders as an ISO string -- so this was never
+ * visibly broken there. On SQLite (local dev/every integration test in
+ * this repo) the same column can come back as a raw epoch-milliseconds
+ * NUMBER instead, which `JSON.stringify` emits as a bare number --
+ * violating this contract's own `updatedAt: string` type (engagement-
+ * v1.ts) and making the real Flutter client's `_requireDateTime` (which
+ * only ever accepts a String) throw `EngagementContractException`
+ * the moment a real device actually parsed a real response. Normalizing
+ * here, once, makes the guarantee the TypeScript type already claims
+ * actually hold regardless of which DB driver happens to be behind it.
+ */
+const normalizeUpdatedAt = (raw: unknown): string => {
+  if (raw instanceof Date) return raw.toISOString();
+  if (typeof raw === 'number' && Number.isFinite(raw)) {
+    return new Date(raw).toISOString();
+  }
+  if (typeof raw === 'string') {
+    const parsed = new Date(raw);
+    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+  }
+  return new Date().toISOString();
+};
+
+/**
  * Resolves the target row WITHOUT restricting fields — unlike
  * `utils/identity.ts`'s `loadEntityByRouteId` (which callers use with an
  * explicit, narrow `fields` list for their own known purpose), this
@@ -187,6 +217,6 @@ export const incrementCounterAtomic = async (
   return {
     count,
     serverVersion,
-    updatedAt: row?.updated_at ?? new Date().toISOString(),
+    updatedAt: normalizeUpdatedAt(row?.updated_at),
   };
 };

@@ -247,7 +247,17 @@ test('generic update ignores a client-supplied likes for a farmerQuestion-kind r
   assert.notEqual(row.engagementVersion, 99999);
 });
 
-test('the answer/comment-equivalent fields (body/comments/commentCount) still update through the same generic route', async () => {
+test('"Çiftçiden Sorular" audit follow-up: a non-owner `body` change through the old generic PUT is now rejected (superseded by the dedicated answer endpoint)', async () => {
+  // Historical note: this test used to assert the opposite (200) back
+  // when answering a farmer question was itself implemented as exactly
+  // this non-owner body-PUT. That flow has since been replaced by a
+  // dedicated, server-verified endpoint (POST /hub-contents/
+  // farmer-questions/:questionId/answers), which never goes through
+  // PUT /hub-contents/:id at all -- see
+  // farmer-question-answer-identity.integration.test.ts and
+  // hub-content-write-guard.ts's own isFarmerQuestionFamily check.
+  // `comments`/`commentCount` ALONE (no `body`) remain allowed below,
+  // since those are still reaction-only fields.
   const jwt = await registerAndLogin(`fq-answer-${randomUUID()}@test.local`);
   const question = await createFarmerQuestion();
   const newBody = JSON.stringify({ questionId: 'q1', answers: [{ text: 'Cevap' }] });
@@ -256,8 +266,20 @@ test('the answer/comment-equivalent fields (body/comments/commentCount) still up
     headers: authed(jwt),
     body: JSON.stringify({ data: { body: newBody, comments: 1, commentCount: 1 } }),
   });
-  assert.equal(res.status, 200);
+  assert.equal(res.status, 403, 'a non-owner body change on a farmerQuestion row must now be rejected');
   const row = await fetchRow(question.id);
-  assert.equal(row.body, newBody);
+  assert.notEqual(row.body, newBody, 'the rejected PUT must not have changed the row');
+});
+
+test('regression: a non-owner reaction-only update (comments/commentCount, no body) on a farmerQuestion row still works', async () => {
+  const jwt = await registerAndLogin(`fq-reactor-${randomUUID()}@test.local`);
+  const question = await createFarmerQuestion();
+  const res = await fetch(`${BASE_URL}/hub-contents/${question.documentId}`, {
+    method: 'PUT',
+    headers: authed(jwt),
+    body: JSON.stringify({ data: { comments: 1, commentCount: 1 } }),
+  });
+  assert.equal(res.status, 200, JSON.stringify(await res.clone().json().catch(() => ({}))));
+  const row = await fetchRow(question.id);
   assert.equal(row.commentCount, 1);
 });

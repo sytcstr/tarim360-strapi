@@ -469,6 +469,10 @@ const authenticatedActions: string[] = [
   'api::hub-content.hub-content.findOne',
   'api::hub-content.hub-content.update',
   'api::hub-content.hub-content.delete',
+  // "Çiftçiden Sorular" audit follow-up (Maddeler 1-3): server-verified
+  // answer identity + atomic per-answer insert + owner notification --
+  // replaces the client-driven full-row PUT for new answers.
+  'api::hub-content.hub-content.addFarmerQuestionAnswer',
 
   // Profile settings
   'api::profile-setting.profile-setting.create',

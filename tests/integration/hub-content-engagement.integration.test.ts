@@ -107,6 +107,30 @@ test('like (new): first PUT activates and increments the "likes" counter', async
   assert.equal(row.likes, 1);
 });
 
+test('"Çiftçiden Sorular" audit follow-up (found on a real device, not by any mock/widget test): `updatedAt` on a real state-changing PUT is always a valid ISO date STRING, never a raw number', async () => {
+  // engagement-core.ts's incrementCounterAtomic reads `updated_at` via a
+  // RAW Knex query (bypassing Strapi's own entityService serialization),
+  // which on SQLite (this test's own dialect) can come back as a raw
+  // epoch-milliseconds number instead of a Date/string -- silently
+  // violating this contract's own `updatedAt: string` type. This only
+  // ever surfaced when a REAL device actually parsed a REAL response
+  // with Flutter's strict EngagementService._requireDateTime (which
+  // rejects anything that isn't a String) -- no backend test before this
+  // one ever asserted the actual JS type of this field.
+  const jwt = await registerAndLogin(`hub-liker-updatedat-${randomUUID()}@test.local`);
+  const content = await createHubContent();
+  const res = await fetch(`${BASE_URL}/engagements/like`, {
+    method: 'PUT',
+    headers: authed(jwt),
+    body: JSON.stringify({ targetType: 'hub-content', targetId: content.id }),
+  });
+  const body = await res.json();
+  assert.equal(res.status, 200, JSON.stringify(body));
+  assert.equal(body.active, true, 'this must be the real state-CHANGING path (incrementCounterAtomic), not a no-op');
+  assert.equal(typeof body.updatedAt, 'string', `updatedAt must be a string, got ${typeof body.updatedAt}: ${body.updatedAt}`);
+  assert.ok(!Number.isNaN(new Date(body.updatedAt).getTime()), 'updatedAt must parse as a valid date');
+});
+
 test('like (new): repeating the same PUT is a no-op', async () => {
   const jwt = await registerAndLogin(`hub-liker-${randomUUID()}@test.local`);
   const content = await createHubContent();

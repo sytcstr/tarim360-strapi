@@ -10,13 +10,19 @@
  * string) -- ownerEmail/ownerProfileId were added and are now stamped
  * server-side on create.
  *
- * Farmer-question "answering" is a real, live, core cross-user feature
- * implemented as a full-row PUT that resends the original asker's
- * title/descShort unchanged while only the embedded `body` JSON (answers)
- * differs -- this suite proves that flow is NOT broken by the new
- * ownership check, alongside proving the actual vulnerability (a
- * non-owner changing the question's own title/descShort, or deleting it
- * outright) is now closed.
+ * Farmer-question "answering" USED TO be implemented as a full-row PUT
+ * that resent the original asker's title/descShort unchanged while only
+ * the embedded `body` JSON (answers) differed. "Çiftçiden Sorular" audit
+ * follow-up: that flow is now superseded by a dedicated, server-verified
+ * endpoint (POST /hub-contents/farmer-questions/:questionId/answers --
+ * see farmer-question-answer-identity.integration.test.ts) and the old
+ * PUT-based path is deliberately rejected outright for farmerQuestion
+ * rows (see this file's own test below), since leaving it open would
+ * still let a non-owner forge an answer's embedded authorship as long as
+ * title/descShort stayed unchanged. This suite proves the original
+ * vulnerability (a non-owner changing the question's own title/
+ * descShort, or deleting it outright) stays closed, for every
+ * non-farmer-question kind too.
  *
  * Run: npm run test:integration (real Strapi boot against a throwaway
  * SQLite file — see before() below).
@@ -260,7 +266,17 @@ test('unauthenticated caller cannot update or delete any hub-content row', async
   assert.equal(deleteRes.status, 403);
 });
 
-test('regression: a different user can still legitimately answer another user\'s farmer question (core-identity unchanged)', async () => {
+test('"Çiftçiden Sorular" audit follow-up: the OLD full-row-PUT answer flow is now rejected for a farmerQuestion row (superseded by the dedicated answer endpoint)', async () => {
+  // Historical note: this test used to assert the opposite (200) back
+  // when answering was itself implemented as this exact non-owner PUT.
+  // That flow has since been replaced by a dedicated, server-verified
+  // endpoint (POST /hub-contents/farmer-questions/:questionId/answers --
+  // see farmer-question-answer-identity.integration.test.ts), which
+  // never goes through PUT /hub-contents/:id at all. Leaving this one
+  // open would let a non-owner keep forging the embedded `body` JSON
+  // (an answer's own name/profileId/email) through the old route, as
+  // long as title/descShort stayed the same -- exactly the
+  // forged-authorship class of bug the new endpoint exists to close.
   const asker = await registerAndLogin(`hub-i-asker-${randomUUID()}@test.local`);
   const answerer = await registerAndLogin(`hub-i-answerer-${randomUUID()}@test.local`);
   const created = await createFarmerQuestion(asker.jwt);
@@ -268,8 +284,6 @@ test('regression: a different user can still legitimately answer another user\'s
     where: { documentId: created.id },
   } as any);
 
-  // Mirrors farmer_questions_repo.dart's addAnswer: resends the SAME
-  // title/descShort, only the embedded body (answers) actually changes.
   const res = await fetch(`${BASE_URL}/hub-contents/${created.id}`, {
     method: 'PUT',
     headers: authed(answerer.jwt),
@@ -284,9 +298,11 @@ test('regression: a different user can still legitimately answer another user\'s
       },
     }),
   });
-  assert.equal(res.status, 200, 'answering someone else\'s farmer question must still work');
-  const updated = await res.json();
-  assert.equal(updated.data.commentCount, 1);
+  assert.equal(res.status, 403, 'the old full-row-PUT answer path must now be rejected for a farmerQuestion row');
+  const unchanged = await strapiInstance.db.query('api::hub-content.hub-content').findOne({
+    where: { documentId: created.id },
+  } as any);
+  assert.equal(unchanged.body, row.body, 'the rejected PUT must not have changed the row');
 });
 
 test('regression: a different user can still react (like/comment-count-only) on another user\'s ordinary hub post', async () => {

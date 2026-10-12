@@ -79,6 +79,13 @@
     "createdAtClient": {
       "type": "datetime"
     },
+    "operationId": {
+      "type": "string",
+      "unique": true
+    },
+    "payloadFingerprint": {
+      "type": "string"
+    },
     "category": {
       "type": "relation",
       "relation": "manyToOne",

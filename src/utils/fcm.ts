@@ -1,4 +1,4 @@
-const crypto = require('node:crypto');
+import crypto from 'node:crypto';
 
 const FCM_LEGACY_ENDPOINT = 'https://fcm.googleapis.com/fcm/send';
 const OAUTH_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
@@ -108,10 +108,22 @@ const firebaseProjectId = (): string =>
 const firebaseClientEmail = (): string =>
   unwrapQuotedEnv(normalizeToken(process.env.FIREBASE_CLIENT_EMAIL || process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL));
 
+/**
+ * A service-account private key is always multi-line PEM, but most places
+ * an env var is actually set (a `.env` file, a hosting provider's env-var
+ * UI, a CI secret) cannot hold a literal newline inside one value -- the
+ * key is stored with escaped `\n` sequences instead (optionally wrapped in
+ * quotes so the shell/parser doesn't split on the first one). Exported
+ * (pure, no env access) so this exact parsing can be unit-tested without
+ * ever touching `process.env` or a real key value.
+ */
+export const normalizeServiceAccountPrivateKey = (raw: string): string =>
+  unwrapQuotedEnv(normalizeToken(raw)).replace(/\\n/g, '\n');
+
 const firebasePrivateKey = (): string =>
-  unwrapQuotedEnv(
-    normalizeToken(process.env.FIREBASE_PRIVATE_KEY || process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY),
-  ).replace(/\\n/g, '\n');
+  normalizeServiceAccountPrivateKey(
+    process.env.FIREBASE_PRIVATE_KEY || process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY || '',
+  );
 
 let accessTokenCache = {
   token: '',

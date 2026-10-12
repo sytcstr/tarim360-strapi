@@ -3,10 +3,12 @@ import {
   loadEntityByRouteId,
   matchesIdentity,
   readIdentity,
+  resolveFarmerQuestionOwnerByAnyId,
   resolveListingOwnerByAnyId,
   resolveLogisticsLoadOwnerByAnyId,
   resolveProcessedProductOwnerByAnyId,
   resolveProfileOwnerIfExists,
+  type SessionIdentity,
 } from '../../../utils/identity';
 
 const UID = 'api::notification.notification';
@@ -21,11 +23,17 @@ const UID = 'api::notification.notification';
  * entirely server-derived from that entity's own real, stored owner
  * field -- never from client input. Unknown/unresolvable entityId is
  * rejected rather than silently no-op'd, so a client can't probe for
- * which ids exist. farmer_question is intentionally NOT included here:
- * hub-content (the content-type farmer questions are actually stored on)
- * has no verifiable author-identity field today (only a display-name
- * string), so that domain is left on the now self-target-only generic
- * endpoint until a real field exists -- see the report's disclosed gaps.
+ * which ids exist.
+ *
+ * "Çiftçiden Sorular" audit follow-up: farmer_question was added here
+ * once hub-content gained real ownerEmail/ownerProfileId fields (see
+ * hub-content-write-guard.ts's own BUG-ENG-001 history). Its `like`
+ * event additionally requires a real, currently-active
+ * engagement-interaction row before notifying (see createDomainEvent
+ * below), and its `answer` event is rejected outright there -- that one
+ * is only ever produced server-to-server from hub-content.ts's
+ * addFarmerQuestionAnswer, which calls createDomainEventNotification
+ * directly and never reaches this HTTP action.
  */
 const DOMAIN_EVENTS: Record<
   string,
@@ -55,13 +63,37 @@ const DOMAIN_EVENTS: Record<
       comment: { kind: 'comment', title: 'Profiline Yeni Yorum', message: 'profiline yorum yaptı.' },
     },
   },
+  // UAT "Çiftçiden Sorular" follow-up fix: farmer_question now HAS a real,
+  // verifiable author-identity field (ownerEmail/ownerProfileId, same as
+  // every other hub-content row -- see hub-content.ts's create()
+  // override), so it moves off the self-target-only generic endpoint
+  // onto this same trusted path every other domain already uses. `like`
+  // is driven by the client (farmer_question_card.dart, after a
+  // confirmed EngagementStore like) via POST /notifications/domain-event
+  // exactly like the other domains' like/favorite. `answer` is never
+  // called over HTTP by the client at all -- hub-content.ts's
+  // addFarmerQuestionAnswer calls createDomainEventNotification directly,
+  // server-to-server, right after the answer row itself is verified-
+  // created (never a free-standing event call a client could forge to
+  // manufacture a fake "someone answered" notification).
+  farmer_question: {
+    events: {
+      like: { kind: 'like', title: 'Soruna Beğeni', message: 'sorunu beğendi.' },
+      answer: { kind: 'comment', title: 'Soruna Yeni Yorum', message: 'sorusuna yeni bir yorum ekledi.' },
+    },
+  },
 };
 
 const resolveDomainOwner = async (
   strapi: any,
   domain: string,
   entityId: string,
-): Promise<{ email: string; ownerId: string } | null> => {
+): Promise<{
+  email: string;
+  ownerId: string;
+  canonicalQuestionId?: string;
+  row?: Record<string, unknown>;
+} | null> => {
   switch (domain) {
     case 'listing':
       return resolveListingOwnerByAnyId(strapi, entityId);
@@ -71,9 +103,86 @@ const resolveDomainOwner = async (
       return resolveProcessedProductOwnerByAnyId(strapi, entityId);
     case 'profile':
       return resolveProfileOwnerIfExists(strapi, entityId);
+    case 'farmer_question':
+      return resolveFarmerQuestionOwnerByAnyId(strapi, entityId);
     default:
       return null;
   }
+};
+
+/**
+ * Shared core of createDomainEvent, extracted so hub-content.ts's
+ * addFarmerQuestionAnswer can trigger the SAME trusted, server-derived
+ * notification path directly (server-to-server, no second HTTP round
+ * trip, no client-reachable "just call this event" surface for the
+ * answer case) right after it has ALREADY verified-created the answer
+ * row and already has the real owner in hand from that same load --
+ * never re-deriving anything from client input.
+ *
+ * `dedupKey` defaults to the sender's own ownerId (the original
+ * behavior for listing/logistics_load/processed_product/profile and
+ * farmer_question's `like`: at most one stored notification per
+ * sender+entity+event, so a rapid like/unlike/like loop or a retried
+ * request can never stack up duplicates). farmer_question's `answer`
+ * passes a dedupKey that also includes the answer's own id, since
+ * EACH distinct answer from the same person is its own real event and
+ * must notify -- only a retried POST for the identical answer (same
+ * resolved answerId) collapses onto the same notificationId.
+ */
+export const createDomainEventNotification = async (
+  strapi: any,
+  params: {
+    domain: string;
+    event: string;
+    entityId: string;
+    identity: SessionIdentity;
+    owner: { email: string; ownerId: string };
+    dedupKey?: string;
+    messageOverride?: string;
+    extra?: Record<string, unknown>;
+  },
+): Promise<{ ok: boolean; skipped?: 'self' | 'invalid' }> => {
+  const domainConfig = DOMAIN_EVENTS[params.domain];
+  const eventConfig = domainConfig?.events[params.event];
+  if (!domainConfig || !eventConfig) return { ok: false, skipped: 'invalid' };
+
+  const { owner, identity } = params;
+  if (
+    (owner.email && owner.email === identity.email) ||
+    (owner.ownerId && owner.ownerId === identity.ownerId)
+  ) {
+    // Self-interaction (e.g. liking/answering your own question) never
+    // notifies -- matches every client-side guard this replaces.
+    return { ok: true, skipped: 'self' };
+  }
+
+  const senderLabel = identity.email.split('@')[0] || 'Bir kullanıcı';
+  const dedupKey = (params.dedupKey ?? identity.ownerId).trim() || identity.ownerId;
+  const notifData: Record<string, unknown> = {
+    notificationId: `${params.domain}_${params.event}_${params.entityId}_${dedupKey}`,
+    kind: eventConfig.kind,
+    event: params.event,
+    source: params.domain,
+    title: eventConfig.title,
+    message: params.messageOverride?.trim() || `${senderLabel} ${eventConfig.message}`,
+    isRead: false,
+    senderEmail: identity.email,
+    senderProfileId: identity.ownerId,
+    createdAtClient: new Date().toISOString(),
+    ...(params.extra ?? {}),
+  };
+  if (owner.email) notifData.targetEmail = owner.email;
+  if (owner.ownerId) notifData.targetProfileId = owner.ownerId;
+
+  try {
+    await strapi.entityService.create('api::notification.notification' as any, { data: notifData });
+  } catch (e) {
+    // Deterministic notificationId means a genuine repeat of the same
+    // interaction by the same sender hits the unique constraint here
+    // instead of creating a duplicate row -- expected, not an error.
+    strapi.log.warn(`Domain-event notification skipped: ${String(e)}`);
+  }
+  return { ok: true };
 };
 
 export default factories.createCoreController(UID, ({ strapi }) => ({
@@ -93,52 +202,85 @@ export default factories.createCoreController(UID, ({ strapi }) => ({
       return ctx.badRequest('Gecersiz domain veya event.');
     }
 
+    // "Çiftçiden Sorular" audit follow-up (sahte bildirim gap): a
+    // farmer_question `answer`/comment notification is only ever
+    // produced server-to-server, from inside addFarmerQuestionAnswer
+    // right after it has itself verified-created the answer row
+    // (hub-content.ts calls createDomainEventNotification directly,
+    // never through this HTTP action). No legitimate client flow ever
+    // posts `{domain:'farmer_question', event:'answer', ...}` here --
+    // allowing it would let anyone send the question's owner a fake
+    // "new answer" notification without ever actually answering.
+    if (domain === 'farmer_question' && event === 'answer') {
+      return ctx.badRequest('Bu event bu yoldan tetiklenemez.');
+    }
+
     const owner = await resolveDomainOwner(strapi, domain, entityId);
     if (!owner || (!owner.email && !owner.ownerId)) {
       return ctx.notFound('Hedef kayit bulunamadi.');
     }
-    if (owner.email === identity.email || owner.ownerId === identity.ownerId) {
-      // Self-interaction (e.g. favoriting your own listing) never
-      // notifies -- matches every client-side guard this replaces.
-      ctx.body = { data: { ok: true, skipped: 'self' } };
-      return;
+
+    // "Çiftçiden Sorular" audit follow-up (sahte bildirim gap): unlike
+    // `answer` (not reachable here at all, above), `like` IS a real,
+    // legitimate client-triggered event -- but this action never
+    // verified the caller had actually liked anything first, so any
+    // authenticated user could POST a fake "beğendi" notification for
+    // any real question id without ever liking it. Require a real,
+    // currently-active engagement-interaction row (the same one
+    // EngagementStore.toggleLike/setMembership writes) for this exact
+    // (actor, question, like) before creating the notification --
+    // removing the like later deletes that row, so an unlike can never
+    // be followed by a fake replay of the same notification either.
+    if (domain === 'farmer_question' && event === 'like') {
+      const rowId = String((owner.row as any)?.id ?? '').trim();
+      const actorKey = `user:${identity.email.trim().toLowerCase()}`;
+      const activeLike = rowId
+        ? await strapi.db.query('api::engagement-interaction.engagement-interaction').findOne({
+            where: { actorKey, targetType: 'hub-content', targetId: rowId, kind: 'like' },
+          })
+        : null;
+      if (!activeLike) {
+        return ctx.badRequest('Bu kayda ait aktif bir begeni bulunamadi.');
+      }
     }
 
-    const senderLabel = identity.email.split('@')[0] || 'Bir kullanıcı';
-    const notifData: Record<string, unknown> = {
-      notificationId: `${domain}_${event}_${entityId}_${identity.ownerId}`,
-      kind: eventConfig.kind,
-      event,
-      source: domain,
-      title: eventConfig.title,
-      message: `${senderLabel} ${eventConfig.message}`,
-      isRead: false,
-      senderEmail: identity.email,
-      senderProfileId: identity.ownerId,
-      createdAtClient: new Date().toISOString(),
-    };
-    if (owner.email) notifData.targetEmail = owner.email;
-    if (owner.ownerId) notifData.targetProfileId = owner.ownerId;
     // PRE_UAT_F1_TARGETED_FUNCTIONAL_FIX_REPORT.md F1.3: the entityId was
     // only ever used to resolve the owner, then discarded -- tapping a
     // listing favorite/like notification had no way to recover which
     // listing it was about. Stored under the same `listingId` field the
-    // message/offer notification producers already use, so the Flutter
-    // client's notification-tap navigation can treat all three the same
-    // way.
-    if (domain === 'listing') notifData.listingId = entityId;
-
-    try {
-      await strapi.entityService.create(UID as any, { data: notifData });
-    } catch (e) {
-      // Deterministic notificationId (domain+event+entityId+sender) means
-      // a genuine repeat of the same interaction by the same sender hits
-      // the unique constraint here instead of creating a duplicate row --
-      // expected, not an error.
-      strapi.log.warn(`Domain-event notification skipped: ${String(e)}`);
+    // message/offer notification producers already use (farmer_question
+    // mirrors this with its own `questionId` field, already on this
+    // schema), so the Flutter client's notification-tap navigation can
+    // treat all of them the same way.
+    const extra: Record<string, unknown> = {};
+    if (domain === 'listing') extra.listingId = entityId;
+    if (domain === 'farmer_question') {
+      extra.questionId = owner.canonicalQuestionId ?? entityId;
+    }
+    // Madde 3 (like, specifically): matches the exact pre-existing
+    // product copy ("{isim} sorunu beğendi: {soru başlığı}") rather than
+    // the generic "{isim} {action}." sentence the other domains use --
+    // only farmer_question's `like` carries the question's own title
+    // this way, since the original client-side producer this replaces
+    // already did.
+    let messageOverride: string | undefined;
+    if (domain === 'farmer_question' && event === 'like') {
+      const title = String((owner.row as any)?.title ?? '').trim();
+      messageOverride = title
+        ? `${identity.email.split('@')[0] || 'Bir kullanıcı'} sorunu beğendi: ${title}`
+        : undefined;
     }
 
-    ctx.body = { data: { ok: true } };
+    const result = await createDomainEventNotification(strapi, {
+      domain,
+      event,
+      entityId,
+      identity,
+      owner,
+      messageOverride,
+      extra,
+    });
+    ctx.body = { data: { ok: result.ok, ...(result.skipped ? { skipped: result.skipped } : {}) } };
   },
   async markRead(ctx) {
     const identity = readIdentity(ctx);
