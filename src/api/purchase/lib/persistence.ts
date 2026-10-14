@@ -8,6 +8,7 @@ import {
   PurchaseStatus,
   resolveCanonicalProductId,
 } from './catalog';
+import { allowSandboxPurchaseEntitlements } from './config';
 
 const PURCHASE_EVENT_UID = 'api::purchase-event.purchase-event';
 const PROFILE_SETTING_UID = 'api::profile-setting.profile-setting';
@@ -123,6 +124,9 @@ export const upsertProfilePurchase = async (
     premiumEndsAt?: string;
     forcePremiumStatus?: PurchaseStatus;
     autoRenew?: boolean;
+    /** "Paketler ve Fiyatlar" audit follow-up -- see the entitlement
+     * guard below. Undefined/empty for Google (no equivalent signal). */
+    storeEnvironment?: string;
   },
 ) => {
   const ownerId = asString(input.ownerId);
@@ -146,7 +150,8 @@ export const upsertProfilePurchase = async (
     record,
   );
 
-  let nextPremium = existing?.activePremium ?? existing?.activePremiumSubscription;
+  const existingPremium = existing?.activePremium ?? existing?.activePremiumSubscription;
+  let nextPremium = existingPremium;
   const premiumPayload = premiumPayloadForProduct({
     productId: input.productId,
     provider: input.provider,
@@ -155,28 +160,76 @@ export const upsertProfilePurchase = async (
     premiumEndsAt: input.premiumEndsAt,
     autoRenew: input.autoRenew,
   });
-  if (premiumPayload && (!input.forcePremiumStatus || input.forcePremiumStatus === 'verified')) {
-    nextPremium = premiumPayload;
-  }
-  if (
-    premiumPayload &&
-    (input.forcePremiumStatus === 'canceled' ||
-      input.forcePremiumStatus === 'pending') &&
-    nextPremium &&
-    typeof nextPremium === 'object'
-  ) {
-    nextPremium = {
-      ...(nextPremium as Record<string, unknown>),
-      autoRenew: false,
-    };
-  }
-  if (
-    premiumPayload &&
-    (input.forcePremiumStatus === 'expired' ||
-      input.forcePremiumStatus === 'refunded' ||
-      input.forcePremiumStatus === 'rejected')
-  ) {
-    nextPremium = null;
+
+  /**
+   * "Paketler ve Fiyatlar" audit follow-up (SECOND PASS -- corrects the
+   * first pass's own guard): tagging `purchase-event` rows by
+   * environment, by itself, only keeps the two pools from false-
+   * CONFLICTING at the ownership-lookup level -- it says nothing about
+   * what gets WRITTEN to a profile's real entitlement.
+   *
+   * The FIRST pass only blocked a sandbox request from overwriting an
+   * ALREADY-real-and-active grant, and still let it GRANT a fresh
+   * (tagged `sourceEnvironment: 'sandbox'`) entitlement when none
+   * existed yet -- reasoned as "TestFlight testers need to see it
+   * unlock". That reasoning doesn't hold here: this backend has no
+   * separate sandbox entitlement store or test deployment (TestFlight
+   * and the real App Store write the exact same profile-setting table),
+   * so a "fresh" sandbox grant was really just a real production field
+   * being set from an unpaid simulated transaction. The caller
+   * (`purchase.ts`'s `verify()`) now rejects a sandbox Apple transaction
+   * outright before it ever reaches here; this guard is kept as a
+   * SECOND, defense-in-depth layer -- it also protects the `appleWebhook`
+   * path and any legacy/pre-existing sandbox-tagged row -- and is
+   * UNCONDITIONAL ON A REAL DEPLOYMENT: a sandbox request never writes
+   * `activePremium`/`activePremiumSubscription`, active-and-real
+   * existing grant or not.
+   *
+   * THIRD PASS: `allowSandboxPurchaseEntitlements()` (config.ts) lifts
+   * this guard ONLY on a genuinely separate test-backend deployment
+   * (its own database, no real customer data, gated to NODE_ENV
+   * development/test) so a TestFlight build pointed at THAT deployment
+   * can validate Premium end-to-end. Doping/listing-quota have no field
+   * here at all (premiumPayloadForProduct returns null for non-premium
+   * products); their own sandbox-isolation guard -- also gated by the
+   * same flag -- lives where they're actually read: `activateRocket`
+   * (listing.ts) and `canCreateNextNormalListing` (listing-metrics.ts).
+   */
+  const requestEnv = asString(input.storeEnvironment).toLowerCase();
+  const isSandboxRequest = requestEnv === 'sandbox';
+  const blockedBySandboxGuard = isSandboxRequest && !allowSandboxPurchaseEntitlements();
+
+  if (blockedBySandboxGuard) {
+    strapi.log.warn(
+      `[purchase] sandbox transaction ${input.transactionId} for owner ${ownerId} was verified but did NOT modify activePremium/activePremiumSubscription -- no sandbox entitlement store exists (sandbox-vs-production entitlement guard).`,
+    );
+  } else {
+    if (premiumPayload && (!input.forcePremiumStatus || input.forcePremiumStatus === 'verified')) {
+      nextPremium = {
+        ...premiumPayload,
+        sourceEnvironment: requestEnv || 'production',
+      };
+    }
+    if (
+      premiumPayload &&
+      (input.forcePremiumStatus === 'canceled' ||
+        input.forcePremiumStatus === 'pending') &&
+      nextPremium &&
+      typeof nextPremium === 'object'
+    ) {
+      nextPremium = {
+        ...(nextPremium as Record<string, unknown>),
+        autoRenew: false,
+      };
+    }
+    if (
+      premiumPayload &&
+      (input.forcePremiumStatus === 'expired' ||
+        input.forcePremiumStatus === 'refunded' ||
+        input.forcePremiumStatus === 'rejected')
+    ) {
+      nextPremium = null;
+    }
   }
 
   const payload: Record<string, unknown> = {
@@ -210,7 +263,23 @@ export const upsertProfilePurchase = async (
 export const findConflictingOwnerEvent = async (
   strapi: Core.Strapi,
   ownerProfileId: string,
-  ids: { transactionIds?: string[]; purchaseTokens?: string[]; originalTransactionIds?: string[] },
+  ids: {
+    transactionIds?: string[];
+    purchaseTokens?: string[];
+    originalTransactionIds?: string[];
+    /**
+     * "Paketler ve Fiyatlar" audit follow-up: when provided (Apple only --
+     * Google has no equivalent signal), a candidate row only counts as a
+     * conflict when it is EITHER untagged (every row persisted before this
+     * fix -- fail-safe, never silently exempted) OR tagged with this SAME
+     * environment. A sandbox (TestFlight) transaction and a real
+     * production one are now two separate pools that can never
+     * false-conflict with each other; within either pool, the exact same
+     * full ownership check as before still applies -- nothing here
+     * loosens cross-account protection.
+     */
+    storeEnvironment?: string;
+  },
 ): Promise<Record<string, unknown> | null> => {
   const clean = (list?: string[]) =>
     Array.from(new Set((list ?? []).map((x) => asString(x)).filter(Boolean)));
@@ -226,7 +295,16 @@ export const findConflictingOwnerEvent = async (
   const rows = (await strapi.db
     .query(PURCHASE_EVENT_UID)
     .findMany({ where: { $or: or }, limit: 50 } as any)) as Record<string, unknown>[];
-  return rows.find((r) => asString(r.ownerProfileId) !== ownerProfileId) ?? null;
+  const requestedEnv = asString(ids.storeEnvironment);
+  return (
+    rows.find((r) => {
+      if (asString(r.ownerProfileId) === ownerProfileId) return false;
+      if (!requestedEnv) return true;
+      const rowEnv = asString(r.storeEnvironment);
+      if (!rowEnv) return true; // legacy/untagged -- fail-safe, still conflicts
+      return rowEnv === requestedEnv;
+    }) ?? null
+  );
 };
 
 const identityLocks = new Map<string, Promise<unknown>>();

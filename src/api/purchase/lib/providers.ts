@@ -15,6 +15,19 @@ export type VerifyOutcome = {
   /** Store-reported auto-renew state when known (false once the user cancelled). */
   autoRenew?: boolean;
   message: string;
+  /**
+   * "Paketler ve Fiyatlar" audit follow-up: Apple's own StoreKit2
+   * transaction JWS already carries an `environment` field
+   * ("Sandbox"/"Production") -- this was decoded (the whole JWS payload
+   * is parsed generically) but never read anywhere, so a TestFlight
+   * sandbox purchase and a real App Store purchase were completely
+   * indistinguishable once persisted. Normalized to lowercase
+   * ('sandbox' | 'production') here; left undefined for Google (the Play
+   * Developer API gives no equivalent signal on the purchase itself --
+   * license testing there relies on allow-listed tester accounts, not an
+   * environment flag on the transaction).
+   */
+  storeEnvironment?: 'sandbox' | 'production';
 };
 
 /** A 5xx / 429 from a store is transient: surface it as an error so callers retry
@@ -247,6 +260,36 @@ const verifyApple = async (input: {
     };
   }
 
+  // "Paketler ve Fiyatlar" audit follow-up: Apple's own transaction JWS
+  // already says which environment it was issued in -- read here, once,
+  // right after the JWS is decoded, so EVERY return path below (including
+  // the early rejections) carries it.
+  //
+  // CORRECTION (second pass): defaulting an unrecognized/missing value to
+  // 'production' was itself unsafe -- it would have let a transaction
+  // this code doesn't actually understand flow through the EXACT SAME
+  // path as a genuine real purchase, including granting entitlements.
+  // Apple's real StoreKit2 JWSTransaction ALWAYS carries `environment` as
+  // exactly "Sandbox" or "Production" (it is a mandatory field, not an
+  // optional one) -- so a transaction missing it, or carrying anything
+  // else, is never a genuine Apple-issued transaction this backend has
+  // ever actually seen in practice, and is rejected outright: no
+  // storeEnvironment is assigned, no entitlement is ever considered, and
+  // (the caller's existing behaviour for every other verifyApple
+  // rejection branch, unchanged here) the purchase-event row this gets
+  // written as carries `status: 'rejected'`, never 'verified'.
+  const rawEnvironment = asString(tx.environment).toLowerCase();
+  if (rawEnvironment !== 'sandbox' && rawEnvironment !== 'production') {
+    return {
+      verified: false,
+      status: 'rejected',
+      provider: 'app_store',
+      payload: tx,
+      message: `Apple işlemi tanınmayan veya eksik bir environment değeri taşıyor: '${asString(tx.environment) || '(boş)'}'.`,
+    };
+  }
+  const storeEnvironment: 'sandbox' | 'production' = rawEnvironment;
+
   // The transaction must belong to THIS app, not another app sharing product ids.
   if (asString(tx.bundleId) !== apple.bundleId) {
     return {
@@ -254,6 +297,7 @@ const verifyApple = async (input: {
       status: 'rejected',
       provider: 'app_store',
       payload: tx,
+      storeEnvironment,
       message: 'Apple işlemi bu uygulamaya ait değil.',
     };
   }
@@ -268,6 +312,7 @@ const verifyApple = async (input: {
       status: 'rejected',
       provider: 'app_store',
       payload: tx,
+      storeEnvironment,
       message: 'Apple işlemi talep edilen ürünle eşleşmiyor.',
     };
   }
@@ -286,6 +331,7 @@ const verifyApple = async (input: {
         transactionId,
         originalTransactionId,
         payload: tx,
+        storeEnvironment,
         message: 'Apple aboneliği iade/iptal edilmiş.',
       };
     }
@@ -299,6 +345,7 @@ const verifyApple = async (input: {
       originalTransactionId,
       expiresAt: expiresMs > 0 ? new Date(expiresMs).toISOString() : undefined,
       payload: tx,
+      storeEnvironment,
       message: isActive ? 'Apple abonelik doğrulandı.' : 'Apple abonelik süresi dolmuş.',
     };
   }
@@ -312,6 +359,7 @@ const verifyApple = async (input: {
     transactionId,
     originalTransactionId,
     payload: tx,
+    storeEnvironment,
     message: revoked ? 'Apple ürün iade edilmiş.' : 'Apple ürün doğrulandı.',
   };
 };

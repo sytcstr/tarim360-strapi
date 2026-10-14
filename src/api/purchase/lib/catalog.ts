@@ -79,6 +79,24 @@ export const ALL_PRODUCTS = new Set<string>([
 export const asString = (v: unknown): string => String(v ?? '').trim();
 export const lower = (v: unknown): string => asString(v).toLowerCase();
 
+/**
+ * "Paketler ve Fiyatlar" audit follow-up (second pass): a verified
+ * SANDBOX (TestFlight) purchase-event row must never be eligible to
+ * fund a REAL consumable credit -- doping/rocket activation
+ * (`activateRocket`, listing.ts) and the normal-listing quota
+ * (`canCreateNextNormalListing`, listing-metrics.ts) both count/select
+ * `purchase-event` rows directly by `productId` + `status: 'verified'`,
+ * entirely bypassing `upsertProfilePurchase`'s own sandbox-vs-production
+ * entitlement guard (that guard only ever protected the `activePremium`/
+ * `activePremiumSubscription` fields it itself writes). A row with NO
+ * stored `storeEnvironment` (Google, which has no equivalent signal --
+ * `verifyGoogle` never sets this field -- or any row persisted before
+ * this project started tagging it) is NOT sandbox and still counts
+ * normally; only an explicit `'sandbox'` tag excludes a row.
+ */
+export const isSandboxPurchaseEventRow = (row: Record<string, unknown> | null | undefined): boolean =>
+  lower(row?.storeEnvironment) === 'sandbox';
+
 export const resolveCanonicalProductId = (productId: string): string => {
   const id = asString(productId);
   return IOS_PREMIUM_PRODUCT_ALIASES[id] || id;

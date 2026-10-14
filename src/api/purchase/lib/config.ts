@@ -25,6 +25,41 @@ export const isSoftVerifyActive = (): boolean => {
 export const isSoftVerifyRefused = (): boolean =>
   parseBool(process.env.PURCHASE_VERIFY_SOFT, false) && !isSoftVerifyActive();
 
+/**
+ * "Paketler ve Fiyatlar" / TestFlight follow-up: by default this backend
+ * has NO separate sandbox entitlement store -- a verified Apple SANDBOX
+ * transaction is rejected outright (`purchase.ts`'s `sandbox_unsupported`),
+ * and the doping/listing-quota consumption checks (`activateRocket`,
+ * `canCreateNextNormalListing`) exclude sandbox-tagged purchase-event
+ * rows. That is correct and required for the real, production-facing
+ * deployment -- TestFlight and the real App Store would otherwise write
+ * the exact same tables.
+ *
+ * A genuinely SEPARATE deployment -- its own process, pointed (via
+ * DATABASE_FILENAME/DATABASE_HOST/etc.) at a database that holds no real
+ * customer data, used ONLY so a TestFlight build can validate Premium/
+ * doping/listing-quota purchases end-to-end -- may opt in to treating a
+ * verified sandbox transaction as grantable, exactly like a real one.
+ * This mirrors `isSoftVerifyActive`'s own gate exactly on purpose:
+ * honoured ONLY when NODE_ENV is explicitly `development` or `test`, so
+ * a real production deployment (NODE_ENV=production -- Strapi's own
+ * standard convention, and what this app's production backend runs
+ * under) ignores this flag even if it were ever accidentally set in its
+ * own environment -- the same hard, code-level guarantee soft-verify
+ * already relies on; this is not merely a documented convention.
+ *
+ * This flag does NOT, by itself, make the database separate -- that is
+ * an operational fact of how/where this process is deployed, not
+ * something any in-process flag can create. It only ever matters paired
+ * with a genuinely separate deployment (its own DATABASE_FILENAME/
+ * DATABASE_HOST, never the production database).
+ */
+export const allowSandboxPurchaseEntitlements = (): boolean => {
+  const env = asString(process.env.NODE_ENV).toLowerCase();
+  const devLike = env === 'development' || env === 'test';
+  return devLike && parseBool(process.env.PURCHASE_ALLOW_SANDBOX_ENTITLEMENTS, false);
+};
+
 export const googleConfig = () => ({
   packageName: asString(process.env.GOOGLE_PLAY_PACKAGE_NAME),
   serviceAccountEmail: asString(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL),

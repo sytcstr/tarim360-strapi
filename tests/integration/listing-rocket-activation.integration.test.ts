@@ -148,6 +148,7 @@ async function grantPremiumWithRocketCredit(
 async function createVerifiedDopingPurchase(
   owner: { ownerId: string; email: string },
   productId: string,
+  overrides: Record<string, unknown> = {},
 ) {
   return strapiInstance.entityService.create('api::purchase-event.purchase-event', {
     data: {
@@ -162,6 +163,7 @@ async function createVerifiedDopingPurchase(
       isSubscription: false,
       status: 'verified',
       verifiedAt: new Date().toISOString(),
+      ...overrides,
     },
   });
 }
@@ -332,6 +334,33 @@ test('a verified doping purchase activates rocket and is consumed exactly once',
   assert.equal(rowB.isDoping, false);
   void purchase;
 });
+
+test(
+  '"Paketler ve Fiyatlar" audit follow-up (sandbox isolation, second pass): a SANDBOX-tagged verified doping purchase cannot fund a real rocket activation; a genuine (production/untagged) one for the same owner still can',
+  async () => {
+    const owner = await registerAndLogin(`rocket-sandbox-${randomUUID()}@test.local`);
+    const sandboxPurchase = await createVerifiedDopingPurchase(owner, 'doping_7_189', {
+      storeEnvironment: 'sandbox',
+    });
+    const listing = await createOwnedListing(owner, { title: 'Sandbox Doping Test' });
+
+    const blocked = await activate(owner.jwt, listing.documentId, 7, randomUUID());
+    assert.equal(blocked.status, 403, 'a sandbox-verified purchase-event must never be eligible to activate a real rocket boost');
+    const rowAfterBlocked = await strapiInstance.db.query('api::listing.listing').findOne({ where: { documentId: listing.documentId, publishedAt: { $notNull: true } } } as any);
+    assert.equal(rowAfterBlocked.isDoping, false);
+    void sandboxPurchase;
+
+    // The SAME owner's genuine (no storeEnvironment -- Google/legacy, or
+    // explicitly 'production') verified purchase still works normally --
+    // production purchases/doping credits are not collateral damage.
+    const realPurchase = await createVerifiedDopingPurchase(owner, 'doping_7_189');
+    const allowed = await activate(owner.jwt, listing.documentId, 7, randomUUID());
+    assert.equal(allowed.status, 200, JSON.stringify(await allowed.json().catch(() => ({}))));
+    const rowAfterAllowed = await strapiInstance.db.query('api::listing.listing').findOne({ where: { documentId: listing.documentId, publishedAt: { $notNull: true } } } as any);
+    assert.equal(rowAfterAllowed.isDoping, true);
+    void realPurchase;
+  },
+);
 
 test('an unauthenticated caller is rejected', async () => {
   const owner = await registerAndLogin(`rocket-unauth-${randomUUID()}@test.local`);

@@ -72,6 +72,9 @@
     },
     "payload": {
       "type": "json"
+    },
+    "storeEnvironment": {
+      "type": "string"
     }
   }
 }

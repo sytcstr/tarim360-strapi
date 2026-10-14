@@ -387,7 +387,10 @@ test('offline-sync retry with no matching operationId still creates normally (ge
 // queue's create branch) now enforce the same server-side quota.
 // ---------------------------------------------------------------------
 
-async function grantVerifiedListingQuotaPack(owner: { ownerId: string; email: string }) {
+async function grantVerifiedListingQuotaPack(
+  owner: { ownerId: string; email: string },
+  overrides: Record<string, unknown> = {},
+) {
   return strapiInstance.entityService.create('api::purchase-event.purchase-event', {
     data: {
       transactionId: `tx_${randomUUID()}`,
@@ -401,6 +404,7 @@ async function grantVerifiedListingQuotaPack(owner: { ownerId: string; email: st
       isSubscription: false,
       status: 'verified',
       verifiedAt: new Date().toISOString(),
+      ...overrides,
     },
   });
 }
@@ -456,6 +460,26 @@ test('FINAL-BUG-002: a verified quota-pack purchase raises the real allowed coun
   const eleventh = await createListing(user.jwt, randomUUID(), { title: `R1.2 Purchased 11th ${randomUUID()}` });
   assert.equal(eleventh.status, 403, 'the 11th listing (past 5 free + 5 purchased) must still be rejected');
 });
+
+test(
+  '"Paketler ve Fiyatlar" audit follow-up (sandbox isolation, second pass): a SANDBOX-tagged verified quota-pack purchase never raises a real account\'s listing quota; a genuine one for the same owner still does',
+  async () => {
+    const email = `r12-quota-sandbox-${randomUUID()}@test.local`;
+    const user = await registerAndLogin(email);
+    for (let i = 0; i < 5; i++) {
+      const res = await createListing(user.jwt, randomUUID(), { title: `R1.2 Sandbox Free ${i}-${randomUUID()}` });
+      assert.equal(res.status, 201);
+    }
+
+    await grantVerifiedListingQuotaPack(user, { storeEnvironment: 'sandbox' });
+    const stillBlocked = await createListing(user.jwt, randomUUID(), { title: `R1.2 Sandbox Still Blocked ${randomUUID()}` });
+    assert.equal(stillBlocked.status, 403, 'a sandbox-verified quota-pack purchase must never fund a real account\'s listing quota');
+
+    await grantVerifiedListingQuotaPack(user);
+    const nowAllowed = await createListing(user.jwt, randomUUID(), { title: `R1.2 Sandbox Now Allowed ${randomUUID()}` });
+    assert.equal(nowAllowed.status, 201, 'a genuine (non-sandbox) quota-pack purchase for the same owner must still work normally');
+  },
+);
 
 test('FINAL-BUG-002: retrying the same operationId at the quota boundary never double-consumes the quota', async () => {
   const user = await registerAndLogin(`r12-quota-retry-${randomUUID()}@test.local`);

@@ -167,9 +167,16 @@ const appleTransactionJws = (
   productId: string,
   days: number,
   orig = `100${uid()}`,
-  over: { bundleId?: string; revoked?: number } = {},
+  over: { bundleId?: string; revoked?: number; environment?: string; transactionId?: string } = {},
 ) => {
-  const transactionId = `T${orig}`;
+  const transactionId = over.transactionId ?? `T${orig}`;
+  // A real Apple StoreKit2 JWSTransaction ALWAYS carries `environment`
+  // (it is a mandatory field) -- defaulting to 'Production' here when
+  // the caller doesn't care keeps every pre-existing test an accurate
+  // simulation of a genuine transaction. Pass `environment: ''`
+  // explicitly to simulate the (never-genuinely-happens) missing-field
+  // case for the environment-rejection tests specifically.
+  const envValue = over.environment === undefined ? 'Production' : over.environment;
   const receipt = jws({
     transactionId,
     originalTransactionId: orig,
@@ -177,6 +184,7 @@ const appleTransactionJws = (
     bundleId: over.bundleId ?? BUNDLE,
     expiresDate: Date.now() + days * 86_400_000,
     ...(over.revoked ? { revocationDate: over.revoked } : {}),
+    ...(envValue ? { environment: envValue } : {}),
   });
   return { receipt, orig, transactionId };
 };
@@ -278,6 +286,85 @@ test('Google: the SAME purchase token on account B is refused and B gets nothing
   assert.ok(isActive(await premiumOf(A.ownerId)), "A's entitlement is intact");
 });
 
+test('"Paketler ve Fiyatlar" follow-up: each 403 branch carries its own distinct reasonCode + correlationId, and never names the other account', async () => {
+  const A = await register('rc-a');
+  const B = await register('rc-b');
+  const token = `tok-${uid()}`;
+  googlePurchase(token, 'premium_pro_yearly_3599', 30, 'GPA.RC1');
+  const first = await verify(A.jwt, { productId: 'premium_pro_yearly_3599', platform: 'android', receipt: token, transactionId: 'GPA.RC1' });
+  assert.equal(first.body.verified, true, JSON.stringify(first.body));
+
+  // Branch 1 (existing-event owner mismatch): same transactionId, B's JWT.
+  const sameTx = await verify(B.jwt, { productId: 'premium_pro_yearly_3599', platform: 'android', receipt: token, transactionId: 'GPA.RC1' });
+  assert.equal(sameTx.status, 403, JSON.stringify(sameTx.body));
+  assert.equal(sameTx.body.error?.details?.reasonCode, 'owner_mismatch');
+  assert.ok(sameTx.body.error?.details?.correlationId, 'a correlationId must be present');
+  const sameTxDump = JSON.stringify(sameTx.body);
+  assert.ok(!sameTxDump.includes(A.email), "B's rejection must never reveal A's email");
+  assert.ok(!sameTxDump.includes(A.ownerId), "B's rejection must never reveal A's ownerId");
+
+  // Branch 2: a brand-new client-chosen transactionId, but the SAME
+  // underlying purchaseToken -- the provider is now verified FIRST
+  // (this audit's own idempotency/lookup-scope fix), so Google's own
+  // REAL order id for this token resolves to the SAME row A already
+  // owns, and the EARLIER, more specific owner_mismatch check catches
+  // it directly (a real improvement: this no longer depends on reaching
+  // the later purchaseToken pre-check to be caught at all).
+  const viaToken = await verify(B.jwt, { productId: 'premium_pro_yearly_3599', platform: 'android', receipt: 'x', purchaseToken: token, transactionId: `y-${uid()}` });
+  assert.equal(viaToken.status, 403, JSON.stringify(viaToken.body));
+  assert.equal(viaToken.body.error?.details?.reasonCode, 'owner_mismatch');
+  assert.ok(viaToken.body.error?.details?.correlationId);
+  const viaTokenDump = JSON.stringify(viaToken.body);
+  assert.ok(!viaTokenDump.includes(A.email));
+  assert.ok(!viaTokenDump.includes(A.ownerId));
+
+  // Every request gets its OWN correlationId, even for the same conflict.
+  assert.notEqual(sameTx.body.error.details.correlationId, viaToken.body.error.details.correlationId);
+});
+
+test('"Paketler ve Fiyatlar" follow-up: the identity-lock conflict branch (concurrent race) carries reasonCode=identity_conflict', async () => {
+  const A = await register('rc-race-a');
+  const B = await register('rc-race-b');
+  const token = `tok-${uid()}`;
+  googlePurchase(token, 'premium_eco_yearly_1599', 30, 'GPA.RC2');
+  const mk = (jwt: string) => verify(jwt, { productId: 'premium_eco_yearly_1599', platform: 'android', receipt: token, transactionId: `c-${uid()}` });
+  const [ra, rb] = await Promise.all([mk(A.jwt), mk(B.jwt)]);
+  const winnerRes = ra.status === 200 ? ra : rb;
+  const loserRes = ra.status === 200 ? rb : ra;
+  assert.equal(winnerRes.status, 200, JSON.stringify(winnerRes.body));
+  assert.equal(loserRes.status, 403, JSON.stringify(loserRes.body));
+  // Depending on exact scheduling, the loser can be caught by the early
+  // existing-row lookup, the purchaseToken pre-check, or the later
+  // identity-lock check -- all three are genuine, correct conflict
+  // detections of the same race; which one fires first is not
+  // deterministic and is not the thing under test.
+  assert.ok(
+    ['owner_mismatch', 'token_conflict', 'identity_conflict'].includes(
+      loserRes.body.error?.details?.reasonCode,
+    ),
+    JSON.stringify(loserRes.body),
+  );
+  assert.ok(loserRes.body.error?.details?.correlationId);
+});
+
+test('"Paketler ve Fiyatlar" follow-up: a successful verify (first-time and idempotent replay) also returns its own correlationId', async () => {
+  const u = await register('corr-ok');
+  const token = `tok-${uid()}`;
+  googlePurchase(token, 'premium_easy_yearly_999', 30, 'GPA.CORR1');
+  const body = { productId: 'premium_easy_yearly_999', platform: 'android', receipt: token, transactionId: 'GPA.CORR1' };
+  const r1 = await verify(u.jwt, body);
+  assert.equal(r1.body.verified, true, JSON.stringify(r1.body));
+  assert.ok(r1.body.correlationId);
+  const r2 = await verify(u.jwt, body);
+  assert.equal(r2.body.idempotent, true, JSON.stringify(r2.body));
+  assert.ok(r2.body.correlationId);
+  assert.notEqual(
+    r1.body.correlationId,
+    r2.body.correlationId,
+    'each request gets its own id even when the underlying transaction is the same',
+  );
+});
+
 test('Google: concurrent verify of one purchase by two accounts binds exactly one of them', async () => {
   const A = await register('race-a');
   const B = await register('race-b');
@@ -318,6 +405,199 @@ test('Apple: valid (real signed StoreKit2 transaction) receipt -> entitlement fo
   const owners = await strapiInstance.db.query('api::purchase-event.purchase-event').findMany({ where: { originalTransactionId: orig } });
   assert.deepEqual(owners.map((e: any) => e.ownerProfileId), [A.ownerId]);
 });
+
+test(
+  '"Paketler ve Fiyatlar" follow-up (SECOND PASS): an Apple transaction with a MISSING or UNRECOGNIZED `environment` value is rejected outright -- no entitlement, no "verified" purchase-event row, never defaulted to production',
+  async () => {
+    const A = await register('env-missing-a');
+    const missing = appleTransactionJws('pro_premium_12ay', 30, undefined, { environment: '' });
+    const rMissing = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt: missing.receipt, transactionId: missing.transactionId });
+    assert.notEqual(rMissing.body.verified, true, JSON.stringify(rMissing.body));
+    assert.equal(await premiumOf(A.ownerId), null);
+    const rowMissing = await strapiInstance.db.query('api::purchase-event.purchase-event').findOne({ where: { transactionId: missing.transactionId } });
+    assert.notEqual(rowMissing?.status, 'verified', 'no successful purchase-event for an unverifiable environment');
+
+    const B = await register('env-bogus-b');
+    const bogus = appleTransactionJws('pro_premium_12ay', 30, undefined, { environment: 'Xcode' });
+    const rBogus = await verify(B.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt: bogus.receipt, transactionId: bogus.transactionId });
+    assert.notEqual(rBogus.body.verified, true, JSON.stringify(rBogus.body));
+    assert.equal(await premiumOf(B.ownerId), null);
+    const rowBogus = await strapiInstance.db.query('api::purchase-event.purchase-event').findOne({ where: { transactionId: bogus.transactionId } });
+    assert.notEqual(rowBogus?.status, 'verified');
+  },
+);
+
+test(
+  '"Paketler ve Fiyatlar" follow-up (SECOND PASS -- corrects the first pass): a verified Apple SANDBOX transaction is rejected outright (no separate sandbox entitlement store exists) -- a REAL, active production Premium is left completely untouched',
+  async () => {
+    const A = await register('env-guard-a');
+
+    const prod = appleTransactionJws('pro_premium_12ay', 300, `900guard${uid()}`, { environment: 'Production' });
+    const rProd = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt: prod.receipt, transactionId: prod.transactionId });
+    assert.equal(rProd.body.verified, true, JSON.stringify(rProd.body));
+    const premiumAfterProd = await premiumOf(A.ownerId);
+    assert.ok(isActive(premiumAfterProd));
+    const realEndsAt = premiumAfterProd.endsAt;
+
+    const sandbox = appleTransactionJws('easy_premium_12ay', 1, `900guardsbx${uid()}`, { environment: 'Sandbox' });
+    const rSandbox = await verify(A.jwt, { productId: 'easy_premium_12ay', platform: 'ios', receipt: sandbox.receipt, transactionId: sandbox.transactionId });
+    assert.equal(rSandbox.status, 403, JSON.stringify(rSandbox.body));
+    assert.equal(rSandbox.body.error?.details?.reasonCode, 'sandbox_unsupported');
+
+    const premiumAfterSandbox = await premiumOf(A.ownerId);
+    assert.ok(isActive(premiumAfterSandbox));
+    assert.equal(premiumAfterSandbox.endsAt, realEndsAt, 'the rejected sandbox transaction must not have changed the real expiry at all');
+    assert.equal(premiumAfterSandbox.planTitle, premiumAfterProd.planTitle, 'must still be the real PRO plan');
+  },
+);
+
+test(
+  '"Paketler ve Fiyatlar" follow-up (SECOND PASS): a verified Apple SANDBOX transaction is rejected for a production account with NO existing Premium at all -- it must never be silently granted just because nothing real exists yet',
+  async () => {
+    const tester = await register('env-guard-fresh');
+    const sandbox = appleTransactionJws('pro_premium_12ay', 30, `900fresh${uid()}`, { environment: 'Sandbox' });
+    const r = await verify(tester.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt: sandbox.receipt, transactionId: sandbox.transactionId });
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(r.body.error?.details?.reasonCode, 'sandbox_unsupported');
+    assert.equal(await premiumOf(tester.ownerId), null, 'a tester with no prior real Premium must NOT see one unlock from a sandbox purchase -- there is no sandbox entitlement store to safely credit it to');
+  },
+);
+
+test(
+  '"Paketler ve Fiyatlar" follow-up (SECOND PASS): a verified Apple SANDBOX transaction is rejected for a production account whose Premium has EXPIRED -- it must never silently revive/extend it',
+  async () => {
+    const tester = await register('env-guard-expired');
+    const expired = appleTransactionJws('pro_premium_12ay', -5, `900expired${uid()}`, { environment: 'Production' });
+    const rExpired = await verify(tester.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt: expired.receipt, transactionId: expired.transactionId });
+    // An already-expired transaction never grants anything either -- confirm the baseline before the real test.
+    assert.equal(await premiumOf(tester.ownerId), null, 'sanity: an expired production transaction grants nothing by itself');
+
+    const sandbox = appleTransactionJws('pro_premium_12ay', 60, `900expiredsbx${uid()}`, { environment: 'Sandbox' });
+    const rSandbox = await verify(tester.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt: sandbox.receipt, transactionId: sandbox.transactionId });
+    assert.equal(rSandbox.status, 403, JSON.stringify(rSandbox.body));
+    assert.equal(rSandbox.body.error?.details?.reasonCode, 'sandbox_unsupported');
+    assert.equal(await premiumOf(tester.ownerId), null, 'a sandbox purchase must not revive/extend an expired real Premium');
+    void rExpired;
+  },
+);
+
+test(
+  '"Paketler ve Fiyatlar" follow-up (SECOND PASS): a sandbox Apple transaction sharing a real production purchase\'s originalTransactionId is rejected before any lookup/conflict logic even runs -- the production purchase and its own ownership are completely unaffected',
+  async () => {
+    const A = await register('env-prod'); // real production buyer
+    const B = await register('env-sbx-1'); // sandbox tester, unrelated account
+
+    const sharedOrig = `900shared${uid()}`;
+    const prod = appleTransactionJws('pro_premium_12ay', 30, sharedOrig, { environment: 'Production' });
+    const rProd = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt: prod.receipt, transactionId: prod.transactionId });
+    assert.equal(rProd.body.verified, true, JSON.stringify(rProd.body));
+    assert.ok(isActive(await premiumOf(A.ownerId)));
+    const storedProd = await strapiInstance.db.query('api::purchase-event.purchase-event').findOne({ where: { transactionId: prod.transactionId } });
+    assert.equal(storedProd?.storeEnvironment, 'production');
+
+    const sandboxB = appleTransactionJws('pro_premium_12ay', 30, sharedOrig, {
+      environment: 'Sandbox',
+      transactionId: `TsandboxB${uid()}`,
+    });
+    const rSandboxB = await verify(B.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt: sandboxB.receipt, transactionId: sandboxB.transactionId });
+    // Rejected for being sandbox -- NOT for conflicting with A's row (it
+    // never even reaches the conflict check), and B gets nothing.
+    assert.equal(rSandboxB.status, 403, JSON.stringify(rSandboxB.body));
+    assert.equal(rSandboxB.body.error?.details?.reasonCode, 'sandbox_unsupported');
+    assert.equal(await premiumOf(B.ownerId), null);
+
+    // A's real production entitlement, and the single purchase-event row
+    // it owns, are completely untouched by B's rejected sandbox attempt.
+    assert.ok(isActive(await premiumOf(A.ownerId)));
+    const owners = await strapiInstance.db.query('api::purchase-event.purchase-event').findMany({ where: { originalTransactionId: sharedOrig } });
+    assert.deepEqual(owners.map((e: any) => e.ownerProfileId), [A.ownerId]);
+  },
+);
+
+test(
+  '"Paketler ve Fiyatlar" follow-up (webhook path, defense-in-depth): a SANDBOX-tagged Apple Server Notification also cannot cancel/expire a real, active PRODUCTION Premium -- the guard is driven by the STORED row\'s own environment, never the notification\'s own (spoofable) claim',
+  async () => {
+    const A = await register('env-guard-webhook');
+
+    // A's REAL production purchase -- active for a long time.
+    const prod = appleTransactionJws('pro_premium_12ay', 300, `900wh${uid()}`, { environment: 'Production' });
+    const rProd = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt: prod.receipt, transactionId: prod.transactionId });
+    assert.equal(rProd.body.verified, true, JSON.stringify(rProd.body));
+    const realEndsAt = (await premiumOf(A.ownerId)).endsAt;
+
+    // `verify()` itself now rejects sandbox transactions outright, so a
+    // sandbox-tagged row can only exist as LEGACY data (persisted before
+    // this fix) or from some other, not-yet-discovered write path --
+    // simulated here with a direct DB insert, exactly what this guard
+    // defends against either way.
+    const sandboxOrig = `900whsbx${uid()}`;
+    const sandboxTx = `Twhsbx${uid()}`;
+    await strapiInstance.entityService.create('api::purchase-event.purchase-event', {
+      data: {
+        transactionId: sandboxTx,
+        originalTransactionId: sandboxOrig,
+        ownerEmail: A.email,
+        ownerProfileId: A.ownerId,
+        provider: 'app_store',
+        productId: 'easy_premium_12ay',
+        categoryTitle: 'Premium',
+        planTitle: 'Kolay Premium',
+        priceTl: 999,
+        isSubscription: true,
+        status: 'verified',
+        verifiedAt: new Date().toISOString(),
+        storeEnvironment: 'sandbox',
+      },
+    });
+    assert.equal((await premiumOf(A.ownerId)).endsAt, realEndsAt, 'sanity: still untouched going into the webhook step');
+
+    // Apple now sends a signed Server Notification for THAT sandbox row,
+    // claiming a refund/revocation -- and, to prove the guard isn't
+    // fooled by the notification's OWN claimed environment, the
+    // notification itself falsely claims "Production".
+    const revoke = await anote(sandboxOrig, { type: 'REFUND', env: 'Production', signedDate: Date.now() + 10, revoked: Date.now() });
+    assert.equal(revoke.status, 200, JSON.stringify(revoke.body));
+
+    // A's REAL, active production Premium must be completely untouched --
+    // the notification only ever had authority over the sandbox-tagged
+    // row it named (looked up by its own stored environment), never over
+    // the real one, regardless of what the notification itself claims.
+    const after = await premiumOf(A.ownerId);
+    assert.ok(isActive(after), 'a sandbox-tagged webhook notification must never cancel a real, active production Premium');
+    assert.equal(after.endsAt, realEndsAt, 'real expiry must be exactly unchanged');
+  },
+);
+
+test(
+  '"Paketler ve Fiyatlar" follow-up: a legacy purchase-event row with no stored environment still conflicts against a REAL production transaction sharing its originalTransactionId (fail-safe, never silently exempted)',
+  async () => {
+    const A = await register('env-legacy-a');
+    const B = await register('env-legacy-b');
+    const orig = `900legacy${uid()}`;
+    const { receipt, transactionId } = appleTransactionJws('pro_premium_12ay', 30, orig, { environment: 'Production' });
+    const rA = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt, transactionId });
+    assert.equal(rA.body.verified, true, JSON.stringify(rA.body));
+    // Simulate a row persisted before environment-tagging existed at all.
+    await strapiInstance.db.query('api::purchase-event.purchase-event').update({
+      where: { transactionId },
+      data: { storeEnvironment: null },
+    });
+
+    // B presents a DISTINCT, genuinely PRODUCTION transaction that
+    // happens to share the same originalTransactionId as A's now-
+    // untagged legacy row -- sandbox is no longer reachable here at all
+    // (it is rejected earlier, unconditionally), so this is the
+    // meaningful way left to exercise the untagged-row fail-safe.
+    const prodB = appleTransactionJws('pro_premium_12ay', 30, orig, {
+      environment: 'Production',
+      transactionId: `TlegacyB${uid()}`,
+    });
+    const rB = await verify(B.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt: prodB.receipt, transactionId: prodB.transactionId });
+    assert.equal(rB.status, 403, JSON.stringify(rB.body));
+    assert.equal(rB.body.error?.details?.reasonCode, 'identity_conflict');
+    assert.equal(await premiumOf(B.ownerId), null);
+  },
+);
 
 test('Apple: a transaction for another app (wrong bundle id) is rejected', async () => {
   const A = await register('bundle');

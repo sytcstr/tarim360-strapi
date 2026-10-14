@@ -1,3 +1,6 @@
+import { isSandboxPurchaseEventRow } from '../api/purchase/lib/catalog';
+import { allowSandboxPurchaseEntitlements } from '../api/purchase/lib/config';
+
 const LISTING_UID = 'api::listing.listing';
 const OFFER_UID = 'api::offer.offer';
 const COMMENT_UID = 'api::listing-comment.listing-comment';
@@ -40,6 +43,24 @@ export const PUBLISHED_ONLY_FILTER = { publishedAt: { $notNull: true } } as cons
  * client-trusted purchase history) -- both recomputed fresh from the DB
  * on every call. Callers are expected to skip this entirely for premium/
  * business-exempt owners (see isPremiumActiveFromProfile).
+ *
+ * "Paketler ve Fiyatlar" audit follow-up (second pass): this reads
+ * `purchase-event` rows DIRECTLY by productId + status, never through
+ * `upsertProfilePurchase`'s sandbox-vs-production entitlement guard --
+ * so a SANDBOX (TestFlight) `normal_listing_5_399` purchase must be
+ * excluded here explicitly, or a sandbox test purchase would silently
+ * fund a real production account's real listing quota. Fetched as rows
+ * (not a server-side `count()`) specifically so the sandbox exclusion is
+ * applied in JS, never as a SQL `$ne` -- a column-is-NULL-for-every-
+ * legacy-or-Google row comparison is exactly the kind of operator whose
+ * NULL-handling silently differs by dialect/ORM version, and getting it
+ * wrong here would have under-counted real paying customers' own quota.
+ *
+ * THIRD PASS: `allowSandboxPurchaseEntitlements()` (config.ts) lifts
+ * this exclusion ONLY on a genuinely separate test-backend deployment
+ * (own database, no real customer data, gated to NODE_ENV development/
+ * test) so a TestFlight build pointed at THAT deployment can validate
+ * the listing-quota purchase end-to-end.
  */
 export const canCreateNextNormalListing = async (
   strapi: any,
@@ -54,13 +75,17 @@ export const canCreateNextNormalListing = async (
   const usedCount = await strapi.db.query(LISTING_UID).count({
     where: { ownerProfileId, ...PUBLISHED_ONLY_FILTER },
   } as any);
-  const purchasedBlocks = await strapi.db.query(PURCHASE_EVENT_UID).count({
+  const purchaseRows = (await strapi.db.query(PURCHASE_EVENT_UID).findMany({
     where: {
       ownerProfileId,
       productId: NORMAL_LISTING_QUOTA_PRODUCT_ID,
       status: 'verified',
     },
-  } as any);
+    limit: 1000,
+  } as any)) as Record<string, unknown>[];
+  const purchasedBlocks = allowSandboxPurchaseEntitlements()
+    ? purchaseRows.length
+    : purchaseRows.filter((r) => !isSandboxPurchaseEventRow(r)).length;
   const allowedCount =
     NORMAL_LISTING_FREE_COUNT + purchasedBlocks * NORMAL_LISTING_BLOCK_SIZE;
   return usedCount < allowedCount;

@@ -26,6 +26,8 @@ import {
   MAX_LISTING_PHOTOS,
 } from '../../../utils/listing-media';
 import { fingerprintPayload, isValidOperationId, resolveOperation } from '../../../utils/operation-idempotency';
+import { isSandboxPurchaseEventRow } from '../../purchase/lib/catalog';
+import { allowSandboxPurchaseEntitlements } from '../../purchase/lib/config';
 
 const LISTING_UID = 'api::listing.listing';
 const PROFILE_UID = 'api::profile-setting.profile-setting';
@@ -1068,24 +1070,45 @@ export default factories.createCoreController(
       const premiumEligible =
         isPremiumActiveFromProfile(profile) && rocketRemaining > 0 && rocketDays === days;
 
+      // "Paketler ve Fiyatlar" audit follow-up (second pass): this reads
+      // `purchase-event` rows DIRECTLY by productId + status, never
+      // through `upsertProfilePurchase`'s sandbox-vs-production
+      // entitlement guard -- a SANDBOX (TestFlight) doping purchase must
+      // never be eligible to activate a REAL rocket boost on a real
+      // listing. Candidates are fetched (not `findOne`) and filtered in
+      // JS so the exclusion never depends on how a `$ne`-style operator
+      // happens to treat a NULL `storeEnvironment` (every legacy row and
+      // every Google purchase has no such field at all, and must still
+      // count normally).
+      //
+      // THIRD PASS: `allowSandboxPurchaseEntitlements()` (config.ts)
+      // lifts this exclusion ONLY on a genuinely separate test-backend
+      // deployment, so a TestFlight build pointed at THAT deployment can
+      // validate a doping purchase activating a rocket end-to-end.
+      const sandboxEntitlementsAllowed = allowSandboxPurchaseEntitlements();
       let purchaseEvent: Record<string, unknown> | null = null;
       if (!premiumEligible) {
         const productId = ROCKET_PRODUCT_BY_DAYS[days];
-        const candidate = productId
-          ? ((await strapi.db.query(PURCHASE_EVENT_UID).findOne({
+        const candidates = productId
+          ? ((await strapi.db.query(PURCHASE_EVENT_UID).findMany({
               where: {
                 ownerProfileId: identity.ownerId,
                 productId,
                 status: 'verified',
               },
               orderBy: { verifiedAt: 'desc' },
-            } as any)) as Record<string, unknown> | null)
-          : null;
-        if (candidate) {
+              limit: 50,
+            } as any)) as Record<string, unknown>[])
+          : [];
+        for (const candidate of candidates) {
+          if (isSandboxPurchaseEventRow(candidate) && !sandboxEntitlementsAllowed) continue;
           const consumed = await strapi.db.query(ROCKET_ACTIVATION_UID).findOne({
             where: { purchaseTransactionId: candidate.transactionId },
           } as any);
-          if (!consumed) purchaseEvent = candidate;
+          if (!consumed) {
+            purchaseEvent = candidate;
+            break;
+          }
         }
       }
 
