@@ -68,6 +68,17 @@ const asRecord = (v: unknown): Record<string, unknown> =>
 
 export default ({ strapi }: { strapi: Core.Strapi }) => ({
   async verify(ctx: any) {
+    // Flutter's StrapiService already parses `error.details.reasonCode`/
+    // `correlationId` on a 403 (PurchaseVerifyOutcome._reasonCodeFromWire,
+    // PurchaseVerifyReasonCode.ownerMismatch/tokenConflict/identityConflict)
+    // -- this backend never sent that `details` object, so every one of
+    // the three ownership/token/identity conflict checks below landed on
+    // the fully generic fallback (no specific reasonCode, just the plain
+    // message string) instead of the specific, already-built code path.
+    // `correlationId` is safe to show/share with support: a fresh,
+    // per-request random id, never a secret, never the other account's
+    // identity, never the receipt/JWS/any provider payload.
+    const correlationId = crypto.randomUUID();
     const identity = readIdentity(ctx);
     if (!identity) return ctx.unauthorized('Kimlik dogrulanamadi.');
 
@@ -115,7 +126,10 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
     const existing = await findPurchaseEvent(strapi, { transactionId });
     if (existing) {
       if (asString(existing.ownerProfileId) !== identity.ownerId) {
-        return ctx.forbidden('Bu satin alma farkli bir hesaba ait.');
+        return ctx.forbidden('Bu satin alma farkli bir hesaba ait.', {
+          reasonCode: 'owner_mismatch',
+          correlationId,
+        });
       }
       if (
         asString(existing.status).toLowerCase() === 'verified' &&
@@ -139,7 +153,12 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
       const early = await findConflictingOwnerEvent(strapi, identity.ownerId, {
         purchaseTokens: [purchaseToken],
       });
-      if (early) return ctx.forbidden('Bu satin alma farkli bir hesaba bagli.');
+      if (early) {
+        return ctx.forbidden('Bu satin alma farkli bir hesaba bagli.', {
+          reasonCode: 'token_conflict',
+          correlationId,
+        });
+      }
     }
 
     let verified;
@@ -213,7 +232,12 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
         return { conflict: false as const };
       },
     );
-    if (outcome.conflict) return ctx.forbidden('Bu satin alma farkli bir hesaba bagli.');
+    if (outcome.conflict) {
+      return ctx.forbidden('Bu satin alma farkli bir hesaba bagli.', {
+        reasonCode: 'identity_conflict',
+        correlationId,
+      });
+    }
 
     ctx.body = {
       verified: verified.verified,

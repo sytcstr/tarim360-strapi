@@ -276,6 +276,19 @@ test('Google: the SAME purchase token on account B is refused and B gets nothing
   assert.equal(events.length, 1);
   assert.equal(events[0].ownerProfileId, A.ownerId, "A's binding is not overwritten");
   assert.ok(isActive(await premiumOf(A.ownerId)), "A's entitlement is intact");
+
+  // The client already parses `error.details.reasonCode`/`correlationId`
+  // on a 403 (PurchaseVerifyOutcome._reasonCodeFromWire) -- confirms the
+  // backend actually sends the specific code for each of the two checks
+  // this test exercises (same stored transactionId vs. same store token),
+  // never just the generic message string, and a correlationId safe to
+  // show support.
+  assert.equal(sameTx.body?.error?.details?.reasonCode, 'owner_mismatch', JSON.stringify(sameTx.body));
+  assert.ok(sameTx.body?.error?.details?.correlationId, 'correlationId must be present');
+  for (const r of [otherTx, noTx, viaPurchaseToken]) {
+    assert.equal(r.body?.error?.details?.reasonCode, 'token_conflict', JSON.stringify(r.body));
+    assert.ok(r.body?.error?.details?.correlationId, 'correlationId must be present');
+  }
 });
 
 test('Google: concurrent verify of one purchase by two accounts binds exactly one of them', async () => {
@@ -317,6 +330,13 @@ test('Apple: valid (real signed StoreKit2 transaction) receipt -> entitlement fo
   assert.equal(await premiumOf(B.ownerId), null);
   const owners = await strapiInstance.db.query('api::purchase-event.purchase-event').findMany({ where: { originalTransactionId: orig } });
   assert.deepEqual(owners.map((e: any) => e.ownerProfileId), [A.ownerId]);
+
+  // B's own client-chosen transactionId never matched A's stored row, so
+  // this is decided by the STORE identity lock (same real Apple
+  // transaction/originalTransactionId), not the plain stored-row check --
+  // confirms the specific `identity_conflict` code reaches the client.
+  assert.equal(rb.body?.error?.details?.reasonCode, 'identity_conflict', JSON.stringify(rb.body));
+  assert.ok(rb.body?.error?.details?.correlationId, 'correlationId must be present');
 });
 
 test('Apple: a transaction for another app (wrong bundle id) is rejected', async () => {
