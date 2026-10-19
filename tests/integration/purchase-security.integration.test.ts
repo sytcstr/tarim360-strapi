@@ -316,6 +316,33 @@ test('Google: a cheap subscription cannot be presented as a more expensive plan 
   assert.equal(await premiumOf(A.ownerId), null, 'no Pro entitlement from an Easy purchase');
 });
 
+test('Google: three different accounts each buy the SAME product with their own separate, valid purchases -- all three succeed independently (productId alone is never a conflict key; only the store\'s own per-purchase identity is)', async () => {
+  const A = await register('multi-a');
+  const B = await register('multi-b');
+  const C = await register('multi-c');
+  const productId = 'premium_eco_yearly_1599';
+  const tokenA = `tok-${uid()}`;
+  const tokenB = `tok-${uid()}`;
+  const tokenC = `tok-${uid()}`;
+  googlePurchase(tokenA, productId, 30, `GPA.${uid()}`);
+  googlePurchase(tokenB, productId, 30, `GPA.${uid()}`);
+  googlePurchase(tokenC, productId, 30, `GPA.${uid()}`);
+
+  const [rA, rB, rC] = await Promise.all([
+    verify(A.jwt, { productId, platform: 'android', receipt: tokenA, transactionId: `tx-a-${uid()}` }),
+    verify(B.jwt, { productId, platform: 'android', receipt: tokenB, transactionId: `tx-b-${uid()}` }),
+    verify(C.jwt, { productId, platform: 'android', receipt: tokenC, transactionId: `tx-c-${uid()}` }),
+  ]);
+
+  for (const r of [rA, rB, rC]) assert.equal(r.body.verified, true, JSON.stringify(r.body));
+  assert.ok(isActive(await premiumOf(A.ownerId)), 'A must have its own active entitlement');
+  assert.ok(isActive(await premiumOf(B.ownerId)), 'B must have its own active entitlement');
+  assert.ok(isActive(await premiumOf(C.ownerId)), 'C must have its own active entitlement');
+  assert.equal((await eventsWithToken(tokenA)).length, 1);
+  assert.equal((await eventsWithToken(tokenB)).length, 1);
+  assert.equal((await eventsWithToken(tokenC)).length, 1);
+});
+
 test('Apple: valid (real signed StoreKit2 transaction) receipt -> entitlement for A; another account presenting the same receipt is refused', async () => {
   const A = await register('aa');
   const B = await register('ab');
@@ -337,6 +364,39 @@ test('Apple: valid (real signed StoreKit2 transaction) receipt -> entitlement fo
   // confirms the specific `identity_conflict` code reaches the client.
   assert.equal(rb.body?.error?.details?.reasonCode, 'identity_conflict', JSON.stringify(rb.body));
   assert.ok(rb.body?.error?.details?.correlationId, 'correlationId must be present');
+});
+
+// NOTE: like every other Apple test in this file, this uses a LOCAL,
+// test-only certificate chain to sign a StoreKit2-shaped transaction JWS
+// (see `appleTransactionJws`/`jws` above and this file's own top-of-file
+// note) -- it exercises the real, unmodified `verifyAppleJws` chain
+// verifier exactly as production does, but it is NOT a real Apple
+// signature, a real App Store Connect sandbox purchase, or a real iPhone
+// test. It must never be reported or treated as evidence from a real
+// device/sandbox run.
+test('Apple: three different accounts each buy the SAME product with their own separate, valid (test-chain-signed) transactions -- all three succeed independently (productId alone is never a conflict key; only the real Apple transaction/originalTransactionId is)', async () => {
+  const A = await register('apple-multi-a');
+  const B = await register('apple-multi-b');
+  const C = await register('apple-multi-c');
+  const productId = 'pro_premium_12ay';
+  const txA = appleTransactionJws(productId, 30);
+  const txB = appleTransactionJws(productId, 30);
+  const txC = appleTransactionJws(productId, 30);
+
+  const [rA, rB, rC] = await Promise.all([
+    verify(A.jwt, { productId, platform: 'ios', receipt: txA.receipt, transactionId: txA.transactionId }),
+    verify(B.jwt, { productId, platform: 'ios', receipt: txB.receipt, transactionId: txB.transactionId }),
+    verify(C.jwt, { productId, platform: 'ios', receipt: txC.receipt, transactionId: txC.transactionId }),
+  ]);
+
+  for (const r of [rA, rB, rC]) assert.equal(r.body.verified, true, JSON.stringify(r.body));
+  assert.ok(isActive(await premiumOf(A.ownerId)), 'A must have its own active entitlement');
+  assert.ok(isActive(await premiumOf(B.ownerId)), 'B must have its own active entitlement');
+  assert.ok(isActive(await premiumOf(C.ownerId)), 'C must have its own active entitlement');
+  const rows = await strapiInstance.db
+    .query('api::purchase-event.purchase-event')
+    .findMany({ where: { originalTransactionId: { $in: [txA.orig, txB.orig, txC.orig] } } });
+  assert.equal(rows.length, 3, "each account's own transaction must create its own purchase-event row");
 });
 
 test('Apple: a transaction for another app (wrong bundle id) is rejected', async () => {
@@ -543,4 +603,98 @@ test('Apple webhook: the real Apple root pin is enforced (the test chain is reje
   } finally {
     process.env.APPLE_TRUSTED_ROOT_SHA256 = prev;
   }
+});
+
+// ======================================================================================
+// F. Review follow-up: an UNVERIFIED client claim must never win a permanent ownership
+// lock over a transaction identity it never actually proved it owns.
+// ======================================================================================
+
+test('BUG (now fixed): account A submits an invalid/unsigned receipt but CLAIMS account B\'s real (not-yet-seen) transactionId in the request body; this creates a rejected purchase-event row under A -- account B then presenting the REAL, validly Apple-signed data for that exact transaction must NOT be blocked by A\'s unverified claim', async () => {
+  const A = await register('claimer');
+  const B = await register('victim');
+  const real = appleTransactionJws('pro_premium_12ay', 30, `100${uid()}`);
+
+  // A never actually owns this transaction and never passes Apple's signature
+  // check -- but the request body's `transactionId` is just a free-text lookup
+  // hint the controller accepts from any caller, and A sets it to B's real,
+  // not-yet-verified transaction id.
+  const aClaim = await verify(A.jwt, {
+    productId: 'pro_premium_12ay',
+    platform: 'ios',
+    receipt: `garbage-not-a-real-jws-${uid()}`,
+    transactionId: real.transactionId,
+  });
+  assert.notEqual(aClaim.body.verified, true, JSON.stringify(aClaim.body));
+  assert.equal(await premiumOf(A.ownerId), null, 'A must never gain an entitlement from a fake receipt');
+
+  // B now presents the REAL, validly-signed transaction for that exact id.
+  const bReal = await verify(B.jwt, {
+    productId: 'pro_premium_12ay',
+    platform: 'ios',
+    receipt: real.receipt,
+    transactionId: real.transactionId,
+  });
+  assert.equal(bReal.body.verified, true, JSON.stringify(bReal.body));
+  assert.ok(isActive(await premiumOf(B.ownerId)), "B's genuinely verified purchase must be granted");
+});
+
+test('a GENUINELY Apple-signed transaction for the WRONG bundle (a different app) must not let the SENDER claim ownership of an arbitrary transactionId it asserts -- B\'s later REAL data for that id must still go through', async () => {
+  const A = await register('wrong-bundle-claimer');
+  const B = await register('wrong-bundle-victim');
+  const victimTx = `100${uid()}`;
+  // A's own receipt is a REAL, validly-signed Apple JWS -- just for a
+  // different app's bundle id. The signature itself is genuine; the
+  // claimed identity (whatever transactionId A's request asserts) is not.
+  const wrongBundle = appleTransactionJws('pro_premium_12ay', 30, `other-${uid()}`, {
+    bundleId: 'com.someone.else',
+  });
+  const real = appleTransactionJws('pro_premium_12ay', 30, victimTx);
+
+  const aClaim = await verify(A.jwt, {
+    productId: 'pro_premium_12ay',
+    platform: 'ios',
+    receipt: wrongBundle.receipt,
+    transactionId: real.transactionId,
+  });
+  assert.notEqual(aClaim.body.verified, true, JSON.stringify(aClaim.body));
+  assert.equal(await premiumOf(A.ownerId), null);
+
+  const bReal = await verify(B.jwt, {
+    productId: 'pro_premium_12ay',
+    platform: 'ios',
+    receipt: real.receipt,
+    transactionId: real.transactionId,
+  });
+  assert.equal(bReal.body.verified, true, JSON.stringify(bReal.body));
+  assert.ok(isActive(await premiumOf(B.ownerId)), "B's genuinely verified purchase must be granted");
+});
+
+test('a GENUINELY verified purchase keeps its ownership protection even after it legitimately expires/is refunded -- a later claim by a different account on the SAME transaction identity is still blocked', async () => {
+  const A = await register('expired-owner');
+  const B = await register('later-claimer');
+  const real = appleTransactionJws('pro_premium_12ay', 30, `100${uid()}`, { revoked: Date.now() });
+
+  // A's purchase is genuinely Apple-signed but already revoked/refunded at the
+  // store -- verified: false, status: 'refunded' (never 'verified'), yet this
+  // is a REAL transaction that really was A's.
+  const aReal = await verify(A.jwt, {
+    productId: 'pro_premium_12ay',
+    platform: 'ios',
+    receipt: real.receipt,
+    transactionId: real.transactionId,
+  });
+  assert.notEqual(aReal.body.verified, true, JSON.stringify(aReal.body));
+
+  // B later tries to claim the exact same transaction identity. Even though
+  // A's own record was never `verified` (it was refunded), this is a REAL
+  // transaction A's receipt genuinely decoded to -- B must still be refused.
+  const bClaim = await verify(B.jwt, {
+    productId: 'pro_premium_12ay',
+    platform: 'ios',
+    receipt: real.receipt,
+    transactionId: real.transactionId,
+  });
+  assert.equal(bClaim.status, 403, JSON.stringify(bClaim.body));
+  assert.equal(await premiumOf(B.ownerId), null);
 });

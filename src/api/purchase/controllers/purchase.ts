@@ -35,6 +35,7 @@ const eventDataForVerify = (input: {
   status: string;
   expiresAt?: string;
   payload?: unknown;
+  everAuthenticated: boolean;
 }) => ({
   ownerEmail: input.ownerEmail,
   ownerProfileId: input.ownerProfileId,
@@ -52,6 +53,7 @@ const eventDataForVerify = (input: {
   expiresAt: input.expiresAt || null,
   payload: input.payload ?? null,
   source: 'verify_api',
+  everAuthenticated: input.everAuthenticated,
 });
 
 const SMART_ADS_ENABLED = ['1', 'true', 'yes', 'on'].includes(
@@ -123,15 +125,32 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
     // A client-supplied transaction id is only a lookup hint for retries; it is
     // never an ownership decision. The stored event must belong to the caller,
     // and a still-valid verified event is answered idempotently.
+    //
+    // Review follow-up (unverified-claim ownership lock): `existing` here was
+    // looked up by a value the CALLER supplied (or a hash derived from their
+    // own receipt) -- never yet confirmed by the provider. A row only blocks
+    // a different account when it is NOT explicitly known to be
+    // `everAuthenticated === false` (never, across every attempt so far,
+    // backed by a receipt/token the provider's own signature/API check
+    // actually accepted). `undefined`/`null` (a legacy row from before this
+    // field existed) stays protective, exactly as before this fix -- only an
+    // explicit `false` lifts the block, and only for THIS mismatch branch; the
+    // idempotent-success branch below is unaffected (it already requires the
+    // SAME owner).
     const existing = await findPurchaseEvent(strapi, { transactionId });
     if (existing) {
       if (asString(existing.ownerProfileId) !== identity.ownerId) {
-        return ctx.forbidden('Bu satin alma farkli bir hesaba ait.', {
-          reasonCode: 'owner_mismatch',
-          correlationId,
-        });
-      }
-      if (
+        if (existing.everAuthenticated !== false) {
+          return ctx.forbidden('Bu satin alma farkli bir hesaba ait.', {
+            reasonCode: 'owner_mismatch',
+            correlationId,
+          });
+        }
+        // Else: every prior attempt on this exact transactionId was itself
+        // never provider-authenticated (empty receipt, bad signature, or a
+        // non-crypto bundle/product mismatch) -- an unverified claim, not a
+        // real prior owner. Falls through to verify THIS request normally.
+      } else if (
         asString(existing.status).toLowerCase() === 'verified' &&
         !isExpired(existing.expiresAt)
       ) {
@@ -178,6 +197,19 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
     const finalTx = asString(verified.transactionId) || transactionId;
     const storeToken = asString(verified.purchaseToken) || purchaseToken;
     const storeOriginal = asString(verified.originalTransactionId);
+    // Review follow-up (unverified-claim ownership lock): read directly from
+    // the provider's own EXPLICIT signal (`VerifyOutcome.identityAuthenticated`,
+    // set at each return in providers.ts) -- never inferred indirectly from
+    // the mere presence of `transactionId` or any other field, which would
+    // be fragile to a future, unrelated change there. True for refunded/
+    // expired/mismatched-subscription-state outcomes (still a REAL,
+    // correctly-identified transaction, just not currently active/entitled),
+    // false for an empty receipt, a bad signature, or a genuinely-signed
+    // transaction for the WRONG bundle/product (that sender must never win
+    // ownership of the identity THIS request claims). Deliberately NOT
+    // `verified.verified` (which would also -- wrongly -- fail to protect a
+    // real purchase that has since legitimately expired or been refunded).
+    const everAuthenticated = verified.identityAuthenticated === true;
 
     // Authoritative ownership: decided on the STORE's identity (provider
     // transaction id, purchase token, original transaction id), inside a lock so
@@ -211,6 +243,7 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
             status: verified.status,
             expiresAt: asString(verified.expiresAt) || undefined,
             payload: verified.payload,
+            everAuthenticated,
           }),
         );
 
@@ -323,6 +356,12 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
       payload: { ...asRecord(existing.payload), googleWebhook: payload, googleStore: outcome.payload },
       verifiedAt: new Date().toISOString(),
       transactionId: tx,
+      // Review follow-up: a webhook is Google's own authenticated
+      // server-to-server notification (OIDC-verified before reaching
+      // here), never an unauthenticated client claim -- merges with
+      // (never regresses) whatever `existing.everAuthenticated` already
+      // was via `upsertPurchaseEvent`'s own merge logic.
+      everAuthenticated: true,
     });
     await upsertProfilePurchase(strapi, {
       ownerId: asString(existing.ownerProfileId),
@@ -436,6 +475,11 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
       },
       verifiedAt: new Date().toISOString(),
       transactionId: tid,
+      // Review follow-up: Apple's own authenticated server notification
+      // (JWS-signature-verified before reaching here), never an
+      // unauthenticated client claim -- merges with (never regresses)
+      // whatever `existing.everAuthenticated` already was.
+      everAuthenticated: true,
     });
     await upsertProfilePurchase(strapi, {
       ownerId: asString(existing.ownerProfileId),

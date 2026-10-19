@@ -13,6 +13,16 @@ const PURCHASE_EVENT_UID = 'api::purchase-event.purchase-event';
 const PROFILE_SETTING_UID = 'api::profile-setting.profile-setting';
 const MAX_HISTORY = 250;
 
+/**
+ * Review follow-up (unverified-claim ownership lock): `everAuthenticated`
+ * is a one-way, "once true, always true" flag -- it must never regress
+ * from true back to false just because a LATER write for the SAME
+ * transactionId (e.g. a webhook renewal, or a retried verify()) happens
+ * not to carry it this time. Merging it here, in the ONE place that
+ * decides create-vs-update for every `purchase-event` write (the
+ * interactive verify() path AND both webhook paths), means no caller has
+ * to get this merge right individually.
+ */
 export const upsertPurchaseEvent = async (
   strapi: Core.Strapi,
   data: Record<string, unknown>,
@@ -22,15 +32,18 @@ export const upsertPurchaseEvent = async (
   const existing = await strapi.db.query(PURCHASE_EVENT_UID).findOne({
     where: { transactionId: tx },
   } as any);
+  const everAuthenticated =
+    existing?.everAuthenticated === true || data.everAuthenticated === true;
+  const merged = { ...data, everAuthenticated };
   if (existing?.id) {
     return (await strapi.entityService.update(
       PURCHASE_EVENT_UID as any,
       existing.id as any,
-      { data },
+      { data: merged },
     )) as Record<string, unknown>;
   }
   return (await strapi.entityService.create(PURCHASE_EVENT_UID as any, {
-    data,
+    data: merged,
   })) as Record<string, unknown>;
 };
 
@@ -206,6 +219,23 @@ export const upsertProfilePurchase = async (
  * provider's transaction id), never by an id the client chose. Returns the first
  * purchase event carrying any of these identities that belongs to a DIFFERENT
  * account, or null when every match (if any) belongs to `ownerProfileId`.
+ *
+ * Review follow-up (unverified-claim ownership lock): a row is only
+ * treated as a genuine, blocking prior claim when `everAuthenticated` is
+ * NOT explicitly `false` -- i.e. it is either known-authenticated (was,
+ * at some point, backed by a receipt/token the provider's own signature/
+ * API check genuinely accepted -- see `everAuthenticated`'s own doc
+ * comment on `upsertPurchaseEvent` and where callers set it) or UNKNOWN
+ * (a legacy row written before this field existed, `undefined`/`null` --
+ * stays protective, exactly as before this fix, never auto-relaxed just
+ * because its reliability cannot be determined). Only a row explicitly
+ * recorded as `everAuthenticated === false` -- a transaction identity
+ * that, across every attempt seen so far, was NEVER backed by a receipt
+ * the provider itself actually authenticated (an empty receipt, a bad
+ * signature, or Apple's own non-crypto bundle/product mismatch, none of
+ * which carry the provider's own transactionId) -- is excluded: an
+ * unverified CLIENT CLAIM on an identity must never win a permanent
+ * ownership lock over it.
  */
 export const findConflictingOwnerEvent = async (
   strapi: Core.Strapi,
@@ -226,7 +256,11 @@ export const findConflictingOwnerEvent = async (
   const rows = (await strapi.db
     .query(PURCHASE_EVENT_UID)
     .findMany({ where: { $or: or }, limit: 50 } as any)) as Record<string, unknown>[];
-  return rows.find((r) => asString(r.ownerProfileId) !== ownerProfileId) ?? null;
+  return (
+    rows.find(
+      (r) => asString(r.ownerProfileId) !== ownerProfileId && r.everAuthenticated !== false,
+    ) ?? null
+  );
 };
 
 const identityLocks = new Map<string, Promise<unknown>>();

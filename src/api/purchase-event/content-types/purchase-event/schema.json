@@ -72,6 +72,10 @@
     },
     "payload": {
       "type": "json"
+    },
+    "everAuthenticated": {
+      "type": "boolean",
+      "default": false
     }
   }
 }

@@ -15,6 +15,26 @@ export type VerifyOutcome = {
   /** Store-reported auto-renew state when known (false once the user cancelled). */
   autoRenew?: boolean;
   message: string;
+  /**
+   * Review follow-up (unverified-claim ownership lock): EXPLICITLY set at
+   * each return below -- never inferred elsewhere from the mere presence
+   * of `transactionId` or any other field. True only when BOTH of these
+   * hold: (1) the receipt/token's own signature or the provider's own
+   * API call genuinely authenticated it (never true for an empty
+   * receipt/token, a bad JWS signature, or a provider-side HTTP/lookup
+   * failure that never got a real answer), AND (2) the claimed identity
+   * -- bundle id, product id -- actually matches what this specific
+   * request asked for. A real, validly-signed Apple/Google transaction
+   * sent against the WRONG bundle or product is deliberately false here:
+   * it proves the sender holds *some* genuine receipt, never that they
+   * own the specific product/transaction identity being claimed, so it
+   * must never let the SENDER'S account win a permanent ownership lock
+   * over that claimed identity. `verified: true` always implies this is
+   * true; the reverse is not implied (a genuinely identified purchase
+   * that is refunded/expired/not-yet-active is `identityAuthenticated:
+   * true` with `verified: false`).
+   */
+  identityAuthenticated: boolean;
 };
 
 /** A 5xx / 429 from a store is transient: surface it as an error so callers retry
@@ -93,6 +113,7 @@ export const verifyGoogle = async (input: {
       status: 'rejected',
       provider: 'google_play',
       message: 'Google purchase token boş.',
+      identityAuthenticated: false,
     };
   }
   const accessToken = await getGoogleAccessToken();
@@ -110,6 +131,8 @@ export const verifyGoogle = async (input: {
     failIfTransient(res, 'Google subscription verify');
     const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) {
+      // Google's own API never actually answered -- no genuine lookup
+      // happened, so this is not an authenticated identity either.
       return {
         verified: false,
         status: 'rejected',
@@ -117,6 +140,7 @@ export const verifyGoogle = async (input: {
         purchaseToken,
         payload: body,
         message: `Google subscription verify başarısız (${res.status}).`,
+        identityAuthenticated: false,
       };
     }
     const lineItems = Array.isArray(body.lineItems) ? body.lineItems : [];
@@ -127,6 +151,10 @@ export const verifyGoogle = async (input: {
       (x) => asString((x as Record<string, unknown>).productId) === input.productId,
     ) as Record<string, unknown> | undefined;
     if (!matched) {
+      // Review follow-up: Google genuinely answered for this token, but
+      // NOT for the claimed product -- same reasoning as Apple's bundle/
+      // product mismatch: a real token, the wrong product, never an
+      // authenticated claim to the product being requested.
       return {
         verified: false,
         status: 'rejected',
@@ -134,6 +162,7 @@ export const verifyGoogle = async (input: {
         purchaseToken,
         payload: body,
         message: 'Google aboneliği talep edilen ürünle eşleşmiyor.',
+        identityAuthenticated: false,
       };
     }
     const exp = parseIso(asString(matched?.expiryTime));
@@ -146,6 +175,9 @@ export const verifyGoogle = async (input: {
       status = exp && exp.getTime() > Date.now() ? 'verified' : 'canceled';
     }
     if (exp && exp.getTime() <= Date.now() && status === 'verified') status = 'expired';
+    // Past this point: Google's own API genuinely identified this token
+    // AND matched it to the exact requested product -- a real identity,
+    // whatever its current entitlement state.
     return {
       verified: status === 'verified',
       status,
@@ -157,6 +189,7 @@ export const verifyGoogle = async (input: {
       purchaseToken,
       payload: body,
       message: status === 'verified' ? 'Google subscription doğrulandı.' : `Durum: ${status}`,
+      identityAuthenticated: true,
     };
   }
 
@@ -171,6 +204,7 @@ export const verifyGoogle = async (input: {
   failIfTransient(res, 'Google product verify');
   const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok) {
+    // Google's own API never actually answered for this token/product.
     return {
       verified: false,
       status: 'rejected',
@@ -178,8 +212,14 @@ export const verifyGoogle = async (input: {
       purchaseToken,
       payload: body,
       message: `Google product verify başarısız (${res.status}).`,
+      identityAuthenticated: false,
     };
   }
+  // The request URL itself already scopes this lookup to the EXACT
+  // requested product (unlike the subscription path, there is no
+  // separate product-substitution check to make here) -- a genuine
+  // answer from Google means a real, authenticated identity for this
+  // product, regardless of its purchaseState.
   const purchaseState = Number(body.purchaseState ?? -1);
   const status: PurchaseStatus = purchaseState === 0 ? 'verified' : 'rejected';
   return {
@@ -190,6 +230,7 @@ export const verifyGoogle = async (input: {
     purchaseToken,
     payload: body,
     message: status === 'verified' ? 'Google ürün doğrulandı.' : 'Google ürün reddedildi.',
+    identityAuthenticated: true,
   };
 };
 
@@ -232,6 +273,7 @@ const verifyApple = async (input: {
       status: 'rejected',
       provider: 'app_store',
       message: 'Apple receipt boş.',
+      identityAuthenticated: false,
     };
   }
 
@@ -244,10 +286,15 @@ const verifyApple = async (input: {
       status: 'rejected',
       provider: 'app_store',
       message: `Apple işlem doğrulaması başarısız: ${String((e as Error)?.message ?? e)}`,
+      identityAuthenticated: false,
     };
   }
 
   // The transaction must belong to THIS app, not another app sharing product ids.
+  // Review follow-up: the JWS signature itself is genuinely valid here, but
+  // `identityAuthenticated: false` is deliberate -- a real transaction for a
+  // DIFFERENT app's bundle must never let the sender claim ownership of
+  // whatever transactionId THIS request happens to assert.
   if (asString(tx.bundleId) !== apple.bundleId) {
     return {
       verified: false,
@@ -255,12 +302,15 @@ const verifyApple = async (input: {
       provider: 'app_store',
       payload: tx,
       message: 'Apple işlemi bu uygulamaya ait değil.',
+      identityAuthenticated: false,
     };
   }
 
   // Product substitution guard: the JWS transaction's own claimed product
   // must match what the client says it's paying for -- never trust the
   // client's productId alone (mirrors the old code's equivalent filter).
+  // Same reasoning as the bundle check above: genuinely signed, but for a
+  // DIFFERENT product -- not authenticated as the claimed identity.
   const claimedProduct = asString(tx.productId);
   if (input.productId && claimedProduct && claimedProduct !== input.productId) {
     return {
@@ -269,6 +319,7 @@ const verifyApple = async (input: {
       provider: 'app_store',
       payload: tx,
       message: 'Apple işlemi talep edilen ürünle eşleşmiyor.',
+      identityAuthenticated: false,
     };
   }
 
@@ -277,6 +328,10 @@ const verifyApple = async (input: {
   const revoked = Number(tx.revocationDate ?? 0) > 0;
   const nowMs = Date.now();
 
+  // From here on: signature verified, bundle matches, product matches --
+  // this genuinely IS the transaction identity it claims to be, whatever
+  // its current entitlement state (refunded/expired/active) turns out to
+  // be below.
   if (input.isSubscription) {
     if (revoked) {
       return {
@@ -287,6 +342,7 @@ const verifyApple = async (input: {
         originalTransactionId,
         payload: tx,
         message: 'Apple aboneliği iade/iptal edilmiş.',
+        identityAuthenticated: true,
       };
     }
     const expiresMs = Number(tx.expiresDate ?? 0) || 0;
@@ -300,6 +356,7 @@ const verifyApple = async (input: {
       expiresAt: expiresMs > 0 ? new Date(expiresMs).toISOString() : undefined,
       payload: tx,
       message: isActive ? 'Apple abonelik doğrulandı.' : 'Apple abonelik süresi dolmuş.',
+      identityAuthenticated: true,
     };
   }
 
@@ -313,6 +370,7 @@ const verifyApple = async (input: {
     originalTransactionId,
     payload: tx,
     message: revoked ? 'Apple ürün iade edilmiş.' : 'Apple ürün doğrulandı.',
+    identityAuthenticated: true,
   };
 };
 
@@ -325,6 +383,10 @@ export const verifyWithProvider = async (input: {
   fallbackTransactionId: string;
 }): Promise<VerifyOutcome> => {
   if (isSoftVerifyActive()) {
+    // Dev/test-only unconditional trust bypass (never reachable outside
+    // development/test -- see `isSoftVerifyRefused`'s own enforcement).
+    // `verified: true` already implies `identityAuthenticated: true`
+    // everywhere else in this file; kept consistent here too.
     return {
       verified: true,
       status: 'verified',
@@ -332,6 +394,7 @@ export const verifyWithProvider = async (input: {
       transactionId: input.fallbackTransactionId,
       purchaseToken: input.purchaseToken || undefined,
       message: 'Soft verify aktif.',
+      identityAuthenticated: true,
     };
   }
   return input.provider === 'google_play'
