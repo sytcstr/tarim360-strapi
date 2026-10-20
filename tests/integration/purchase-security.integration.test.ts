@@ -415,6 +415,27 @@ test('Apple: a revoked/refunded transaction never grants an entitlement through 
   assert.equal(await premiumOf(A.ownerId), null);
 });
 
+// NOTE: `appleTransactionJws(productId, days, ...)` with a NEGATIVE
+// `days` signs a transaction whose own `expiresDate` is already in the
+// past -- a real, not-revoked, genuinely EXPIRED Apple subscription.
+test('BUG (now fixed): the backend derives isSubscription from its OWN catalog, never from the client -- a real, EXPIRED Apple subscription transaction, with the client falsely claiming isSubscription:false, is still rejected (the one-time branch\'s `verified: !revoked` would otherwise have silently granted it forever, since a one-time check never looks at expiresDate at all)', async () => {
+  const A = await register('sub-type-trust');
+  const { receipt } = appleTransactionJws('pro_premium_12ay', -1);
+  const r = await verify(A.jwt, {
+    productId: 'pro_premium_12ay',
+    platform: 'ios',
+    receipt,
+    transactionId: `t-${uid()}`,
+    isSubscription: false, // client lies -- must be ignored
+  });
+  assert.notEqual(r.body.verified, true, JSON.stringify(r.body));
+  assert.equal(
+    await premiumOf(A.ownerId),
+    null,
+    'an expired subscription must never be granted just because the client mislabeled it as a one-time purchase',
+  );
+});
+
 // ======================================================================================
 // C. Google Play RTDN webhook (Pub/Sub push, OIDC-authenticated, store re-query)
 // ======================================================================================

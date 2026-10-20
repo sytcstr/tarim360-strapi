@@ -5,7 +5,9 @@ import {
   asString,
   normalizeProvider,
   parseIso,
+  PREMIUM_PRODUCTS,
   PurchaseStatus,
+  resolveCanonicalProductId,
 } from '../lib/catalog';
 import { appleConfig, googleConfig, isSoftVerifyRefused, trustedAppleRoots } from '../lib/config';
 import { verifyAppleJws } from '../lib/apple-jws';
@@ -95,7 +97,6 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
     const categoryTitle = asString(body.categoryTitle) || 'Bilinmeyen Kategori';
     const planTitle = asString(body.planTitle) || 'Bilinmeyen Plan';
     const priceTl = Number(body.priceTl ?? 0) || 0;
-    const isSubscription = Boolean(body.isSubscription);
     const provider = normalizeProvider(asString(body.platform));
     const receipt = asString(body.receipt);
     const purchaseToken =
@@ -107,6 +108,20 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
     if (productId.startsWith('smart_ads_') && !SMART_ADS_ENABLED) {
       return ctx.badRequest('Akilli reklam satin alimlari su anda kapali.');
     }
+
+    // Review follow-up (Premium entitlement audit): this used to be
+    // `Boolean(body.isSubscription)` -- the CLIENT's own, unchecked
+    // claim -- and fed straight into `verifyWithProvider`, which uses it
+    // to pick verifyApple/verifyGoogle's subscription-vs-one-time branch
+    // (expiresDate/revocationDate checks vs a single-purchaseState
+    // check). A client that sent the wrong value for a given productId
+    // would make the provider verifier apply the WRONG kind of check to
+    // a real transaction -- never trusted here anymore. The backend's
+    // own catalog is the single source of truth for which productId is
+    // a subscription: `productId` has already been confirmed to be in
+    // `ALL_PRODUCTS` above, so resolving it to its canonical id and
+    // checking `PREMIUM_PRODUCTS` is authoritative and always available.
+    const isSubscription = Boolean(PREMIUM_PRODUCTS[resolveCanonicalProductId(productId)]);
 
     const fallbackTx = crypto
       .createHash('sha256')
