@@ -537,10 +537,18 @@ test('Google webhook: a forged pointer at an unknown token, a foreign package an
 // ======================================================================================
 // D. Apple App Store Server Notifications V2 (signed payload verified against the chain)
 // ======================================================================================
-const anote = (orig: string, o: { type?: string; subtype?: string; signedDate?: number; expires?: number; revoked?: number; env?: string; bundle?: string; product?: string; signer?: typeof EVIL } = {}) => {
+const anote = (orig: string, o: { type?: string; subtype?: string; signedDate?: number; txSignedDate?: number; expires?: number; revoked?: number; env?: string; bundle?: string; product?: string; signer?: typeof EVIL } = {}) => {
   const tx = {
     transactionId: `T${orig}-${uid()}`, originalTransactionId: orig, productId: o.product ?? 'pro_premium_12ay', bundleId: o.bundle ?? BUNDLE,
-    expiresDate: o.expires ?? Date.now() + 30 * 86_400_000, environment: o.env ?? 'Production', ...(o.revoked ? { revocationDate: o.revoked } : {}),
+    expiresDate: o.expires ?? Date.now() + 30 * 86_400_000, environment: o.env ?? 'Production',
+    // Apple's own JWSTransactionDecodedPayload carries its OWN signedDate,
+    // separate from the outer notification envelope's signedDate below.
+    // Defaults to the same value as the envelope so every pre-existing
+    // test (which never varies them independently) is unaffected; a test
+    // exercising envelope-vs-transaction staleness passes `txSignedDate`
+    // explicitly.
+    signedDate: o.txSignedDate ?? o.signedDate ?? Date.now(),
+    ...(o.revoked ? { revocationDate: o.revoked } : {}),
   };
   return post('/purchases/webhooks/apple', null, {
     signedPayload: jws(
@@ -604,6 +612,131 @@ test('Apple webhook: auto-renew off keeps access until expiry; expiration and re
   assert.equal(await premiumOf(second.A.ownerId), null, 'refund/revocation -> removed');
 });
 
+test('BUG (now fixed): a webhook for an OLD, already-superseded original transaction (e.g. a late/duplicate notification arriving after the SAME owner already re-subscribed with a genuinely NEW, separate transaction) reporting expired/refunded must NOT null out the CURRENT, still-valid Premium entitlement that the new transaction produced', async () => {
+  const { A, orig: orig1 } = await boundAppleUser('premium-unrelated-1', 30);
+  assert.ok(isActive(await premiumOf(A.ownerId)), 'first subscription active');
+
+  // The SAME owner has a genuinely NEW, separate transaction (orig2) --
+  // e.g. they re-subscribed after orig1 actually lapsed, or simply made a
+  // second, unrelated purchase. activePremium now reflects orig2.
+  const tx2 = appleTransactionJws('pro_premium_12ay', 300);
+  const r2 = await verify(A.jwt, {
+    productId: 'pro_premium_12ay',
+    platform: 'ios',
+    receipt: tx2.receipt,
+    transactionId: tx2.transactionId,
+  });
+  assert.equal(r2.body.verified, true, JSON.stringify(r2.body));
+  const afterSecond = await premiumOf(A.ownerId);
+  assert.ok(isActive(afterSecond), 'activePremium now reflects the SECOND transaction');
+  assert.ok(
+    Math.abs(new Date(afterSecond.endsAt).getTime() - (Date.now() + 300 * 86_400_000)) < 120_000,
+    'endsAt matches the NEW transaction, not the old one',
+  );
+
+  // A LATE/duplicate webhook for the FIRST, OLD, already-superseded
+  // original transaction now arrives, reporting it expired.
+  const late = await anote(orig1, { type: 'EXPIRED' });
+  assert.equal(late.status, 200);
+
+  // The CURRENT entitlement, produced by the SECOND, unrelated
+  // transaction, must still be intact -- a stale notification about a
+  // DIFFERENT transaction must never revoke it.
+  const afterLateWebhook = await premiumOf(A.ownerId);
+  assert.ok(
+    isActive(afterLateWebhook),
+    'a late webhook for an OLD, superseded transaction must never null the CURRENT valid entitlement from a different transaction',
+  );
+});
+
+test('Review follow-up (same-subscription renewal ordering): under the SAME originalTransactionId, a notification about an OLDER renewal period that is merely DELIVERED late (but was genuinely SIGNED by Apple before a later renewal) must not null a NEWER, already-renewed valid entitlement', async () => {
+  const { A, orig } = await boundAppleUser('premium-chain', 5);
+  const t0 = Date.now();
+  const renewedExpiry = t0 + 400 * 86_400_000;
+
+  // A genuine renewal (SAME originalTransactionId -- that is how Apple
+  // subscriptions always renew) extends the entitlement far into the future.
+  const renew = await anote(orig, { type: 'DID_RENEW', signedDate: t0 + 1000, expires: renewedExpiry });
+  assert.equal(renew.status, 200, JSON.stringify(renew.body));
+  const afterRenewal = await premiumOf(A.ownerId);
+  assert.ok(isActive(afterRenewal), 'renewal active');
+  assert.equal(new Date(afterRenewal.endsAt).getTime(), renewedExpiry);
+
+  // A notification about the FIRST, now-superseded period is delivered
+  // late (arrives at our server only now, after the renewal above was
+  // already processed) -- but Apple actually SIGNED it back when that
+  // period really ended, i.e. BEFORE the renewal notification's own
+  // signedDate. This is the realistic shape of "delayed delivery": Apple's
+  // signedTransactionInfo always reflects the transaction's state as of
+  // signing time, so a late notification about an older period carries an
+  // OLDER signedDate than a renewal that was both signed and processed
+  // after it -- it does not resurrect old data with a fresher timestamp.
+  const lateForOldPeriod = await anote(orig, { type: 'EXPIRED', signedDate: t0 + 200, expires: t0 - 1000 });
+  assert.equal(lateForOldPeriod.status, 200, JSON.stringify(lateForOldPeriod.body));
+  assert.equal(
+    lateForOldPeriod.body.skipped,
+    true,
+    'the existing appleLastSignedDate ordering guard must already catch this as an out-of-order notification',
+  );
+
+  const afterLateNotification = await premiumOf(A.ownerId);
+  assert.ok(
+    isActive(afterLateNotification),
+    'a late notification about an OLDER renewal period under the SAME originalTransactionId must not null the NEWER, already-renewed entitlement',
+  );
+  assert.equal(
+    new Date(afterLateNotification.endsAt).getTime(),
+    renewedExpiry,
+    'the newer renewal\'s expiry must survive untouched',
+  );
+});
+
+test('BUG (now fixed): a notification whose OUTER envelope carries a NEWER signedDate than the current renewal, but whose INNER transaction snapshot still describes the OLDER, already-superseded period, must not null the current entitlement -- notification-signing order is not assumed to equal transaction-period order', async () => {
+  const { A, orig } = await boundAppleUser('premium-chain-2', 5);
+  const t0 = Date.now();
+  const renewedExpiry = t0 + 400 * 86_400_000;
+
+  const renew = await anote(orig, { type: 'DID_RENEW', signedDate: t0 + 1000, expires: renewedExpiry });
+  assert.equal(renew.status, 200, JSON.stringify(renew.body));
+  const afterRenewal = await premiumOf(A.ownerId);
+  assert.ok(isActive(afterRenewal), 'renewal active');
+  assert.equal(new Date(afterRenewal.endsAt).getTime(), renewedExpiry);
+
+  // The OUTER envelope's own signedDate is NEWER than the renewal above
+  // (t0 + 5000 > t0 + 1000) -- the existing envelope-level ordering guard
+  // alone does NOT catch this (this is exactly the case the review asked
+  // to check: do not assume notification-signing order tracks which
+  // period the transaction content describes). But the INNER transaction
+  // snapshot it carries is for the FIRST, now-superseded period -- its own
+  // signedDate (t0 + 300) is OLDER than the one already recorded from the
+  // renewal's own transaction (t0 + 1000), e.g. because the envelope was
+  // resent/retried with a fresh outer timestamp while reusing an older,
+  // already-superseded transaction snapshot.
+  const outerNewerInnerStale = await anote(orig, {
+    type: 'EXPIRED',
+    signedDate: t0 + 5000,
+    txSignedDate: t0 + 300,
+    expires: t0 - 1000,
+  });
+  assert.equal(outerNewerInnerStale.status, 200, JSON.stringify(outerNewerInnerStale.body));
+  assert.equal(
+    outerNewerInnerStale.body.skipped,
+    true,
+    'the inner transaction-signedDate guard must catch this even though the outer envelope signedDate alone would not',
+  );
+
+  const afterNotification = await premiumOf(A.ownerId);
+  assert.ok(
+    isActive(afterNotification),
+    'a notification with a newer OUTER signedDate but a stale INNER transaction snapshot must not null the current entitlement',
+  );
+  assert.equal(
+    new Date(afterNotification.endsAt).getTime(),
+    renewedExpiry,
+    'the newer renewal\'s expiry must survive untouched',
+  );
+});
+
 test('Apple webhook: sandbox notifications are accepted (App Review / TestFlight); a foreign bundle id, unknown transaction and TEST are skipped', async () => {
   const { A, orig } = await boundAppleUser('asandbox', 10);
   const sb = await anote(orig, { env: 'Sandbox', signedDate: Date.now() + 5, expires: Date.now() + 200 * 86_400_000 });
@@ -624,6 +757,81 @@ test('Apple webhook: the real Apple root pin is enforced (the test chain is reje
   } finally {
     process.env.APPLE_TRUSTED_ROOT_SHA256 = prev;
   }
+});
+
+// ======================================================================================
+// E2. Review follow-up -- real production symptom: a genuinely expired,
+// weeks-old transaction (sandbox 1-day test subscription, processed by our
+// backend ~19 days after it actually expired -- the shape of StoreKit
+// redelivering a never-finished transaction on relaunch, not a fresh
+// interactive buy()) must be correctly rejected, must record ITS OWN real
+// purchase date rather than today, and must never block a genuinely new
+// purchase attempt. These are the EXACT field values from the real account
+// data reported for this review (transactionId/originalTransactionId/dates);
+// no real Apple/iPhone device was used -- this is the same test-chain-signed
+// JWS fixture every other test in this file uses, carrying those exact values.
+// ======================================================================================
+test('Real production symptom: a weeks-late reprocessed, genuinely expired transaction is correctly rejected, records its REAL purchase date (not today), and does not block a subsequent genuine purchase', async () => {
+  const A = await register('stale-sandbox');
+
+  // The exact values from the real account's reported data.
+  const realTransactionId = '2000001245102609';
+  const realOriginalTransactionId = '2000001174918064';
+  const realPurchaseMs = 1790864337000; // 1 Oct 2026 17:18:57 TR
+  const realExpiresMs = 1790950737000; // 2 Oct 2026 17:18:57 TR -- a 1-day sandbox test window
+  const receipt = jws({
+    transactionId: realTransactionId,
+    originalTransactionId: realOriginalTransactionId,
+    productId: 'pro_premium_12ay',
+    bundleId: BUNDLE,
+    environment: 'Sandbox',
+    purchaseDate: realPurchaseMs,
+    expiresDate: realExpiresMs,
+  });
+
+  const r = await verify(A.jwt, {
+    productId: 'pro_premium_12ay',
+    platform: 'ios',
+    receipt,
+    transactionId: realTransactionId,
+  });
+  // The real symptom: Apple's own data says this already expired weeks ago
+  // (`realExpiresMs` is always in the past by the time this test runs) --
+  // it must be rejected as expired, never silently granted.
+  assert.equal(r.body.verified, false, JSON.stringify(r.body));
+  assert.equal(r.body.status, 'expired', JSON.stringify(r.body));
+  assert.equal(await premiumOf(A.ownerId), null, 'an already-expired transaction must never grant Premium');
+
+  // The concrete code bug: the purchase-event row's OWN record of this
+  // transaction must carry the REAL, Apple-verified purchase date -- never
+  // "whenever our backend happened to process this", which for a
+  // redelivered/late-reprocessed transaction can be weeks after the truth.
+  const row = await strapiInstance.db
+    .query('api::purchase-event.purchase-event')
+    .findOne({ where: { transactionId: realTransactionId } });
+  assert.ok(row, 'a purchase-event row must exist for this transaction');
+  assert.equal(
+    new Date(row.purchasedAt).getTime(),
+    realPurchaseMs,
+    `purchasedAt must be the real Apple purchase date, not today (got ${row.purchasedAt})`,
+  );
+  assert.notEqual(
+    new Date(row.purchasedAt).getTime(),
+    new Date(row.verifiedAt).getTime(),
+    'purchasedAt (the real purchase time) and verifiedAt (when WE processed it) must be recorded as the two DIFFERENT things they are',
+  );
+
+  // The old, already-dead transaction must never block (nor get confused
+  // with) a genuinely NEW purchase for the same product/account.
+  const fresh = appleTransactionJws('pro_premium_12ay', 30);
+  const r2 = await verify(A.jwt, {
+    productId: 'pro_premium_12ay',
+    platform: 'ios',
+    receipt: fresh.receipt,
+    transactionId: fresh.transactionId,
+  });
+  assert.equal(r2.body.verified, true, JSON.stringify(r2.body));
+  assert.ok(isActive(await premiumOf(A.ownerId)), 'a genuinely new purchase must succeed normally afterwards');
 });
 
 // ======================================================================================

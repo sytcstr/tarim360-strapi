@@ -10,6 +10,18 @@ export type VerifyOutcome = {
   transactionId?: string;
   originalTransactionId?: string;
   expiresAt?: string;
+  /**
+   * Review follow-up (real production symptom: an old, already-expired
+   * transaction's history entry showed up dated TODAY instead of its real
+   * purchase date): the store's own verified purchase-start time, when the
+   * provider actually reports one (Apple's JWS `purchaseDate`, Google's
+   * `startTime`/`purchaseTimeMillis`) -- distinct from WHEN our backend
+   * happened to process this request, which can be much later (a redelivered/
+   * restored transaction, a delayed webhook, a retried verify() on an
+   * already-expired subscription). Never set for a rejection where no real
+   * transaction was ever decoded.
+   */
+  purchasedAt?: string;
   purchaseToken?: string;
   payload?: unknown;
   /** Store-reported auto-renew state when known (false once the user cancelled). */
@@ -166,6 +178,7 @@ export const verifyGoogle = async (input: {
       };
     }
     const exp = parseIso(asString(matched?.expiryTime));
+    const startedAt = parseIso(asString((matched as Record<string, unknown> | undefined)?.startTime));
     const state = asString(body.subscriptionState).toUpperCase();
     let status: PurchaseStatus = 'verified';
     if (state.includes('EXPIRED')) status = 'expired';
@@ -186,6 +199,7 @@ export const verifyGoogle = async (input: {
       originalTransactionId: asString(body.linkedPurchaseToken) || undefined,
       autoRenew: !state.includes('CANCELED') && status === 'verified',
       expiresAt: exp?.toISOString(),
+      purchasedAt: startedAt?.toISOString(),
       purchaseToken,
       payload: body,
       message: status === 'verified' ? 'Google subscription doğrulandı.' : `Durum: ${status}`,
@@ -222,11 +236,13 @@ export const verifyGoogle = async (input: {
   // product, regardless of its purchaseState.
   const purchaseState = Number(body.purchaseState ?? -1);
   const status: PurchaseStatus = purchaseState === 0 ? 'verified' : 'rejected';
+  const oneTimePurchaseMs = Number(body.purchaseTimeMillis ?? 0) || 0;
   return {
     verified: status === 'verified',
     status,
     provider: 'google_play',
     transactionId: asString(body.orderId),
+    purchasedAt: oneTimePurchaseMs > 0 ? new Date(oneTimePurchaseMs).toISOString() : undefined,
     purchaseToken,
     payload: body,
     message: status === 'verified' ? 'Google ürün doğrulandı.' : 'Google ürün reddedildi.',
@@ -327,6 +343,8 @@ const verifyApple = async (input: {
   const originalTransactionId = asString(tx.originalTransactionId);
   const revoked = Number(tx.revocationDate ?? 0) > 0;
   const nowMs = Date.now();
+  const purchaseMs = Number(tx.purchaseDate ?? 0) || 0;
+  const purchasedAt = purchaseMs > 0 ? new Date(purchaseMs).toISOString() : undefined;
 
   // From here on: signature verified, bundle matches, product matches --
   // this genuinely IS the transaction identity it claims to be, whatever
@@ -340,6 +358,7 @@ const verifyApple = async (input: {
         provider: 'app_store',
         transactionId,
         originalTransactionId,
+        purchasedAt,
         payload: tx,
         message: 'Apple aboneliği iade/iptal edilmiş.',
         identityAuthenticated: true,
@@ -354,6 +373,7 @@ const verifyApple = async (input: {
       transactionId,
       originalTransactionId,
       expiresAt: expiresMs > 0 ? new Date(expiresMs).toISOString() : undefined,
+      purchasedAt,
       payload: tx,
       message: isActive ? 'Apple abonelik doğrulandı.' : 'Apple abonelik süresi dolmuş.',
       identityAuthenticated: true,
@@ -368,6 +388,7 @@ const verifyApple = async (input: {
     provider: 'app_store',
     transactionId,
     originalTransactionId,
+    purchasedAt,
     payload: tx,
     message: revoked ? 'Apple ürün iade edilmiş.' : 'Apple ürün doğrulandı.',
     identityAuthenticated: true,

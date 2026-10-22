@@ -38,6 +38,7 @@ const eventDataForVerify = (input: {
   expiresAt?: string;
   payload?: unknown;
   everAuthenticated: boolean;
+  purchasedAt?: string;
 }) => ({
   ownerEmail: input.ownerEmail,
   ownerProfileId: input.ownerProfileId,
@@ -53,6 +54,14 @@ const eventDataForVerify = (input: {
   status: input.status,
   verifiedAt: new Date().toISOString(),
   expiresAt: input.expiresAt || null,
+  // Review follow-up (real production symptom): the store's own verified
+  // purchase time for this exact transaction -- see `purchasedAt`'s doc
+  // comment on `VerifyOutcome` (lib/providers.ts). Distinct from
+  // `verifiedAt` above (always "now", when OUR backend processed this),
+  // which a redelivered/restored/late-reprocessed transaction can set to
+  // a date far after the real purchase. Never set when the provider could
+  // not supply one (e.g. a rejected/unauthenticated outcome).
+  purchasedAt: input.purchasedAt || null,
   payload: input.payload ?? null,
   source: 'verify_api',
   everAuthenticated: input.everAuthenticated,
@@ -259,6 +268,7 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
             expiresAt: asString(verified.expiresAt) || undefined,
             payload: verified.payload,
             everAuthenticated,
+            purchasedAt: asString(verified.purchasedAt) || undefined,
           }),
         );
 
@@ -275,6 +285,16 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
             premiumEndsAt: asString(verified.expiresAt) || undefined,
             forcePremiumStatus: verified.status,
             autoRenew: verified.autoRenew,
+            // Review follow-up: the STABLE identity of a subscription
+            // across its whole lifetime -- Apple's own originalTransactionId
+            // for app_store, Google's own purchaseToken for google_play
+            // (Google's `linkedPurchaseToken`/our own `storeOriginal` here
+            // is a DIFFERENT concept -- "this NEW token replaces that OLD
+            // one" -- not the stable per-subscription identity a later
+            // notification about the SAME ongoing subscription repeats).
+            originalTransactionId:
+              (provider === 'google_play' ? storeToken : storeOriginal) || undefined,
+            purchasedAt: asString(verified.purchasedAt) || undefined,
           });
         }
         return { conflict: false as const };
@@ -368,6 +388,7 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
       status,
       source: 'google_webhook',
       expiresAt: expiresAt ?? null,
+      purchasedAt: asString(outcome.purchasedAt) || existing.purchasedAt || null,
       payload: { ...asRecord(existing.payload), googleWebhook: payload, googleStore: outcome.payload },
       verifiedAt: new Date().toISOString(),
       transactionId: tx,
@@ -389,6 +410,11 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
       premiumEndsAt: expiresAt,
       forcePremiumStatus: status,
       autoRenew: outcome.autoRenew,
+      // purchaseToken is the stable identity of this subscription across
+      // its whole lifetime for Google -- see the interactive verify()
+      // call site's own comment on this same field.
+      originalTransactionId: purchaseToken || undefined,
+      purchasedAt: asString(outcome.purchasedAt) || undefined,
     });
     ctx.body = { ok: true, status, transactionId: tx };
   },
@@ -446,11 +472,34 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
         : null) || (transactionId ? await findPurchaseEvent(strapi, { transactionId }) : null);
     if (!existing) return (ctx.body = { ok: true, skipped: true, reason: 'event bulunamadi' });
 
-    // Duplicate / out-of-order protection.
+    // Duplicate / out-of-order protection -- OUTER envelope. Catches a
+    // literal duplicate or a notification whose own delivery/signing was
+    // reordered.
     const signedDate = Number(decoded.signedDate ?? 0) || 0;
     const lastSigned = Number(asRecord(existing.payload).appleLastSignedDate ?? 0) || 0;
     if (signedDate && signedDate <= lastSigned) {
       return (ctx.body = { ok: true, skipped: true, reason: 'eski/tekrarlanan bildirim' });
+    }
+
+    // Review follow-up (same-subscription renewal ordering): the OUTER
+    // check above only bounds the ENVELOPE's own signedDate -- it does not
+    // prove the INNER transaction snapshot (`tx`, decoded separately above)
+    // actually describes the subscription's current period. Apple's own
+    // JWSTransactionDecodedPayload carries its own `signedDate` (when it
+    // generated THIS transaction's data), independent of when the outer
+    // notification envelope itself was signed/(re)delivered. Do not treat
+    // "the envelope's signedDate is newer" as proof "the transaction data
+    // inside it is newer" -- a resent/retried envelope could legitimately
+    // carry a fresh outer signedDate while reusing an older, already-
+    // superseded inner transaction snapshot (e.g. describing a renewal
+    // period a later, separately-processed renewal has already extended
+    // past). Guard on the inner signedDate too, tracked independently of
+    // the outer one; when Apple does not include it, this stays permissive
+    // (no inner signal to compare, outer check above already applied).
+    const txSignedDate = Number(tx.signedDate ?? 0) || 0;
+    const lastTxSigned = Number(asRecord(existing.payload).appleLastTransactionSignedDate ?? 0) || 0;
+    if (txSignedDate && txSignedDate <= lastTxSigned) {
+      return (ctx.body = { ok: true, skipped: true, reason: 'eski/tekrarlanan islem verisi' });
     }
 
     const nowMs = Date.now();
@@ -474,6 +523,8 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
     }
 
     const expiresAt = expiresMs > 0 ? new Date(expiresMs).toISOString() : undefined;
+    const purchaseMs = Number(tx.purchaseDate ?? 0) || 0;
+    const purchasedAt = purchaseMs > 0 ? new Date(purchaseMs).toISOString() : undefined;
     const claimedProduct = asString(tx.productId);
     const productId = ALL_PRODUCTS.has(claimedProduct) ? claimedProduct : asString(existing.productId);
     const tid = asString(existing.transactionId);
@@ -483,9 +534,11 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
       status,
       source: 'apple_webhook',
       expiresAt: expiresAt ?? null,
+      purchasedAt: purchasedAt ?? (existing as Record<string, unknown>).purchasedAt ?? null,
       payload: {
         ...asRecord(existing.payload),
         appleLastSignedDate: signedDate || lastSigned,
+        appleLastTransactionSignedDate: txSignedDate || lastTxSigned,
         appleWebhook: { notificationType, subtype, environment: asString(data.environment) },
       },
       verifiedAt: new Date().toISOString(),
@@ -506,6 +559,14 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
       productId,
       premiumEndsAt: expiresAt,
       forcePremiumStatus: status,
+      // originalTransactionId is the stable identity of this subscription
+      // across its whole lifetime for Apple -- see the interactive
+      // verify() call site's own comment on this same field. This is
+      // exactly what stops a late/duplicate notification about an OLD,
+      // already-superseded originalTransactionId from nulling a CURRENT
+      // entitlement that a genuinely different, newer transaction produced.
+      originalTransactionId: originalTransactionId || undefined,
+      purchasedAt,
     });
     ctx.body = { ok: true, status, transactionId: tid };
   },

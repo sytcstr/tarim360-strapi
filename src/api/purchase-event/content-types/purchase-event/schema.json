@@ -67,6 +67,9 @@
     "expiresAt": {
       "type": "datetime"
     },
+    "purchasedAt": {
+      "type": "datetime"
+    },
     "source": {
       "type": "string"
     },

@@ -62,11 +62,26 @@ const toHistoryRecord = (input: {
   paymentProvider: Provider;
   transactionId: string;
   productId: string;
+  purchasedAt?: string;
 }) => ({
   categoryTitle: input.categoryTitle,
   planTitle: input.planTitle,
   priceTl: input.priceTl,
+  // `createdAt` is, and always was, WHEN OUR BACKEND PROCESSED this write --
+  // never changed here, so an already-existing history record's own
+  // meaning (and every existing reader of it) stays exactly as it was.
   createdAt: nowIso(),
+  // Review follow-up (real production symptom: an old, already-expired
+  // transaction got RE-PROCESSED weeks later -- e.g. StoreKit redelivering
+  // a stale unfinished transaction on relaunch -- and its history entry's
+  // only date, `createdAt` above, then showed TODAY, as if it had just
+  // been bought). `purchasedAt` is the store's own verified purchase time
+  // for this exact transactionId, stable no matter how many times/how
+  // late this record gets re-processed. Additive and nullable -- a record
+  // written before this field existed, or for a provider/path that could
+  // not supply it, simply has `purchasedAt: null` and falls back to
+  // `createdAt` wherever it is displayed; nothing existing changes.
+  purchasedAt: input.purchasedAt || null,
   paymentProvider: input.paymentProvider,
   transactionId: input.transactionId,
   productId: input.productId,
@@ -95,10 +110,19 @@ const premiumPayloadForProduct = (input: {
   priceTl: number;
   premiumEndsAt?: string;
   autoRenew?: boolean;
+  transactionId?: string;
+  originalTransactionId?: string;
+  purchasedAt?: string;
 }) => {
   const spec = PREMIUM_PRODUCTS[resolveCanonicalProductId(input.productId)];
   if (!spec) return null;
-  const startsAt = new Date();
+  // Prefer the store's own verified purchase time (see `purchasedAt`'s doc
+  // comment on `toHistoryRecord` above) for display -- falls back to "now"
+  // only when the provider/path genuinely has no such value. This field is
+  // ONLY ever used as a label; `endsAt` below never depends on it (it
+  // comes from `premiumEndsAt`/the store's own expiry whenever one is
+  // given, which is every real verified purchase).
+  const startsAt = parseIso(input.purchasedAt) || new Date();
   const parsedEnds = parseIso(input.premiumEndsAt);
   const endsAt =
     parsedEnds ||
@@ -120,6 +144,13 @@ const premiumPayloadForProduct = (input: {
     hasAiAssistant: spec.hasAiAssistant,
     hasLiveSupport: spec.hasLiveSupport,
     paymentProvider: input.provider,
+    // Review follow-up (Premium ownership audit): records WHICH
+    // transaction this entitlement actually came from -- see
+    // upsertProfilePurchase's own doc comment on `matchesCurrentEntitlement`
+    // for why this is needed. Additive only; existing readers that only
+    // look at endsAt/planTitle/etc. are unaffected.
+    transactionId: input.transactionId || null,
+    originalTransactionId: input.originalTransactionId || null,
   };
 };
 
@@ -136,6 +167,8 @@ export const upsertProfilePurchase = async (
     premiumEndsAt?: string;
     forcePremiumStatus?: PurchaseStatus;
     autoRenew?: boolean;
+    originalTransactionId?: string;
+    purchasedAt?: string;
   },
 ) => {
   const ownerId = asString(input.ownerId);
@@ -153,6 +186,7 @@ export const upsertProfilePurchase = async (
     paymentProvider: input.provider,
     transactionId: input.transactionId,
     productId: input.productId,
+    purchasedAt: input.purchasedAt,
   });
   const history = pushUniqueRecord(
     existing?.purchaseHistory ?? existing?.purchaseRecords,
@@ -160,6 +194,56 @@ export const upsertProfilePurchase = async (
   );
 
   let nextPremium = existing?.activePremium ?? existing?.activePremiumSubscription;
+
+  // Review follow-up (Premium ownership audit): a DESTRUCTIVE update
+  // below (nulling activePremium, or turning its autoRenew off) must
+  // only ever apply when THIS request's own transaction is the one
+  // CURRENTLY represented in activePremium -- otherwise a stale/
+  // duplicate/late notification about a DIFFERENT, already-superseded
+  // transaction (e.g. Apple re-sending an old notification for an
+  // original transaction this owner has since replaced by genuinely
+  // re-subscribing with a NEW one) could wipe out a CURRENTLY VALID
+  // entitlement that a separate transaction produced. `activePremium`
+  // did not previously record which transaction backs it at all --
+  // premiumPayloadForProduct now stores it, so a real match can be
+  // required going forward. A row with NO stored identity (either
+  // because there is no current entitlement to protect, or because it
+  // predates this field) is never treated as a confirmed match --
+  // "unknown" never authorizes a destructive action, the same posture
+  // `everAuthenticated` already uses elsewhere in this file. This is a
+  // one-directional safety net only: establishing a NEW entitlement
+  // (the `verified`/no-forcePremiumStatus branch below) is unaffected --
+  // a genuinely verified purchase always legitimately becomes the
+  // current entitlement, whichever transaction it came from.
+  const currentPremiumRecord =
+    nextPremium && typeof nextPremium === 'object'
+      ? (nextPremium as Record<string, unknown>)
+      : null;
+  const currentPremiumTx =
+    asString(currentPremiumRecord?.originalTransactionId) ||
+    asString(currentPremiumRecord?.transactionId);
+  const thisTx = asString(input.originalTransactionId) || asString(input.transactionId);
+  const matchesCurrentEntitlement = currentPremiumTx !== '' && currentPremiumTx === thisTx;
+
+  // Review follow-up (same-subscription renewal ordering -- considered and
+  // REJECTED): tried gating the destructive branches below on "this
+  // event's own claimed expiry is not earlier than what's already on
+  // file", to stop a late notification about an OLDER renewal period from
+  // nulling a NEWER one under the SAME originalTransactionId. That broke
+  // two genuine, previously-passing cases (Apple + Google webhook tests):
+  // a REAL expiry/refund/revocation legitimately reports an end time
+  // EARLIER than a prior, more optimistic stored estimate -- that is what
+  // "it ended" means, not staleness. Ordering for the webhook path is
+  // already handled correctly, at the per-transaction-row level, by the
+  // existing `signedDate <= lastSigned` check against
+  // `payload.appleLastSignedDate` in appleWebhook (and the Google
+  // webhook's own equivalent) -- proven by the existing
+  // "renewal uses the VERIFIED expiry; duplicates and out-of-order
+  // (older signedDate) are ignored" test below, which is exactly the
+  // same-originalTransactionId / old-notification-after-newer-renewal
+  // scenario. `matchesCurrentEntitlement` alone is correct here.
+  const canApplyDestructiveUpdate = matchesCurrentEntitlement;
+
   const premiumPayload = premiumPayloadForProduct({
     productId: input.productId,
     provider: input.provider,
@@ -167,12 +251,16 @@ export const upsertProfilePurchase = async (
     priceTl: input.priceTl,
     premiumEndsAt: input.premiumEndsAt,
     autoRenew: input.autoRenew,
+    transactionId: input.transactionId,
+    originalTransactionId: input.originalTransactionId,
+    purchasedAt: input.purchasedAt,
   });
   if (premiumPayload && (!input.forcePremiumStatus || input.forcePremiumStatus === 'verified')) {
     nextPremium = premiumPayload;
   }
   if (
     premiumPayload &&
+    canApplyDestructiveUpdate &&
     (input.forcePremiumStatus === 'canceled' ||
       input.forcePremiumStatus === 'pending') &&
     nextPremium &&
@@ -185,6 +273,7 @@ export const upsertProfilePurchase = async (
   }
   if (
     premiumPayload &&
+    canApplyDestructiveUpdate &&
     (input.forcePremiumStatus === 'expired' ||
       input.forcePremiumStatus === 'refunded' ||
       input.forcePremiumStatus === 'rejected')
