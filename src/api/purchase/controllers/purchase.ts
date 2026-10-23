@@ -79,6 +79,83 @@ const isExpired = (iso: unknown): boolean => {
 const asRecord = (v: unknown): Record<string, unknown> =>
   v && typeof v === 'object' ? (v as Record<string, unknown>) : {};
 
+/**
+ * Review follow-up (stale-JWS resurrection guard): a client resubmitting an
+ * OLD, already-frozen Apple transaction JWS (its own locally cached copy,
+ * from before a LATER webhook recorded a refund/expiry/cancellation) always
+ * decodes as whatever it said at signing time -- it cannot reflect anything
+ * that happened after. `verifyApple`'s own re-decode proves the JWS is
+ * validly signed, never that it is CURRENT. The one real signal this
+ * backend has for "is there already-known, more current truth than this
+ * JWS" is `appleLastTransactionSignedDate` -- the inner transaction
+ * signedDate `appleWebhook` already tracks every time a real Apple
+ * notification updates this row. If THIS request's own JWS signedDate is
+ * OLDER than that, it is provably stale and must never be allowed to
+ * establish/overwrite anything -- a genuine newer renewal always carries a
+ * later signedDate, so this never blocks real renewals, only resubmissions
+ * of old data. Apple only (`provider === 'app_store'`) -- Google's
+ * verification is already a live Play Developer API call, so it has no
+ * equivalent staleness problem.
+ *
+ * Review follow-up (corrects an off-by-equality bug): strictly OLDER
+ * (`<`), never `<=`. An EQUAL signedDate means this JWS describes the
+ * EXACT SAME already-known transaction state -- the ordinary case of a
+ * client resubmitting its own still-valid, never-refunded receipt (e.g.
+ * a retry, or the same transaction a webhook already touched once with
+ * identical data) -- and must be treated as fine, not stale. Only a
+ * STRICTLY OLDER signedDate proves this JWS predates something more
+ * recent that is already known.
+ */
+const isStaleAppleResubmission = (
+  providerName: string,
+  existingPayload: unknown,
+  thisSignedDate: number | undefined,
+): boolean => {
+  if (providerName !== 'app_store' || !thisSignedDate) return false;
+  const lastKnown = Number(asRecord(existingPayload).appleLastTransactionSignedDate ?? 0) || 0;
+  return lastKnown > 0 && thisSignedDate < lastKnown;
+};
+
+/**
+ * Review follow-up (closes a gap `isStaleAppleResubmission` alone does not
+ * cover): that check only catches a JWS whose OWN signedDate is OLDER than
+ * what is already known -- it says nothing about a JWS with a NEWER
+ * signedDate that simply does not itself report the already-known
+ * destructive outcome (no revocationDate, a future expiresDate -- it looks
+ * fine entirely on its own terms). Confirmed to actually happen with the
+ * current code: a webhook-recorded refund for a transactionId could be
+ * reopened by resubmitting a later-signed, "clean-looking" JWS for that
+ * SAME transactionId.
+ *
+ * The fix does not depend on signedDate at all: once THIS EXACT
+ * transactionId already has a server-recorded (webhook-driven) terminal
+ * outcome -- refunded or expired -- that is permanent from the
+ * interactive verify() path's point of view. A client's own freshly
+ * re-decoded JWS can never flip it back to "verified", no matter its
+ * signedDate; only a webhook (Apple's own authoritative push) can ever
+ * change it. A genuinely NEW renewal is never blocked by this -- it
+ * always carries its OWN, different transactionId, which has no prior
+ * terminal record of its own at all.
+ *
+ * Deliberately NARROW -- `rejected` and `canceled` are excluded:
+ *  - `rejected` is routinely produced by an UNVERIFIED claim (empty
+ *    receipt, bad signature, bundle/product mismatch -- `everAuthenticated:
+ *    false`), which the "unverified claim must never lock out a later
+ *    genuine owner" fix (elsewhere in this file) depends on being
+ *    overridable by that owner's real data. Including it here broke
+ *    exactly that -- caught by this file's own existing tests for it,
+ *    while verifying this fix.
+ *  - `canceled` only means auto-renew was turned off -- the subscription
+ *    stays genuinely active until its real expiry, and the SAME owner
+ *    re-enabling auto-renew for the SAME transactionId is a legitimate
+ *    state change, not a resurrection.
+ */
+const TERMINAL_STATUSES = new Set(['refunded', 'expired']);
+const isPermanentlyTerminalForSameTransaction = (
+  providerName: string,
+  existingStatus: unknown,
+): boolean => providerName === 'app_store' && TERMINAL_STATUSES.has(asString(existingStatus).toLowerCase());
+
 export default ({ strapi }: { strapi: Core.Strapi }) => ({
   async verify(ctx: any) {
     // Flutter's StrapiService already parses `error.details.reasonCode`/
@@ -178,6 +255,302 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
         asString(existing.status).toLowerCase() === 'verified' &&
         !isExpired(existing.expiresAt)
       ) {
+        const profileRow = await strapi.db
+          .query('api::profile-setting.profile-setting')
+          .findOne({ where: { profileId: identity.ownerId } } as any);
+        const hasAnyEntitlement = Boolean(
+          (profileRow as Record<string, unknown> | null)?.activePremium ||
+            (profileRow as Record<string, unknown> | null)?.activePremiumSubscription,
+        );
+
+        // Review follow-up (FOURTH PASS -- closes a gap found while
+        // verifying the THIRD pass's own fix): the fast path used to
+        // return idempotent success whenever ANY entitlement already
+        // existed, WITHOUT EVER inspecting this request's own receipt --
+        // so a client holding a freshly-signed Apple JWS that already
+        // reveals a genuine revocation (e.g. StoreKit2 has refreshed the
+        // transaction locally before our webhook arrived) was waved
+        // through unexamined. For Google this fast path is kept exactly
+        // as it was -- `verifyGoogle` is a LIVE Play Developer API call,
+        // so skipping it here is a deliberate cost/latency/quota
+        // decision, not a correctness gap; Google's state can never go
+        // stale the way a locally-decoded Apple JWS can.
+        if (hasAnyEntitlement && provider !== 'app_store') {
+          ctx.body = {
+            verified: true,
+            success: true,
+            idempotent: true,
+            provider,
+            productId,
+            transactionId,
+            message: 'Islem daha once dogrulanmis.',
+          };
+          return;
+        }
+
+        // Review follow-up (THIRD PASS -- corrects the second pass's own
+        // overclaim): `verifyWithProvider` re-decoding the SAME JWS the
+        // client already submitted is NOT a live query of Apple's current
+        // refund status -- confirmed by reading `verifyApple` (providers.ts):
+        // it is pure local certificate-chain verification of whatever
+        // receipt bytes are IN THIS REQUEST, no network call, no ability to
+        // learn anything Apple hasn't already told us. Apple's real
+        // "current state" signal for a transaction we already hold is the
+        // webhook (`appleWebhook`) updating THIS SAME purchase-event row's
+        // own `status` whenever Apple's server pushes a
+        // refund/revoke/expire notification -- which is exactly what the
+        // `else if` above already gates on (`status === 'verified' &&
+        // !isExpired`). So the real risk here is not "Apple's live state is
+        // unknown" (there is no such live-query API in this codebase, for
+        // either provider's Apple path, and this call is never presented as
+        // one) -- it is that a webhook could update that SAME status WHILE
+        // this repair's own async work is in flight, and the write must
+        // never use the stale value captured earlier. Calling
+        // `verifyWithProvider` here is cheap for Apple (local decode, no
+        // network) and is the only way to catch a FRESHER JWS the client
+        // already holds; the actual freshness guarantee against a
+        // concurrent webhook is the re-fetch of the purchase-event row
+        // INSIDE the lock, right before writing, further below.
+        let reverified;
+        try {
+          reverified = await verifyWithProvider({
+            provider,
+            productId,
+            receipt,
+            purchaseToken,
+            isSubscription,
+            fallbackTransactionId: transactionId,
+          });
+        } catch (e) {
+          strapi.log.error(`Idempotent-repair re-verify exception: ${String(e)}`);
+          ctx.status = 503;
+          ctx.body = { ok: false, error: 'Dogrulama su anda yapilamiyor, lutfen daha sonra tekrar deneyin.' };
+          return;
+        }
+
+        if (!reverified.verified) {
+          // Review follow-up: a resubmission whose OWN signedDate is
+          // OLDER than what is already known (`isStaleAppleResubmission`)
+          // must never be allowed to act on this "invalid" reading --
+          // it is the resubmission that is stale, not the stored
+          // entitlement; answered as an ordinary idempotent success,
+          // exactly as if this old JWS had never been inspected at all.
+          if (isStaleAppleResubmission(provider, existing.payload, reverified.signedDate)) {
+            ctx.body = {
+              verified: true,
+              success: true,
+              idempotent: true,
+              provider,
+              productId,
+              transactionId,
+              message: 'Islem daha once dogrulanmis.',
+            };
+            return;
+          }
+          if (hasAnyEntitlement) {
+            // A genuinely fresher JWS reveals this transaction is no
+            // longer valid -- apply the SAME destructive handling a
+            // normal (non-idempotent) verify() would, inside the SAME
+            // identity lock, re-checking the row fresh right before
+            // writing (a concurrent webhook could have already handled
+            // this, or already established a newer, different
+            // entitlement that must never be touched here).
+            await withPurchaseIdentityLock(
+              [`tx:${asString(existing.transactionId) || transactionId}`],
+              async () => {
+                const freshEvent = await findPurchaseEvent(strapi, {
+                  transactionId: asString(existing.transactionId) || transactionId,
+                });
+                if (
+                  freshEvent &&
+                  asString(freshEvent.status).toLowerCase() === 'verified' &&
+                  !isExpired(freshEvent.expiresAt) &&
+                  !isStaleAppleResubmission(provider, freshEvent.payload, reverified.signedDate)
+                ) {
+                  await upsertPurchaseEvent(
+                    strapi,
+                    eventDataForVerify({
+                      ownerEmail: identity.email,
+                      ownerProfileId: identity.ownerId,
+                      provider,
+                      productId,
+                      categoryTitle: asString(freshEvent.categoryTitle) || categoryTitle,
+                      planTitle: asString(freshEvent.planTitle) || planTitle,
+                      priceTl: Number(freshEvent.priceTl ?? priceTl) || priceTl,
+                      isSubscription,
+                      transactionId: asString(freshEvent.transactionId) || transactionId,
+                      originalTransactionId: asString(freshEvent.originalTransactionId) || undefined,
+                      purchaseToken: asString(freshEvent.purchaseToken) || undefined,
+                      status: reverified.status,
+                      expiresAt: asString(reverified.expiresAt) || undefined,
+                      payload: reverified.payload,
+                      everAuthenticated: true,
+                      purchasedAt: asString(reverified.purchasedAt) || undefined,
+                    }),
+                  );
+                  await upsertProfilePurchase(strapi, {
+                    ownerId: identity.ownerId,
+                    categoryTitle: asString(freshEvent.categoryTitle) || categoryTitle,
+                    planTitle: asString(freshEvent.planTitle) || planTitle,
+                    priceTl: Number(freshEvent.priceTl ?? priceTl) || priceTl,
+                    provider,
+                    transactionId: asString(freshEvent.transactionId) || transactionId,
+                    productId,
+                    premiumEndsAt: asString(reverified.expiresAt) || undefined,
+                    forcePremiumStatus: reverified.status,
+                    originalTransactionId: asString(freshEvent.originalTransactionId) || undefined,
+                    purchasedAt: asString(reverified.purchasedAt) || undefined,
+                  });
+                }
+              },
+            );
+          }
+          ctx.body = {
+            verified: false,
+            success: false,
+            provider,
+            productId,
+            transactionId,
+            status: reverified.status,
+            message: reverified.message,
+          };
+          return;
+        }
+
+        if (hasAnyEntitlement) {
+          // Re-verified fresh and still genuinely valid, and something is
+          // already granted -- a harmless duplicate/retry, nothing to do.
+          ctx.body = {
+            verified: true,
+            success: true,
+            idempotent: true,
+            provider,
+            productId,
+            transactionId,
+            message: 'Islem daha once dogrulanmis.',
+          };
+          return;
+        }
+
+        // Still genuinely valid. `activePremium` being missing does NOT
+        // prove no rocket credits were consumed under this exact
+        // subscription period -- the same bug that nulled it could have
+        // struck AFTER some premium-credit rocket activations already ran
+        // (the real listing.ts activateRocket flow records each one with
+        // sourceType:'premium_credit', scoped to `ownerProfileId`).
+        // Review follow-up (THIRD PASS): `verifiedAt` is rewritten on
+        // EVERY event for this row, including ones that never represent a
+        // new period (e.g. DID_CHANGE_RENEWAL_STATUS, DID_FAIL_TO_RENEW) --
+        // using it as the period-start cutoff could silently push the
+        // cutoff LATER than the real period start, excluding genuine
+        // in-period consumption from the count and OVER-crediting rocket
+        // credits that were actually already used. `purchasedAt` is the
+        // correct anchor instead: Apple's own `purchaseDate` on a renewal
+        // transaction reflects THAT renewal's own charge time (confirmed
+        // against Apple's documented semantics), so it only moves forward
+        // on a GENUINE new period, never on an unrelated notification --
+        // and it is scoped to THIS owner (`ownerProfileId: identity.ownerId`)
+        // so a different account's consumption is never counted, and to
+        // THIS transaction's own period (never an older, already-concluded
+        // one) since anything from before this exact period's purchasedAt
+        // is excluded by construction. When no reliable purchasedAt exists
+        // (a legacy row from before that field existed, or the query
+        // itself fails), the safe default is 0, NEVER the full package.
+        const spec = PREMIUM_PRODUCTS[resolveCanonicalProductId(productId)];
+        const rocketTotal = spec?.rocketIncludedTotal ?? 0;
+        let rocketRemainingOverride = 0;
+        try {
+          const sinceIso = asString((existing as Record<string, unknown>).purchasedAt);
+          const sinceDate = sinceIso ? new Date(sinceIso) : null;
+          if (sinceDate && !Number.isNaN(sinceDate.getTime())) {
+            const consumed = await strapi.db.query('api::rocket-activation.rocket-activation').count({
+              where: {
+                ownerProfileId: identity.ownerId,
+                sourceType: 'premium_credit',
+                createdAt: { $gte: sinceDate.toISOString() },
+              },
+            } as any);
+            rocketRemainingOverride = Math.max(0, rocketTotal - Number(consumed || 0));
+          }
+        } catch (e) {
+          strapi.log.error(`Idempotent-repair rocket reconciliation failed: ${String(e)}`);
+          rocketRemainingOverride = 0;
+        }
+
+        const repairOutcome = await withPurchaseIdentityLock(
+          [`tx:${asString(existing.transactionId) || transactionId}`],
+          async () => {
+            // Re-check inside the lock -- a concurrent repair for this
+            // exact same missing entitlement may have already finished.
+            const freshProfile = await strapi.db
+              .query('api::profile-setting.profile-setting')
+              .findOne({ where: { profileId: identity.ownerId } } as any);
+            const alreadyRepaired = Boolean(
+              (freshProfile as Record<string, unknown> | null)?.activePremium ||
+                (freshProfile as Record<string, unknown> | null)?.activePremiumSubscription,
+            );
+            if (alreadyRepaired) return { ok: true as const };
+
+            // The REAL freshness guarantee for Apple (see this block's own
+            // doc comment above): re-fetch the purchase-event row right
+            // before writing -- a webhook could have updated its status
+            // (a genuine refund/expiry notification) while the work above
+            // was in flight. Never write using the value captured earlier.
+            const freshEvent = await strapi.db
+              .query('api::purchase-event.purchase-event')
+              .findOne({ where: { transactionId: asString(existing.transactionId) || transactionId } } as any);
+            // Review follow-up (stale-JWS resurrection guard): on top of
+            // the status re-check above, THIS request's own JWS
+            // (`reverified.signedDate`) must not be older than whatever
+            // transaction signedDate a webhook has already recorded --
+            // same reasoning and helper as the normal verify() flow
+            // above (`isStaleAppleResubmission`'s own doc comment).
+            const stillValid =
+              Boolean(freshEvent) &&
+              asString((freshEvent as Record<string, unknown>).status).toLowerCase() === 'verified' &&
+              !isExpired((freshEvent as Record<string, unknown>).expiresAt) &&
+              !isStaleAppleResubmission(
+                provider,
+                (freshEvent as Record<string, unknown> | null)?.payload,
+                reverified.signedDate,
+              );
+            if (!stillValid) {
+              return {
+                ok: false as const,
+                status: asString((freshEvent as Record<string, unknown> | null)?.status) || 'expired',
+              };
+            }
+
+            await upsertProfilePurchase(strapi, {
+              ownerId: identity.ownerId,
+              categoryTitle: asString(existing.categoryTitle),
+              planTitle: asString(existing.planTitle),
+              priceTl: Number(existing.priceTl ?? 0) || 0,
+              provider,
+              transactionId: asString(existing.transactionId) || transactionId,
+              productId: asString(existing.productId) || productId,
+              premiumEndsAt: asString(reverified.expiresAt) || asString(existing.expiresAt) || undefined,
+              originalTransactionId: asString(existing.originalTransactionId) || undefined,
+              purchasedAt: asString((existing as Record<string, unknown>).purchasedAt) || undefined,
+              rocketRemainingOverride,
+            });
+            return { ok: true as const };
+          },
+        );
+
+        if (!repairOutcome.ok) {
+          ctx.body = {
+            verified: false,
+            success: false,
+            provider,
+            productId,
+            transactionId,
+            status: repairOutcome.status,
+            message: 'Islem artik gecerli degil.',
+          };
+          return;
+        }
+
         ctx.body = {
           verified: true,
           success: true,
@@ -250,6 +623,41 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
         });
         if (conflict) return { conflict: true as const };
 
+        // Review follow-up (stale-JWS resurrection guard): re-read the
+        // purchase-event row INSIDE this lock -- `appleWebhook`/
+        // `googleWebhook` now acquire this exact same lock (same
+        // `tx:`/`orig:`/`tok:` keys) before writing, so nothing can land
+        // between this read and the writes below. If a webhook already
+        // recorded a NEWER transaction signedDate than what THIS
+        // request's own JWS carries, this is a stale resubmission of
+        // already-superseded data and must never overwrite the already-
+        // known, more current truth (see `isStaleAppleResubmission`'s own
+        // doc comment).
+        const freshExisting = await findPurchaseEvent(strapi, { transactionId: finalTx });
+        if (
+          freshExisting &&
+          verified.verified &&
+          isPermanentlyTerminalForSameTransaction(provider, freshExisting.status)
+        ) {
+          // This EXACT transactionId already has a permanent, webhook-
+          // recorded terminal outcome -- this request's own "verified"
+          // claim for it must never reopen it, regardless of signedDate
+          // (see `isPermanentlyTerminalForSameTransaction`'s own doc
+          // comment -- the real bug this closes).
+          return {
+            conflict: false as const,
+            stale: true as const,
+            currentStatus: asString(freshExisting.status) || 'expired',
+          };
+        }
+        if (freshExisting && isStaleAppleResubmission(provider, freshExisting.payload, verified.signedDate)) {
+          return {
+            conflict: false as const,
+            stale: true as const,
+            currentStatus: asString(freshExisting.status) || 'expired',
+          };
+        }
+
         await upsertPurchaseEvent(
           strapi,
           eventDataForVerify({
@@ -297,7 +705,7 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
             purchasedAt: asString(verified.purchasedAt) || undefined,
           });
         }
-        return { conflict: false as const };
+        return { conflict: false as const, stale: false as const };
       },
     );
     if (outcome.conflict) {
@@ -305,6 +713,18 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
         reasonCode: 'identity_conflict',
         correlationId,
       });
+    }
+    if (outcome.stale) {
+      ctx.body = {
+        verified: false,
+        success: false,
+        provider,
+        productId,
+        transactionId: finalTx,
+        status: outcome.currentStatus,
+        message: 'Islem artik gecerli degil.',
+      };
+      return;
     }
 
     ctx.body = {
@@ -381,42 +801,56 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
     }
 
     const status: PurchaseStatus = Object.keys(voided).length ? 'refunded' : outcome.status;
-    const tx = asString(existing.transactionId);
     const expiresAt = asString(outcome.expiresAt) || undefined;
-    await upsertPurchaseEvent(strapi, {
-      ...existing,
-      status,
-      source: 'google_webhook',
-      expiresAt: expiresAt ?? null,
-      purchasedAt: asString(outcome.purchasedAt) || existing.purchasedAt || null,
-      payload: { ...asRecord(existing.payload), googleWebhook: payload, googleStore: outcome.payload },
-      verifiedAt: new Date().toISOString(),
-      transactionId: tx,
-      // Review follow-up: a webhook is Google's own authenticated
-      // server-to-server notification (OIDC-verified before reaching
-      // here), never an unauthenticated client claim -- merges with
-      // (never regresses) whatever `existing.everAuthenticated` already
-      // was via `upsertPurchaseEvent`'s own merge logic.
-      everAuthenticated: true,
-    });
-    await upsertProfilePurchase(strapi, {
-      ownerId: asString(existing.ownerProfileId),
-      categoryTitle: asString(existing.categoryTitle),
-      planTitle: asString(existing.planTitle),
-      priceTl: Number(existing.priceTl ?? 0) || 0,
-      provider: 'google_play',
-      transactionId: tx,
-      productId: asString(existing.productId),
-      premiumEndsAt: expiresAt,
-      forcePremiumStatus: status,
-      autoRenew: outcome.autoRenew,
-      // purchaseToken is the stable identity of this subscription across
-      // its whole lifetime for Google -- see the interactive verify()
-      // call site's own comment on this same field.
-      originalTransactionId: purchaseToken || undefined,
-      purchasedAt: asString(outcome.purchasedAt) || undefined,
-    });
-    ctx.body = { ok: true, status, transactionId: tx };
+
+    // Review follow-up (webhook/verify-repair concurrency): same lock,
+    // same key scheme (`tx:`/`tok:`) the interactive verify() path uses
+    // for Google -- serializes this write against a concurrently in-
+    // flight verify()/idempotent-repair for the SAME purchase token, and
+    // re-reads `existing` fresh inside it so neither can act on a copy
+    // the other has already superseded.
+    await withPurchaseIdentityLock(
+      [`tx:${asString(existing.transactionId)}`, `tok:${purchaseToken}`],
+      async () => {
+        const freshExisting = await findPurchaseEvent(strapi, { purchaseToken });
+        if (!freshExisting) return;
+        const tx = asString(freshExisting.transactionId);
+        await upsertPurchaseEvent(strapi, {
+          ...freshExisting,
+          status,
+          source: 'google_webhook',
+          expiresAt: expiresAt ?? null,
+          purchasedAt: asString(outcome.purchasedAt) || freshExisting.purchasedAt || null,
+          payload: { ...asRecord(freshExisting.payload), googleWebhook: payload, googleStore: outcome.payload },
+          verifiedAt: new Date().toISOString(),
+          transactionId: tx,
+          // Review follow-up: a webhook is Google's own authenticated
+          // server-to-server notification (OIDC-verified before reaching
+          // here), never an unauthenticated client claim -- merges with
+          // (never regresses) whatever `existing.everAuthenticated` already
+          // was via `upsertPurchaseEvent`'s own merge logic.
+          everAuthenticated: true,
+        });
+        await upsertProfilePurchase(strapi, {
+          ownerId: asString(freshExisting.ownerProfileId),
+          categoryTitle: asString(freshExisting.categoryTitle),
+          planTitle: asString(freshExisting.planTitle),
+          priceTl: Number(freshExisting.priceTl ?? 0) || 0,
+          provider: 'google_play',
+          transactionId: tx,
+          productId: asString(freshExisting.productId),
+          premiumEndsAt: expiresAt,
+          forcePremiumStatus: status,
+          autoRenew: outcome.autoRenew,
+          // purchaseToken is the stable identity of this subscription across
+          // its whole lifetime for Google -- see the interactive verify()
+          // call site's own comment on this same field.
+          originalTransactionId: purchaseToken || undefined,
+          purchasedAt: asString(outcome.purchasedAt) || undefined,
+        });
+      },
+    );
+    ctx.body = { ok: true, status, transactionId: asString(existing.transactionId) };
   },
 
   /**
@@ -472,36 +906,6 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
         : null) || (transactionId ? await findPurchaseEvent(strapi, { transactionId }) : null);
     if (!existing) return (ctx.body = { ok: true, skipped: true, reason: 'event bulunamadi' });
 
-    // Duplicate / out-of-order protection -- OUTER envelope. Catches a
-    // literal duplicate or a notification whose own delivery/signing was
-    // reordered.
-    const signedDate = Number(decoded.signedDate ?? 0) || 0;
-    const lastSigned = Number(asRecord(existing.payload).appleLastSignedDate ?? 0) || 0;
-    if (signedDate && signedDate <= lastSigned) {
-      return (ctx.body = { ok: true, skipped: true, reason: 'eski/tekrarlanan bildirim' });
-    }
-
-    // Review follow-up (same-subscription renewal ordering): the OUTER
-    // check above only bounds the ENVELOPE's own signedDate -- it does not
-    // prove the INNER transaction snapshot (`tx`, decoded separately above)
-    // actually describes the subscription's current period. Apple's own
-    // JWSTransactionDecodedPayload carries its own `signedDate` (when it
-    // generated THIS transaction's data), independent of when the outer
-    // notification envelope itself was signed/(re)delivered. Do not treat
-    // "the envelope's signedDate is newer" as proof "the transaction data
-    // inside it is newer" -- a resent/retried envelope could legitimately
-    // carry a fresh outer signedDate while reusing an older, already-
-    // superseded inner transaction snapshot (e.g. describing a renewal
-    // period a later, separately-processed renewal has already extended
-    // past). Guard on the inner signedDate too, tracked independently of
-    // the outer one; when Apple does not include it, this stays permissive
-    // (no inner signal to compare, outer check above already applied).
-    const txSignedDate = Number(tx.signedDate ?? 0) || 0;
-    const lastTxSigned = Number(asRecord(existing.payload).appleLastTransactionSignedDate ?? 0) || 0;
-    if (txSignedDate && txSignedDate <= lastTxSigned) {
-      return (ctx.body = { ok: true, skipped: true, reason: 'eski/tekrarlanan islem verisi' });
-    }
-
     const nowMs = Date.now();
     const expiresMs = Number(tx.expiresDate ?? 0) || 0;
     const revoked = Number(tx.revocationDate ?? 0) > 0;
@@ -526,48 +930,91 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
     const purchaseMs = Number(tx.purchaseDate ?? 0) || 0;
     const purchasedAt = purchaseMs > 0 ? new Date(purchaseMs).toISOString() : undefined;
     const claimedProduct = asString(tx.productId);
-    const productId = ALL_PRODUCTS.has(claimedProduct) ? claimedProduct : asString(existing.productId);
-    const tid = asString(existing.transactionId);
-    await upsertPurchaseEvent(strapi, {
-      ...existing,
-      productId,
-      status,
-      source: 'apple_webhook',
-      expiresAt: expiresAt ?? null,
-      purchasedAt: purchasedAt ?? (existing as Record<string, unknown>).purchasedAt ?? null,
-      payload: {
-        ...asRecord(existing.payload),
-        appleLastSignedDate: signedDate || lastSigned,
-        appleLastTransactionSignedDate: txSignedDate || lastTxSigned,
-        appleWebhook: { notificationType, subtype, environment: asString(data.environment) },
+    const outerSignedDate = Number(decoded.signedDate ?? 0) || 0;
+    const txSignedDate = Number(tx.signedDate ?? 0) || 0;
+
+    // Review follow-up (webhook/verify-repair concurrency): this exact
+    // lock -- same key scheme (`tx:`/`orig:`) as the interactive verify()
+    // and idempotent-repair paths -- now serializes this write against
+    // theirs for the SAME transaction identity. `existing` is re-read
+    // FRESH inside it (never the copy fetched before acquiring the lock),
+    // so a verify()/repair that is concurrently mid-flight for this same
+    // transaction can never interleave between this read and this write.
+    const webhookResult = await withPurchaseIdentityLock(
+      [`tx:${asString(existing.transactionId)}`, originalTransactionId && `orig:${originalTransactionId}`].filter(
+        Boolean,
+      ) as string[],
+      async () => {
+        const freshExisting = await findPurchaseEvent(strapi, { transactionId: asString(existing.transactionId) });
+        if (!freshExisting) return { skipped: true as const, reason: 'event bulunamadi' };
+
+        // Duplicate / out-of-order protection -- OUTER envelope, re-
+        // checked against the FRESH row.
+        const lastSigned = Number(asRecord(freshExisting.payload).appleLastSignedDate ?? 0) || 0;
+        if (outerSignedDate && outerSignedDate <= lastSigned) {
+          return { skipped: true as const, reason: 'eski/tekrarlanan bildirim' };
+        }
+
+        // Review follow-up (same-subscription renewal ordering): the
+        // OUTER check above only bounds the ENVELOPE's own signedDate --
+        // it does not prove the INNER transaction snapshot (`tx`, decoded
+        // separately above) actually describes the subscription's
+        // current period. Guard on the inner signedDate too, re-checked
+        // against the FRESH row; permissive when Apple does not include it.
+        const lastTxSigned = Number(asRecord(freshExisting.payload).appleLastTransactionSignedDate ?? 0) || 0;
+        if (txSignedDate && txSignedDate <= lastTxSigned) {
+          return { skipped: true as const, reason: 'eski/tekrarlanan islem verisi' };
+        }
+
+        const productId = ALL_PRODUCTS.has(claimedProduct) ? claimedProduct : asString(freshExisting.productId);
+        const tid = asString(freshExisting.transactionId);
+        await upsertPurchaseEvent(strapi, {
+          ...freshExisting,
+          productId,
+          status,
+          source: 'apple_webhook',
+          expiresAt: expiresAt ?? null,
+          purchasedAt: purchasedAt ?? (freshExisting as Record<string, unknown>).purchasedAt ?? null,
+          payload: {
+            ...asRecord(freshExisting.payload),
+            appleLastSignedDate: outerSignedDate || lastSigned,
+            appleLastTransactionSignedDate: txSignedDate || lastTxSigned,
+            appleWebhook: { notificationType, subtype, environment: asString(data.environment) },
+          },
+          verifiedAt: new Date().toISOString(),
+          transactionId: tid,
+          // Review follow-up: Apple's own authenticated server notification
+          // (JWS-signature-verified before reaching here), never an
+          // unauthenticated client claim -- merges with (never regresses)
+          // whatever `existing.everAuthenticated` already was.
+          everAuthenticated: true,
+        });
+        await upsertProfilePurchase(strapi, {
+          ownerId: asString(freshExisting.ownerProfileId),
+          categoryTitle: asString(freshExisting.categoryTitle),
+          planTitle: asString(freshExisting.planTitle),
+          priceTl: Number(freshExisting.priceTl ?? 0) || 0,
+          provider: 'app_store',
+          transactionId: tid,
+          productId,
+          premiumEndsAt: expiresAt,
+          forcePremiumStatus: status,
+          // originalTransactionId is the stable identity of this subscription
+          // across its whole lifetime for Apple -- see the interactive
+          // verify() call site's own comment on this same field. This is
+          // exactly what stops a late/duplicate notification about an OLD,
+          // already-superseded originalTransactionId from nulling a CURRENT
+          // entitlement that a genuinely different, newer transaction produced.
+          originalTransactionId: originalTransactionId || undefined,
+          purchasedAt,
+        });
+        return { skipped: false as const, status, transactionId: tid };
       },
-      verifiedAt: new Date().toISOString(),
-      transactionId: tid,
-      // Review follow-up: Apple's own authenticated server notification
-      // (JWS-signature-verified before reaching here), never an
-      // unauthenticated client claim -- merges with (never regresses)
-      // whatever `existing.everAuthenticated` already was.
-      everAuthenticated: true,
-    });
-    await upsertProfilePurchase(strapi, {
-      ownerId: asString(existing.ownerProfileId),
-      categoryTitle: asString(existing.categoryTitle),
-      planTitle: asString(existing.planTitle),
-      priceTl: Number(existing.priceTl ?? 0) || 0,
-      provider: 'app_store',
-      transactionId: tid,
-      productId,
-      premiumEndsAt: expiresAt,
-      forcePremiumStatus: status,
-      // originalTransactionId is the stable identity of this subscription
-      // across its whole lifetime for Apple -- see the interactive
-      // verify() call site's own comment on this same field. This is
-      // exactly what stops a late/duplicate notification about an OLD,
-      // already-superseded originalTransactionId from nulling a CURRENT
-      // entitlement that a genuinely different, newer transaction produced.
-      originalTransactionId: originalTransactionId || undefined,
-      purchasedAt,
-    });
-    ctx.body = { ok: true, status, transactionId: tid };
+    );
+
+    if (webhookResult.skipped) {
+      return (ctx.body = { ok: true, skipped: true, reason: webhookResult.reason });
+    }
+    ctx.body = { ok: true, status: webhookResult.status, transactionId: webhookResult.transactionId };
   },
 });

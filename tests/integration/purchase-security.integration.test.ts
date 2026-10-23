@@ -175,6 +175,16 @@ const appleTransactionJws = (
     originalTransactionId: orig,
     productId,
     bundleId: over.bundleId ?? BUNDLE,
+    // Every real Apple transaction JWS carries its own purchaseDate --
+    // added here so purchasedAt (providers.ts's verifyApple) is reliably
+    // populated, matching real production data, for the idempotent-
+    // repair rocket-reconciliation tests that anchor on it.
+    purchaseDate: Date.now(),
+    // Every real Apple transaction JWS also carries its own signedDate --
+    // needed so a LATER re-verify of the SAME (frozen) receipt can be
+    // told apart from a genuinely newer renewal (see
+    // isStaleAppleResubmission, controllers/purchase.ts).
+    signedDate: Date.now(),
     expiresDate: Date.now() + days * 86_400_000,
     ...(over.revoked ? { revocationDate: over.revoked } : {}),
   });
@@ -364,6 +374,508 @@ test('Apple: valid (real signed StoreKit2 transaction) receipt -> entitlement fo
   // confirms the specific `identity_conflict` code reaches the client.
   assert.equal(rb.body?.error?.details?.reasonCode, 'identity_conflict', JSON.stringify(rb.body));
   assert.ok(rb.body?.error?.details?.correlationId, 'correlationId must be present');
+});
+
+test('BUG (now fixed): idempotent verify() repairs a genuinely MISSING ProfileSetting.activePremium for an already-verified, still-valid transaction -- without re-contacting Apple and without extending the real stored expiry', async () => {
+  const A = await register('idem-repair');
+  const { receipt, transactionId } = appleTransactionJws('pro_premium_12ay', 30, `100${uid()}`);
+  const r1 = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt, transactionId });
+  assert.equal(r1.body.verified, true, JSON.stringify(r1.body));
+  const original = await premiumOf(A.ownerId);
+  assert.ok(isActive(original), 'the first verify() must grant the real entitlement');
+
+  // Simulate the exact reported symptom: the purchase-event row is real
+  // and already verified, but ProfileSetting's own activePremium ended up
+  // missing (e.g. a crash/partial failure between the two writes on an
+  // earlier attempt) -- without touching purchase-event at all.
+  await strapiInstance.db.query('api::profile-setting.profile-setting').update({
+    where: { profileId: A.ownerId },
+    data: { activePremium: null, activePremiumSubscription: null },
+  });
+  assert.equal(await premiumOf(A.ownerId), null, 'sanity check: the simulated gap is really there');
+
+  const r2 = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt, transactionId });
+  assert.equal(r2.body.idempotent, true, JSON.stringify(r2.body));
+  assert.equal(r2.body.verified, true, JSON.stringify(r2.body));
+
+  const repaired = await premiumOf(A.ownerId);
+  assert.ok(isActive(repaired), 'the idempotent repair must restore the missing entitlement');
+  assert.equal(
+    new Date(repaired.endsAt).getTime(),
+    new Date(original.endsAt).getTime(),
+    'the REAL stored expiry must be reused exactly -- never a fresh now+365 guess',
+  );
+  assert.equal(repaired.rocketRemaining, original.rocketRemaining, 'rocket credits are freshly (correctly) granted, not doubled');
+
+  const history = await (async () => {
+    const row = await strapiInstance.db
+      .query('api::profile-setting.profile-setting')
+      .findOne({ where: { profileId: A.ownerId } });
+    return (row as any)?.purchaseHistory ?? [];
+  })();
+  assert.equal(
+    history.filter((h: any) => h.transactionId === transactionId).length,
+    1,
+    'the repair must never duplicate the history entry for this transaction',
+  );
+});
+
+test('BUG (now fixed), negative case: idempotent verify() repair must NEVER fire -- and must never touch -- an account that already has ANY entitlement, even one from a completely different, newer transaction', async () => {
+  const A = await register('idem-no-overwrite');
+  const old = appleTransactionJws('pro_premium_12ay', 30, `100${uid()}`);
+  const r1 = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt: old.receipt, transactionId: old.transactionId });
+  assert.equal(r1.body.verified, true, JSON.stringify(r1.body));
+
+  // A genuinely NEW, separate transaction supersedes it -- activePremium
+  // now reflects THIS newer one, with its own (partially-used-looking)
+  // rocket credits, deliberately different from a fresh grant so an
+  // accidental overwrite/refill is unmistakable in the assertion below.
+  const fresh = appleTransactionJws('pro_premium_12ay', 300, `100${uid()}`);
+  const r2 = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt: fresh.receipt, transactionId: fresh.transactionId });
+  assert.equal(r2.body.verified, true, JSON.stringify(r2.body));
+  await strapiInstance.db.query('api::profile-setting.profile-setting').update({
+    where: { profileId: A.ownerId },
+    data: {
+      activePremium: { ...(await premiumOf(A.ownerId)), rocketRemaining: 3 },
+    },
+  });
+  const beforeRepeat = await premiumOf(A.ownerId);
+  assert.equal(beforeRepeat.rocketRemaining, 3);
+
+  // Re-sending the OLD transaction's receipt is still idempotent (it is
+  // still its own verified, not-expired row) -- but must NOT touch the
+  // CURRENT entitlement, which belongs to a different, newer transaction.
+  const r3 = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt: old.receipt, transactionId: old.transactionId });
+  assert.equal(r3.body.idempotent, true, JSON.stringify(r3.body));
+
+  const after = await premiumOf(A.ownerId);
+  assert.equal(
+    new Date(after.endsAt).getTime(),
+    new Date(beforeRepeat.endsAt).getTime(),
+    'the newer transaction\'s real expiry must survive untouched',
+  );
+  assert.equal(
+    after.rocketRemaining,
+    3,
+    'the newer entitlement\'s (partially-used-looking) rocket credits must never be refilled/overwritten by the OLD transaction\'s repair path',
+  );
+});
+
+test('BUG (now fixed), security gap #1: a stored verified+not-yet-locally-expired row whose transaction has SINCE been refunded/revoked AT THE PROVIDER must not be resurrected -- the repair path re-asks the provider before granting anything', async () => {
+  const A = await register('idem-repair-revoked');
+  const orig = `100${uid()}`;
+  const tx1 = appleTransactionJws('pro_premium_12ay', 30, orig);
+  const r1 = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt: tx1.receipt, transactionId: tx1.transactionId });
+  assert.equal(r1.body.verified, true, JSON.stringify(r1.body));
+
+  // Simulate the exact reported symptom: the stored purchase-event row
+  // still says verified/not-expired, but ProfileSetting's own
+  // activePremium ended up missing.
+  await strapiInstance.db.query('api::profile-setting.profile-setting').update({
+    where: { profileId: A.ownerId },
+    data: { activePremium: null, activePremiumSubscription: null },
+  });
+  assert.equal(await premiumOf(A.ownerId), null);
+
+  // What re-asking "the provider" right now actually returns for this
+  // exact transaction/originalTransactionId -- genuinely revoked since
+  // the first verify() above (a real refund/chargeback, or Apple's own
+  // revocation) -- submitted as THIS retry's own receipt, exactly as a
+  // real client resubmitting its locally-cached (now stale) receipt would.
+  const revokedReceipt = jws({
+    transactionId: tx1.transactionId,
+    originalTransactionId: orig,
+    productId: 'pro_premium_12ay',
+    bundleId: BUNDLE,
+    expiresDate: Date.now() + 30 * 86_400_000,
+    revocationDate: Date.now(),
+  });
+  const r2 = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt: revokedReceipt, transactionId: tx1.transactionId });
+  assert.equal(r2.body.verified, false, JSON.stringify(r2.body));
+  assert.notEqual(r2.body.idempotent, true, 'a refunded transaction must never be answered as an "idempotent success"');
+  assert.equal(await premiumOf(A.ownerId), null, 'a since-refunded transaction must never be resurrected by the repair path');
+});
+
+test('BUG (now fixed), security gap #2: rocket credits already consumed under the SAME subscription (real rocket-activation records) are reconciled, never refilled, when the idempotent repair runs', async () => {
+  const A = await register('idem-repair-rocket');
+  const { receipt, transactionId } = appleTransactionJws('pro_premium_12ay', 30); // pro plan: rocketIncludedTotal = 14
+  const r1 = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt, transactionId });
+  assert.equal(r1.body.verified, true, JSON.stringify(r1.body));
+  assert.equal((await premiumOf(A.ownerId)).rocketRemaining, 14);
+
+  // 3 premium-credit rocket activations already happened under this
+  // exact subscription (the real listing.ts activateRocket flow records
+  // these) -- created directly here since activateRocket itself is a
+  // separate, already-covered flow; only the RECONCILIATION on repair is
+  // what this test exercises.
+  for (let i = 0; i < 3; i += 1) {
+    await strapiInstance.entityService.create('api::rocket-activation.rocket-activation', {
+      data: {
+        operationId: `op-${uid()}`,
+        payloadFingerprint: 'fp',
+        listingId: `listing-${i}`,
+        ownerProfileId: A.ownerId,
+        sourceType: 'premium_credit',
+        days: 14,
+        rocketEndsAt: new Date(Date.now() + 14 * 86_400_000),
+      },
+    });
+  }
+
+  // The bug: activePremium ends up missing despite the 3 already-
+  // consumed credits above.
+  await strapiInstance.db.query('api::profile-setting.profile-setting').update({
+    where: { profileId: A.ownerId },
+    data: { activePremium: null, activePremiumSubscription: null },
+  });
+
+  const r2 = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt, transactionId });
+  assert.equal(r2.body.idempotent, true, JSON.stringify(r2.body));
+  const repaired = await premiumOf(A.ownerId);
+  assert.ok(isActive(repaired));
+  assert.equal(
+    repaired.rocketRemaining,
+    11,
+    'the repair must subtract the 3 already-consumed credits from the real rocket-activation records, never refill to the full 14',
+  );
+});
+
+test('BUG (now fixed), security gap #2 (owner isolation): a DIFFERENT account\'s rocket-activation records are never counted against this owner\'s reconciliation', async () => {
+  const A = await register('idem-repair-owner-a');
+  const B = await register('idem-repair-owner-b');
+  const { receipt, transactionId } = appleTransactionJws('pro_premium_12ay', 30);
+  const r1 = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt, transactionId });
+  assert.equal(r1.body.verified, true, JSON.stringify(r1.body));
+
+  // B has genuinely consumed premium-credit rocket activations of their
+  // OWN (completely unrelated to A) -- these must never be counted
+  // against A's own reconciliation.
+  for (let i = 0; i < 5; i += 1) {
+    await strapiInstance.entityService.create('api::rocket-activation.rocket-activation', {
+      data: {
+        operationId: `op-b-${uid()}`,
+        payloadFingerprint: 'fp',
+        listingId: `listing-b-${i}`,
+        ownerProfileId: B.ownerId,
+        sourceType: 'premium_credit',
+        days: 14,
+        rocketEndsAt: new Date(Date.now() + 14 * 86_400_000),
+      },
+    });
+  }
+
+  await strapiInstance.db.query('api::profile-setting.profile-setting').update({
+    where: { profileId: A.ownerId },
+    data: { activePremium: null, activePremiumSubscription: null },
+  });
+  const r2 = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt, transactionId });
+  assert.equal(r2.body.idempotent, true, JSON.stringify(r2.body));
+  const repaired = await premiumOf(A.ownerId);
+  assert.equal(
+    repaired.rocketRemaining,
+    14,
+    'B\'s own rocket consumption must never reduce A\'s reconciled credits -- A used none',
+  );
+});
+
+test('BUG (now fixed), security gap #2 (period stability): reconciliation anchors on purchasedAt, not the noisier verifiedAt -- an unrelated notification bumping verifiedAt forward must never hide real in-period consumption and over-credit rockets', async () => {
+  const A = await register('idem-repair-period');
+  const { receipt, transactionId } = appleTransactionJws('pro_premium_12ay', 30);
+  const r1 = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt, transactionId });
+  assert.equal(r1.body.verified, true, JSON.stringify(r1.body));
+
+  // 2 real in-period rocket activations happen shortly after the purchase.
+  for (let i = 0; i < 2; i += 1) {
+    await strapiInstance.entityService.create('api::rocket-activation.rocket-activation', {
+      data: {
+        operationId: `op-period-${uid()}`,
+        payloadFingerprint: 'fp',
+        listingId: `listing-period-${i}`,
+        ownerProfileId: A.ownerId,
+        sourceType: 'premium_credit',
+        days: 14,
+        rocketEndsAt: new Date(Date.now() + 14 * 86_400_000),
+      },
+    });
+  }
+
+  // Simulate an UNRELATED notification (e.g. DID_CHANGE_RENEWAL_STATUS --
+  // never a new period/charge) bumping `verifiedAt` forward in time,
+  // WITHOUT moving `purchasedAt` (Apple's own purchaseDate does not change
+  // for a notification that isn't a genuine renewal). If the reconciliation
+  // anchored on verifiedAt, this would wrongly push the cutoff PAST the 2
+  // activations above, hiding them from the count.
+  await strapiInstance.db.query('api::purchase-event.purchase-event').update({
+    where: { transactionId },
+    data: { verifiedAt: new Date(Date.now() + 60_000).toISOString() },
+  });
+
+  await strapiInstance.db.query('api::profile-setting.profile-setting').update({
+    where: { profileId: A.ownerId },
+    data: { activePremium: null, activePremiumSubscription: null },
+  });
+  const r2 = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt, transactionId });
+  assert.equal(r2.body.idempotent, true, JSON.stringify(r2.body));
+  const repaired = await premiumOf(A.ownerId);
+  assert.equal(
+    repaired.rocketRemaining,
+    12,
+    'the 2 real in-period activations must still be counted (14 - 2) despite verifiedAt having been bumped forward by an unrelated notification',
+  );
+});
+
+test('BUG (now fixed), security gap #2 (concurrency): two concurrent idempotent-repair requests for the SAME missing entitlement never double the rocket credits or duplicate the history entry', async () => {
+  const A = await register('idem-repair-concurrent');
+  const { receipt, transactionId } = appleTransactionJws('pro_premium_12ay', 30);
+  const r1 = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt, transactionId });
+  assert.equal(r1.body.verified, true, JSON.stringify(r1.body));
+  await strapiInstance.db.query('api::profile-setting.profile-setting').update({
+    where: { profileId: A.ownerId },
+    data: { activePremium: null, activePremiumSubscription: null },
+  });
+
+  const [ra, rb] = await Promise.all([
+    verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt, transactionId }),
+    verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt, transactionId }),
+  ]);
+  assert.equal(ra.body.idempotent, true, JSON.stringify(ra.body));
+  assert.equal(rb.body.idempotent, true, JSON.stringify(rb.body));
+
+  const repaired = await premiumOf(A.ownerId);
+  assert.ok(isActive(repaired));
+  assert.equal(repaired.rocketRemaining, 14, 'exactly one grant worth of credits, never doubled by the concurrent race');
+
+  const row = await strapiInstance.db.query('api::profile-setting.profile-setting').findOne({ where: { profileId: A.ownerId } });
+  const history = (row as any)?.purchaseHistory ?? [];
+  assert.equal(
+    history.filter((h: any) => h.transactionId === transactionId).length,
+    1,
+    'history must never duplicate from a concurrent repair race',
+  );
+});
+
+test('BUG (now fixed): after a REAL webhook refund, the client resubmitting its OLD (pre-refund) cached JWS through the NORMAL (non-idempotent) verify() path must not resurrect the entitlement', async () => {
+  const A = await register('stale-jws-normal-verify');
+  const orig = `100${uid()}`;
+  const tx1 = appleTransactionJws('pro_premium_12ay', 30, orig);
+  const r1 = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt: tx1.receipt, transactionId: tx1.transactionId });
+  assert.equal(r1.body.verified, true, JSON.stringify(r1.body));
+  assert.ok(isActive(await premiumOf(A.ownerId)));
+
+  // A REAL webhook refund arrives, genuinely signed AFTER tx1's own
+  // signedDate.
+  const refund = await anote(orig, { type: 'REFUND', signedDate: Date.now() + 2000, revoked: Date.now() });
+  assert.equal(refund.status, 200, JSON.stringify(refund.body));
+  assert.equal(await premiumOf(A.ownerId), null, 'sanity check: the real webhook correctly removed it');
+
+  // The client resubmits its OWN old, frozen (pre-refund) receipt through
+  // the plain verify() endpoint -- same transactionId, same (now stale)
+  // baked-in signedDate. This is NOT the idempotent-repair branch (status
+  // is already 'refunded', not 'verified') -- it is the ordinary flow
+  // every interactive verify() call goes through.
+  const r2 = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt: tx1.receipt, transactionId: tx1.transactionId });
+  assert.equal(r2.body.verified, false, JSON.stringify(r2.body));
+  assert.equal(await premiumOf(A.ownerId), null, 'the stale, pre-refund JWS must never resurrect the entitlement');
+});
+
+test('BUG (now fixed): a webhook refund racing CONCURRENTLY with an idempotent-repair attempt for the same transaction never ends with an invalid entitlement left granted, regardless of which one the lock lets run first', async () => {
+  const A = await register('concurrent-webhook-repair');
+  const orig = `100${uid()}`;
+  const tx1 = appleTransactionJws('pro_premium_12ay', 30, orig);
+  const r1 = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt: tx1.receipt, transactionId: tx1.transactionId });
+  assert.equal(r1.body.verified, true, JSON.stringify(r1.body));
+
+  // Simulate the missing-profile bug (repair-eligible: purchase-event
+  // status is still 'verified', only ProfileSetting's own entitlement is
+  // gone) WHILE a genuine webhook refund is about to race against the
+  // repair attempt that would otherwise follow.
+  await strapiInstance.db.query('api::profile-setting.profile-setting').update({
+    where: { profileId: A.ownerId },
+    data: { activePremium: null, activePremiumSubscription: null },
+  });
+
+  await Promise.all([
+    verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt: tx1.receipt, transactionId: tx1.transactionId }),
+    anote(orig, { type: 'REFUND', signedDate: Date.now() + 2000, revoked: Date.now() }),
+  ]);
+
+  // Whichever one the shared identity lock let run first, the transaction
+  // IS genuinely refunded -- the final state must never show it as
+  // active, no matter the interleaving.
+  assert.equal(
+    await premiumOf(A.ownerId),
+    null,
+    'a genuinely refunded transaction must never end up granted, regardless of webhook/repair race ordering',
+  );
+});
+
+test('a genuinely NEWER renewal (same originalTransactionId, its own freshly-signed JWS with a later signedDate and a real extended expiry) correctly establishes the entitlement through the interactive verify() path -- the stale-JWS guard never blocks a real renewal', async () => {
+  const A = await register('genuine-renewal-interactive');
+  const orig = `100${uid()}`;
+  const tx1 = appleTransactionJws('pro_premium_12ay', 5, orig);
+  const r1 = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt: tx1.receipt, transactionId: tx1.transactionId });
+  assert.equal(r1.body.verified, true, JSON.stringify(r1.body));
+
+  // A genuine renewal: Apple issues a freshly-signed JWS for the SAME
+  // originalTransactionId -- its own new transactionId (a real renewal
+  // always gets one), a later signedDate, and a genuinely extended
+  // expiresDate -- submitted through the ordinary interactive verify()
+  // flow (e.g. the app re-verifying/restoring after the renewal).
+  const renewedTxId = `T${orig}-renewed`;
+  const renewedReceipt = jws({
+    transactionId: renewedTxId,
+    originalTransactionId: orig,
+    productId: 'pro_premium_12ay',
+    bundleId: BUNDLE,
+    purchaseDate: Date.now(),
+    signedDate: Date.now() + 5000,
+    expiresDate: Date.now() + 400 * 86_400_000,
+  });
+  const r2 = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt: renewedReceipt, transactionId: renewedTxId });
+  assert.equal(r2.body.verified, true, JSON.stringify(r2.body));
+  const renewed = await premiumOf(A.ownerId);
+  assert.ok(isActive(renewed));
+  assert.ok(
+    new Date(renewed.endsAt).getTime() > Date.now() + 300 * 86_400_000,
+    'the genuine renewal must correctly establish the extended entitlement, never mistaken for a stale resubmission',
+  );
+});
+
+test('BUG (now fixed): once a REAL webhook refund is recorded for a transactionId, a LATER-signed JWS for that SAME transactionId that does not itself show revocation/expiry must still not reopen the right -- the server\'s already-known refund is permanent for that exact transactionId; only a genuinely NEW transactionId (a real renewal) may grant one', async () => {
+  const A = await register('refund-then-clean-later-jws');
+  const orig = `100${uid()}`;
+  const tx1 = appleTransactionJws('pro_premium_12ay', 30, orig);
+  const r1 = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt: tx1.receipt, transactionId: tx1.transactionId });
+  assert.equal(r1.body.verified, true, JSON.stringify(r1.body));
+
+  // A REAL webhook refund is processed FIRST.
+  const refund = await anote(orig, { type: 'REFUND', signedDate: Date.now() + 2000, revoked: Date.now() });
+  assert.equal(refund.status, 200, JSON.stringify(refund.body));
+  assert.equal(await premiumOf(A.ownerId), null, 'sanity check: the webhook correctly removed it');
+
+  // SAME transactionId, a NEWER signedDate than the refund notification's
+  // own -- but THIS JWS itself shows NO revocationDate and a future
+  // expiresDate. On its own, it looks like a perfectly fine, still-active
+  // transaction (unlike the earlier "security gap #1" tests, which used a
+  // later JWS that itself still showed revoked).
+  const laterCleanLookingJws = jws({
+    transactionId: tx1.transactionId,
+    originalTransactionId: orig,
+    productId: 'pro_premium_12ay',
+    bundleId: BUNDLE,
+    purchaseDate: Date.now(),
+    signedDate: Date.now() + 10_000,
+    expiresDate: Date.now() + 30 * 86_400_000,
+  });
+  const r2 = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt: laterCleanLookingJws, transactionId: tx1.transactionId });
+  assert.equal(r2.body.verified, false, JSON.stringify(r2.body));
+  assert.equal(
+    await premiumOf(A.ownerId),
+    null,
+    'the server\'s already-known refund for this exact transactionId must be preserved, regardless of this JWS\'s own (newer) signedDate',
+  );
+
+  // A GENUINE new renewal -- a different, brand-new transactionId -- must
+  // still work completely normally.
+  const renewedTxId = `T${orig}-renewed-after-refund`;
+  const renewedReceipt = jws({
+    transactionId: renewedTxId,
+    originalTransactionId: orig,
+    productId: 'pro_premium_12ay',
+    bundleId: BUNDLE,
+    purchaseDate: Date.now(),
+    signedDate: Date.now() + 20_000,
+    expiresDate: Date.now() + 400 * 86_400_000,
+  });
+  const r3 = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt: renewedReceipt, transactionId: renewedTxId });
+  assert.equal(r3.body.verified, true, JSON.stringify(r3.body));
+  assert.ok(isActive(await premiumOf(A.ownerId)), 'a genuinely new transactionId (a real renewal) must still correctly grant the entitlement');
+});
+
+test('BUG (now fixed): resubmitting a JWS whose OWN signedDate is EQUAL (not older) to the last known transaction signedDate -- a still-valid, never-refunded transaction -- must NOT be blocked as "stale", neither for ordinary idempotent verify() nor for repairing a missing Premium entitlement', async () => {
+  const A = await register('equal-signeddate-not-stale');
+  const orig = `100${uid()}`;
+  const sharedSignedDate = Date.now();
+  const tx1Id = `T${orig}`;
+  const receipt1 = jws({
+    transactionId: tx1Id,
+    originalTransactionId: orig,
+    productId: 'pro_premium_12ay',
+    bundleId: BUNDLE,
+    purchaseDate: Date.now(),
+    signedDate: sharedSignedDate,
+    expiresDate: Date.now() + 30 * 86_400_000,
+  });
+  const r1 = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt: receipt1, transactionId: tx1Id });
+  assert.equal(r1.body.verified, true, JSON.stringify(r1.body));
+
+  // A webhook touches the SAME row (e.g. Apple's own routine DID_RENEW
+  // confirmation) whose INNER transaction signedDate happens to be
+  // exactly `sharedSignedDate` -- the SAME value receipt1 itself carries
+  // (its own outer envelope is signed later, which is independent and
+  // only affects the separate outer out-of-order check). This is exactly
+  // what `appleLastTransactionSignedDate` ends up storing.
+  const touch = await anote(orig, {
+    type: 'DID_RENEW',
+    signedDate: sharedSignedDate + 500,
+    txSignedDate: sharedSignedDate,
+    expires: Date.now() + 30 * 86_400_000,
+  });
+  assert.equal(touch.status, 200, JSON.stringify(touch.body));
+  assert.ok(isActive(await premiumOf(A.ownerId)));
+
+  // The client resubmits receipt1 again (e.g. a retry) -- its OWN
+  // signedDate (sharedSignedDate) now EQUALS the stored
+  // appleLastTransactionSignedDate. Not refunded, nothing wrong with it
+  // -- must verify normally, never rejected as "stale".
+  const r2 = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt: receipt1, transactionId: tx1Id });
+  assert.notEqual(r2.body.verified, false, JSON.stringify(r2.body));
+
+  // Now the repair scenario: a missing entitlement must still be
+  // repairable even when the repair's own re-verify happens to produce a
+  // signedDate EQUAL to what is already known (the SAME transaction,
+  // genuinely still valid, no refund anywhere).
+  await strapiInstance.db.query('api::profile-setting.profile-setting').update({
+    where: { profileId: A.ownerId },
+    data: { activePremium: null, activePremiumSubscription: null },
+  });
+  const r3 = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt: receipt1, transactionId: tx1Id });
+  assert.equal(r3.body.idempotent, true, JSON.stringify(r3.body));
+  assert.ok(
+    isActive(await premiumOf(A.ownerId)),
+    'an equal (not older) signedDate must never block the repair of a genuinely still-valid, never-refunded entitlement',
+  );
+});
+
+test('BUG (now fixed if present), security gap #1 (explicit newer-signedDate case): a transaction already known to be refunded does not regain entitlement just because a resubmitted JWS happens to carry a NEWER signedDate -- validity is decided by the transaction\'s own revocation/expiry data, never by signedDate recency alone', async () => {
+  const A = await register('newer-signeddate-still-revoked');
+  const orig = `100${uid()}`;
+  const tx1 = appleTransactionJws('pro_premium_12ay', 30, orig);
+  const r1 = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt: tx1.receipt, transactionId: tx1.transactionId });
+  assert.equal(r1.body.verified, true, JSON.stringify(r1.body));
+
+  // A later, genuinely Apple-signed JWS for the SAME transactionId --
+  // its signedDate IS newer than tx1's own -- but it still reports this
+  // exact transaction as revoked (a real, valid signature cannot be
+  // forged with an arbitrary revocationDate; this models what Apple
+  // itself would sign if asked again after a real refund).
+  const laterButRevoked = jws({
+    transactionId: tx1.transactionId,
+    originalTransactionId: orig,
+    productId: 'pro_premium_12ay',
+    bundleId: BUNDLE,
+    purchaseDate: Date.now(),
+    signedDate: Date.now() + 10_000,
+    expiresDate: Date.now() + 30 * 86_400_000,
+    revocationDate: Date.now(),
+  });
+  const r2 = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt: laterButRevoked, transactionId: tx1.transactionId });
+  assert.equal(r2.body.verified, false, JSON.stringify(r2.body));
+  assert.equal(
+    await premiumOf(A.ownerId),
+    null,
+    'a newer signedDate must never, by itself, grant/restore entitlement for a transaction whose own data shows it revoked',
+  );
 });
 
 // NOTE: like every other Apple test in this file, this uses a LOCAL,

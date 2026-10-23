@@ -22,6 +22,24 @@ export type VerifyOutcome = {
    * transaction was ever decoded.
    */
   purchasedAt?: string;
+  /**
+   * Review follow-up (stale-JWS resurrection guard): Apple's own
+   * JWSTransactionDecodedPayload.signedDate for THIS exact transaction
+   * snapshot -- the same field `appleWebhook` already tracks as
+   * `appleLastTransactionSignedDate` to order renewals/notifications. A
+   * client resubmitting an old, frozen (already-superseded) JWS always
+   * carries its OLD signedDate forever, since the JWS itself cannot
+   * change after Apple signs it -- so comparing this against the
+   * backend's own already-known `appleLastTransactionSignedDate` is what
+   * actually distinguishes a stale resubmission (older or equal) from a
+   * genuine newer renewal (always a later signedDate), unlike re-
+   * verifying the JWS's own signature/expiry alone, which only proves it
+   * was validly signed at SOME point -- never that it reflects anything
+   * more recent than whatever is already known. Apple only; Google's
+   * verification is already a live Play Developer API call, so it has
+   * no equivalent staleness problem.
+   */
+  signedDate?: number;
   purchaseToken?: string;
   payload?: unknown;
   /** Store-reported auto-renew state when known (false once the user cancelled). */
@@ -345,6 +363,7 @@ const verifyApple = async (input: {
   const nowMs = Date.now();
   const purchaseMs = Number(tx.purchaseDate ?? 0) || 0;
   const purchasedAt = purchaseMs > 0 ? new Date(purchaseMs).toISOString() : undefined;
+  const signedDate = Number(tx.signedDate ?? 0) || 0;
 
   // From here on: signature verified, bundle matches, product matches --
   // this genuinely IS the transaction identity it claims to be, whatever
@@ -359,6 +378,7 @@ const verifyApple = async (input: {
         transactionId,
         originalTransactionId,
         purchasedAt,
+        signedDate: signedDate || undefined,
         payload: tx,
         message: 'Apple aboneliği iade/iptal edilmiş.',
         identityAuthenticated: true,
@@ -374,6 +394,7 @@ const verifyApple = async (input: {
       originalTransactionId,
       expiresAt: expiresMs > 0 ? new Date(expiresMs).toISOString() : undefined,
       purchasedAt,
+      signedDate: signedDate || undefined,
       payload: tx,
       message: isActive ? 'Apple abonelik doğrulandı.' : 'Apple abonelik süresi dolmuş.',
       identityAuthenticated: true,
@@ -389,6 +410,7 @@ const verifyApple = async (input: {
     transactionId,
     originalTransactionId,
     purchasedAt,
+    signedDate: signedDate || undefined,
     payload: tx,
     message: revoked ? 'Apple ürün iade edilmiş.' : 'Apple ürün doğrulandı.',
     identityAuthenticated: true,

@@ -113,6 +113,15 @@ const premiumPayloadForProduct = (input: {
   transactionId?: string;
   originalTransactionId?: string;
   purchasedAt?: string;
+  // Review follow-up (idempotent-repair rocket reconciliation): when
+  // present, used INSTEAD OF spec.rocketIncludedTotal for `rocketRemaining`
+  // specifically -- `rocketIncludedTotal` (the plan's own nominal total)
+  // is never affected. Only ever passed by the idempotent-repair path,
+  // which reconciles already-consumed rocket-activation records for this
+  // exact subscription before repairing a missing entitlement; a genuinely
+  // new purchase/renewal never passes this and always gets the full,
+  // fresh package, exactly as before.
+  rocketRemainingOverride?: number;
 }) => {
   const spec = PREMIUM_PRODUCTS[resolveCanonicalProductId(input.productId)];
   if (!spec) return null;
@@ -137,7 +146,7 @@ const premiumPayloadForProduct = (input: {
     smartAdRemaining: spec.smartAdIncludedTotal,
     smartAdDays: spec.smartAdDays,
     rocketIncludedTotal: spec.rocketIncludedTotal,
-    rocketRemaining: spec.rocketIncludedTotal,
+    rocketRemaining: input.rocketRemainingOverride ?? spec.rocketIncludedTotal,
     rocketDays: spec.rocketDays,
     premiumProfileEnabled: true,
     unlimitedListings: true,
@@ -169,6 +178,7 @@ export const upsertProfilePurchase = async (
     autoRenew?: boolean;
     originalTransactionId?: string;
     purchasedAt?: string;
+    rocketRemainingOverride?: number;
   },
 ) => {
   const ownerId = asString(input.ownerId);
@@ -254,6 +264,7 @@ export const upsertProfilePurchase = async (
     transactionId: input.transactionId,
     originalTransactionId: input.originalTransactionId,
     purchasedAt: input.purchasedAt,
+    rocketRemainingOverride: input.rocketRemainingOverride,
   });
   if (premiumPayload && (!input.forcePremiumStatus || input.forcePremiumStatus === 'verified')) {
     nextPremium = premiumPayload;
