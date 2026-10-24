@@ -1,5 +1,6 @@
 ﻿import type { Core } from '@strapi/strapi';
-import { syncOwnerPremiumFlags } from './utils/premium-sync';
+import { runPremiumFlagsBackfill } from './utils/premium-flags-backfill';
+import { registerUploadFileUploaderLifecycle } from './utils/upload-uploader-identity';
 import { deliverPush as deliverNotificationPush } from './api/notification/content-types/notification/lifecycles';
 import {
   cleanupOwnerEmbeddedHubContent,
@@ -952,33 +953,12 @@ const runSupportBackfillOnce = async (strapi: Core.Strapi) => {
   );
 };
 
-const runPremiumFlagsBackfill = async (strapi: Core.Strapi) => {
-  try {
-    const rows = await strapi.db.query('api::profile-setting.profile-setting').findMany({
-      select: ['id'],
-      orderBy: { id: 'asc' },
-    } as any);
-
-    for (const row of Array.isArray(rows) ? rows : []) {
-      const id = Number((row as any)?.id);
-      if (!Number.isInteger(id) || id <= 0) continue;
-      try {
-        const entry = await strapi.entityService.findOne(
-          'api::profile-setting.profile-setting' as any,
-          id as any,
-          {
-            fields: ['profileId', 'activePremium', 'activePremiumSubscription'],
-          },
-        );
-        await syncOwnerPremiumFlags(strapi, entry as Record<string, unknown>);
-      } catch (_) {}
-    }
-
-    strapi.log.info('Premium listing flag backfill completed.');
-  } catch (e) {
-    strapi.log.error(`Premium listing flag backfill failed: ${e}`);
-  }
-};
+// ILAN OLUSTURMA RAPORU ROUND 2 (item 4) -- CORRECTION: runPremiumFlagsBackfill
+// now lives in ./utils/premium-flags-backfill.ts (imported above), not here
+// -- see that file's own header comment for why (config/cron-tasks.ts
+// importing it from this file dragged in this file's entire unrelated
+// top-level import list through Strapi's separate config-file transpiler,
+// causing a reproducible build-cache race). No business logic changed.
 
 const registerUserDeleteCleanupLifecycle = (strapi: Core.Strapi) => {
   const userUid = 'plugin::users-permissions.user';
@@ -1063,6 +1043,7 @@ export default {
     // content-manager plugin's own layout sync, and never fails the boot.
     await ensureListingStatusInContentManagerLayoutOnce(strapi);
     registerUserDeleteCleanupLifecycle(strapi);
+    registerUploadFileUploaderLifecycle(strapi);
     await syncUsersPermissionsRoleConfig(strapi);
     const cleanupEnabled =
       (process.env.CLEANUP_MALFORMED_TEST_DATA ?? '').toLowerCase() === 'true';

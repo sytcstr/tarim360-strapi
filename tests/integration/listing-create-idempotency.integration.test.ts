@@ -78,6 +78,12 @@ const authed = (jwt: string) => ({ authorization: `Bearer ${jwt}`, 'content-type
 function listingPayload(overrides: Record<string, unknown> = {}) {
   return {
     title: 'F1.6 Test Ilani',
+    // ILAN OLUSTURMA RAPORU ROUND 2 (item 1): the server now enforces the
+    // same content rules create_listing_page.dart's own Form already did
+    // (min description length, >=1 photo) -- added here so this suite's
+    // fixtures satisfy them; this file is about idempotency, not content
+    // validation, so no test here is asserting on invalid content.
+    description: 'F1.6 testi icin yeterli uzunlukta aciklama metni.',
     mainType: 'bitkisel',
     mode: 'sell',
     price: 100,
@@ -87,10 +93,15 @@ function listingPayload(overrides: Record<string, unknown> = {}) {
 }
 
 async function createListing(jwt: string, operationId: string, overrides: Record<string, unknown> = {}) {
+  let data: Record<string, unknown> = { ...listingPayload(overrides), operationId };
+  if (!Object.prototype.hasOwnProperty.call(overrides, 'photos')) {
+    const fileId = await uploadOnePhoto(jwt);
+    data = { ...data, photos: [fileId] };
+  }
   const res = await fetch(`${BASE_URL}/listings`, {
     method: 'POST',
     headers: authed(jwt),
-    body: JSON.stringify({ data: { ...listingPayload(overrides), operationId } }),
+    body: JSON.stringify({ data }),
   });
   const json = await res.json();
   return { status: res.status, body: json };
@@ -115,7 +126,13 @@ async function createListing(jwt: string, operationId: string, overrides: Record
 function offlineParityContentFields(overrides: Record<string, unknown> = {}) {
   return {
     subType: null,
-    description: null,
+    // ILAN OLUSTURMA RAPORU ROUND 2 (item 1): was `null` -- only mattered
+    // for fingerprint PARITY between the two paths (both sides must see
+    // the exact same value, whatever it is), never semantically required
+    // to be null/absent. Now that description is itself validated
+    // (>=12 chars), a non-null, valid value keeps that exact same parity
+    // property while also satisfying the new rule.
+    description: 'F1.6 fingerprint-parity test aciklamasi, sabit deger.',
     hasatYear: null,
     hasatDate: null,
     qualityGrade: null,
@@ -328,10 +345,20 @@ test('offline-sync retry (syncOfflineListing, operation:create) with the SAME op
   // payload's content fields must match offlineQueueRow()'s below
   // exactly (offlineParityContentFields()) -- a genuinely identical
   // resubmission must fingerprint-match across paths.
+  // ILAN OLUSTURMA RAPORU ROUND 2 (item 1): a genuine retry always resends
+  // a real, non-empty photo set (it's resending the SAME logical
+  // submission that, for the ORIGINAL attempt to have succeeded, must
+  // already have had one) -- excluded from the fingerprint because the
+  // physical upload ids differ on a real re-upload, never because a real
+  // retry could legitimately have zero photos. Each side gets its OWN
+  // real upload (same reasoning as the ids genuinely differing).
+  const firstPhotoId = await uploadOnePhoto(user.jwt);
+  const retryPhotoIdForDup = await uploadOnePhoto(user.jwt);
   const first = await createListing(user.jwt, opId, {
     title,
     price: 100,
     location: 'Konya',
+    photos: [firstPhotoId],
     ...offlineParityContentFields(),
   });
   assert.equal(first.status, 201);
@@ -346,7 +373,11 @@ test('offline-sync retry (syncOfflineListing, operation:create) with the SAME op
         // the client's own new local-only `id` -- must NOT be used to
         // look anything up -- plus the operationId, both merged onto the
         // real row shape below.
-        listing: { ...offlineQueueRow({ title }), id: `l_${Date.now()}`, operationId: opId },
+        listing: {
+          ...offlineQueueRow({ title, photos: [retryPhotoIdForDup] }),
+          id: `l_${Date.now()}`,
+          operationId: opId,
+        },
       },
     }),
   });
@@ -361,6 +392,7 @@ test('offline-sync retry (syncOfflineListing, operation:create) with the SAME op
 test('offline-sync retry with no matching operationId still creates normally (genuine first-time offline create)', async () => {
   const user = await registerAndLogin(`f16-offline-fresh-${randomUUID()}@test.local`);
   const title = `F1.6 Offline Fresh ${randomUUID()}`;
+  const photoId = await uploadOnePhoto(user.jwt);
 
   const res = await fetch(`${BASE_URL}/offline-sync/listings`, {
     method: 'POST',
@@ -368,7 +400,11 @@ test('offline-sync retry with no matching operationId still creates normally (ge
     body: JSON.stringify({
       data: {
         operation: 'create',
-        listing: { ...offlineQueueRow({ title }), id: `l_${Date.now()}`, operationId: randomUUID() },
+        listing: {
+          ...offlineQueueRow({ title, photos: [photoId] }),
+          id: `l_${Date.now()}`,
+          operationId: randomUUID(),
+        },
       },
     }),
   });
@@ -488,6 +524,7 @@ test('FINAL-BUG-002: the offline-sync create path enforces the exact same quota,
   }
 
   const title = `R1.2 Offline Blocked ${randomUUID()}`;
+  const blockedPhotoId = await uploadOnePhoto(user.jwt);
   const res = await fetch(`${BASE_URL}/offline-sync/listings`, {
     method: 'POST',
     headers: authed(user.jwt),
@@ -497,7 +534,7 @@ test('FINAL-BUG-002: the offline-sync create path enforces the exact same quota,
         listing: {
           id: `l_${Date.now()}`,
           operationId: randomUUID(),
-          ...listingPayload({ title }),
+          ...listingPayload({ title, photos: [blockedPhotoId] }),
         },
       },
     }),

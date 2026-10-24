@@ -92,6 +92,10 @@ async function createListing(jwt: string, overrides: Record<string, unknown> = {
     body: JSON.stringify({
       data: {
         title: 'Madde47 Test Ilani',
+        // ILAN OLUSTURMA RAPORU ROUND 2 (item 1): this suite is about the
+        // max-photo-count cap, not content validation -- a valid default
+        // description keeps every existing assertion exactly as it was.
+        description: 'Madde47 testi icin yeterli uzunlukta aciklama.',
         mainType: 'tarim',
         mode: 'sell',
         price: 100,

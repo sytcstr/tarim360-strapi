@@ -82,19 +82,23 @@ async function uploadOnePhoto(jwt: string, filename = `${randomUUID()}.png`): Pr
 }
 
 async function createListing(jwt: string, overrides: Record<string, unknown> = {}) {
+  let data: Record<string, unknown> = {
+    title: 'L13 Media Test Ilani',
+    description: 'L13 testi icin yeterli uzunlukta aciklama.',
+    mainType: 'tarim',
+    mode: 'sell',
+    price: 100,
+    operationId: randomUUID(),
+    ...overrides,
+  };
+  if (!Object.prototype.hasOwnProperty.call(overrides, 'photos')) {
+    const fileId = await uploadOnePhoto(jwt);
+    data = { ...data, photos: [fileId] };
+  }
   const res = await fetch(`${BASE_URL}/listings?populate[0]=photos`, {
     method: 'POST',
     headers: { ...authed(jwt), 'content-type': 'application/json' },
-    body: JSON.stringify({
-      data: {
-        title: 'L13 Media Test Ilani',
-        mainType: 'tarim',
-        mode: 'sell',
-        price: 100,
-        operationId: randomUUID(),
-        ...overrides,
-      },
-    }),
+    body: JSON.stringify({ data }),
   });
   return { status: res.status, body: await res.json().catch(() => ({})) };
 }
@@ -245,11 +249,18 @@ test('L13.10: removing a photo that is ALSO used by the owner\'s OTHER listing d
   assert.equal(listingOne.status, 201);
   assert.equal(listingTwo.status, 201);
 
+  // ILAN OLUSTURMA RAPORU ROUND 2 (item 1): replaces `shared` with a
+  // different real photo instead of clearing to an empty array -- an
+  // update to zero photos is no longer allowed at all (same rule as
+  // create). Still proves the exact thing L13.10 cares about: `shared`
+  // is detached from listingOne but must survive physically because
+  // listingTwo still references it.
+  const replacement = await uploadOnePhoto(owner.jwt, 'replacement.png');
   const { status, body } = await updateListing(owner.jwt, listingOne.body.data.documentId, {
-    photos: [],
+    photos: [replacement],
   });
   assert.equal(status, 200);
-  assert.deepEqual(photoIds(body.data), []);
+  assert.deepEqual(photoIds(body.data), [replacement]);
 
   assert.ok(
     await fileExists(shared),
@@ -280,8 +291,19 @@ test('L13.8: replacing a photo (A -> D) ends with only D attached, and A is clea
 });
 
 test('L13.5 regression: an edit that omits the photos key entirely (e.g. no photos ever attached) still succeeds normally', async () => {
+  // ILAN OLUSTURMA RAPORU ROUND 2 (item 1): a create with zero photos is
+  // no longer reachable through the real API at all (create_listing_page.
+  // dart's own form never allowed it either) -- this test is about the
+  // UPDATE path's "untouched photos key" behavior specifically, not about
+  // whether a zero-photo listing can be created. Creates normally (one
+  // real photo), then detaches it directly to reproduce the exact
+  // "no photos currently attached" precondition this test needs.
   const owner = await registerAndLogin(`l13-nophotos-owner-${randomUUID()}@test.local`);
   const created = await createListing(owner.jwt);
+  await strapiInstance.db.query('api::listing.listing').update({
+    where: { documentId: created.body.data.documentId, publishedAt: { $notNull: true } },
+    data: { photos: [] },
+  } as any);
   const { status } = await updateListing(owner.jwt, created.body.data.documentId, {
     title: 'Baslik Degisti',
   });

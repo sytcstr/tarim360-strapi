@@ -90,11 +90,34 @@ function basePayload(overrides: Record<string, unknown> = {}) {
   };
 }
 
+const ONE_PX_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64',
+);
+
+async function uploadOnePhoto(jwt: string): Promise<number> {
+  const form = new FormData();
+  form.append('files', new Blob([ONE_PX_PNG], { type: 'image/png' }), `${randomUUID()}.png`);
+  const res = await fetch(`${BASE_URL}/upload`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${jwt}` },
+    body: form as any,
+  });
+  const body = await res.json();
+  if (res.status >= 400) throw new Error(`upload failed (${res.status}): ${JSON.stringify(body)}`);
+  return (body as any[])[0].id;
+}
+
 async function createListing(jwt: string, overrides: Record<string, unknown> = {}) {
+  let data: Record<string, unknown> = { ...basePayload(overrides), operationId: randomUUID() };
+  if (!Object.prototype.hasOwnProperty.call(overrides, 'photos')) {
+    const fileId = await uploadOnePhoto(jwt);
+    data = { ...data, photos: [fileId] };
+  }
   const res = await fetch(`${BASE_URL}/listings`, {
     method: 'POST',
     headers: authed(jwt),
-    body: JSON.stringify({ data: { ...basePayload(overrides), operationId: randomUUID() } }),
+    body: JSON.stringify({ data }),
   });
   const json = await res.json();
   return { status: res.status, body: json };
@@ -197,6 +220,7 @@ test('update: not sending ownerName/ownerCity at all leaves the existing (alread
 test('offline-sync create: a spoofed ownerName is overridden the same way as the direct path', async () => {
   const user = await registerAndLogin(`m98-offline-create-spoof-${randomUUID()}@test.local`);
   await setProfile(user, { displayName: 'Gercek Offline Isim', city: 'Trabzon' });
+  const photoId = await uploadOnePhoto(user.jwt);
 
   const res = await fetch(`${BASE_URL}/offline-sync/listings`, {
     method: 'POST',
@@ -206,8 +230,11 @@ test('offline-sync create: a spoofed ownerName is overridden the same way as the
       listing: {
         operationId: randomUUID(),
         title: `M98 Offline Ilan ${randomUUID()}`,
+        description: 'M98 offline testi icin aciklama.',
         mainType: 'tarim',
         mode: 'sell',
+        price: 100,
+        photos: [photoId],
         ownerName: 'Sahte Offline Isim',
         ownerCity: 'Rize',
       },
@@ -248,6 +275,7 @@ test('offline-sync update: a spoofed ownerName is overridden on an existing list
 
 test('offline-sync create: brand-new user with no profile passes ownerName/ownerCity through unchanged', async () => {
   const user = await registerAndLogin(`m98-offline-noprofile-${randomUUID()}@test.local`);
+  const photoId = await uploadOnePhoto(user.jwt);
   const res = await fetch(`${BASE_URL}/offline-sync/listings`, {
     method: 'POST',
     headers: authed(user.jwt),
@@ -256,8 +284,11 @@ test('offline-sync create: brand-new user with no profile passes ownerName/owner
       listing: {
         operationId: randomUUID(),
         title: `M98 Offline Noprofile ${randomUUID()}`,
+        description: 'M98 offline testi icin aciklama.',
         mainType: 'tarim',
         mode: 'sell',
+        price: 100,
+        photos: [photoId],
         ownerName: 'kullanici',
         ownerCity: 'Türkiye',
       },

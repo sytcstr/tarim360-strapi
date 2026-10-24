@@ -65,11 +65,42 @@ async function registerAndLogin(email: string): Promise<{ jwt: string; ownerId: 
 
 const authed = (jwt: string) => ({ authorization: `Bearer ${jwt}`, 'content-type': 'application/json' });
 
+const ONE_PX_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64',
+);
+
+async function uploadOnePhoto(jwt: string): Promise<number> {
+  const form = new FormData();
+  form.append('files', new Blob([ONE_PX_PNG], { type: 'image/png' }), `${randomUUID()}.png`);
+  const res = await fetch(`${BASE_URL}/upload`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${jwt}` },
+    body: form as any,
+  });
+  const body = await res.json();
+  if (res.status >= 400) throw new Error(`upload failed (${res.status}): ${JSON.stringify(body)}`);
+  return (body as any[])[0].id;
+}
+
+// ILAN OLUSTURMA RAPORU ROUND 2 (item 1): this suite is about category
+// field persistence, not content validation -- a real description and a
+// real uploaded photo are injected here (unless the caller already
+// supplies its own) so every existing call site keeps testing exactly
+// what it always tested.
 async function createListing(jwt: string, data: Record<string, unknown>) {
+  let finalData: Record<string, unknown> = { operationId: randomUUID(), ...data };
+  if (!Object.prototype.hasOwnProperty.call(finalData, 'description')) {
+    finalData.description = 'Kategori alani kalicilik testi icin aciklama.';
+  }
+  if (!Object.prototype.hasOwnProperty.call(finalData, 'photos')) {
+    const fileId = await uploadOnePhoto(jwt);
+    finalData.photos = [fileId];
+  }
   const res = await fetch(`${BASE_URL}/listings`, {
     method: 'POST',
     headers: authed(jwt),
-    body: JSON.stringify({ data: { operationId: randomUUID(), ...data } }),
+    body: JSON.stringify({ data: finalData }),
   });
   const json = await res.json();
   return { status: res.status, body: json };
@@ -325,6 +356,7 @@ test('İşlenmiş Ürünler: create persists prodDate/expDate; a price-only upda
 
 test('offline-sync (syncOfflineListing) persists logistics/processed fields on create and update', async () => {
   const user = await registerAndLogin(`l2-offline-lojistik-${randomUUID()}@test.local`);
+  const photoId = await uploadOnePhoto(user.jwt);
 
   const createRes = await fetch(`${BASE_URL}/offline-sync/listings`, {
     method: 'POST',
@@ -335,9 +367,11 @@ test('offline-sync (syncOfflineListing) persists logistics/processed fields on c
         id: `l_${Date.now()}`,
         operationId: randomUUID(),
         title: 'Offline Lojistik Ilani',
+        description: 'Lojistik alan kalicilik testi icin aciklama.',
         mainType: 'nakliyeLojistik',
         mode: 'sell',
         price: 3000,
+        photos: [photoId],
         logisticsRange: 'Ege bolgesi',
         logisticsCapacity: '10 ton',
         logisticsRoute: 'Izmir - Manisa',
@@ -436,6 +470,7 @@ test('a stranger cannot set another owner\'s Hayvancılık/Tarımsal Aletler fie
 
 test('offline-sync (syncOfflineListing) persists Hayvancılık/Tarımsal Aletler fields on create and update', async () => {
   const user = await registerAndLogin(`l2-offline-${randomUUID()}@test.local`);
+  const photoId = await uploadOnePhoto(user.jwt);
 
   const createRes = await fetch(`${BASE_URL}/offline-sync/listings`, {
     method: 'POST',
@@ -446,9 +481,11 @@ test('offline-sync (syncOfflineListing) persists Hayvancılık/Tarımsal Aletler
         id: `l_${Date.now()}`,
         operationId: randomUUID(),
         title: 'Offline Alet Ilani',
+        description: 'Alet kalicilik testi icin aciklama.',
         mainType: 'tarimsalAletler',
         mode: 'sell',
         price: 200000,
+        photos: [photoId],
         equipCondition: 'Orta',
         equipWorkHour: '3000 saat',
         equipModelYear: 2018,
@@ -479,6 +516,7 @@ test('offline-sync (syncOfflineListing) persists Hayvancılık/Tarımsal Aletler
 
 test('offline-sync (syncOfflineListing) persists equipBrand/equipModel/equipPower/equipFuelType on create and update', async () => {
   const user = await registerAndLogin(`l2-offline-brand-${randomUUID()}@test.local`);
+  const photoId = await uploadOnePhoto(user.jwt);
 
   const createRes = await fetch(`${BASE_URL}/offline-sync/listings`, {
     method: 'POST',
@@ -489,9 +527,11 @@ test('offline-sync (syncOfflineListing) persists equipBrand/equipModel/equipPowe
         id: `l_${Date.now()}`,
         operationId: randomUUID(),
         title: 'Offline Alet Ilani Marka',
+        description: 'Marka kalicilik testi icin aciklama.',
         mainType: 'tarimsalAletler',
         mode: 'sell',
         price: 200000,
+        photos: [photoId],
         equipBrand: 'John Deere',
         equipModel: '5075E',
         equipPower: '75 HP',

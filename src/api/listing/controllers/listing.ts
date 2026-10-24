@@ -26,6 +26,14 @@ import {
   MAX_LISTING_PHOTOS,
 } from '../../../utils/listing-media';
 import { fingerprintPayload, isValidOperationId, resolveOperation } from '../../../utils/operation-idempotency';
+import {
+  validateListingDemandAmountForMode,
+  validateListingDescription,
+  validateListingModeValue,
+  validateListingPriceForMode,
+  validateListingTitle,
+  validateMinListingPhotoCount,
+} from '../../../utils/listing-content-validation';
 
 const LISTING_UID = 'api::listing.listing';
 const PROFILE_UID = 'api::profile-setting.profile-setting';
@@ -481,6 +489,53 @@ export default factories.createCoreController(
         return ctx.badRequest('Sadece resim dosyalari fotograf olarak eklenebilir.');
       }
 
+      // ILAN OLUSTURMA RAPORU ROUND 2 (item 3) -- CORRECTION: an earlier
+      // version of this fix called cleanupOrphanedPhotoIds() here on a
+      // definitive rejection. That was unsafe and has been reverted.
+      //
+      // ROUND 3 (item 1) note: isPhotoOwnedByIdentity (above) no longer
+      // treats every unattached file as fair game -- it now also requires
+      // a genuine uploader-identity match (upload-uploader-identity.ts's
+      // server-stamped, client-unspoofable `uploaderEmail`) for a file
+      // that isn't already attached to one of `identity`'s own listings.
+      // That closed the real cross-account attach gap round 2's H1/H2/H3
+      // tests proved live. It did NOT change the reasoning below: deletion
+      // on "this id appeared in MY rejected request" is still explicitly
+      // out of scope this round (the user's instruction was narrowly to
+      // fix attach-time binding, not to reintroduce automatic cleanup),
+      // and upload file ids remain small, guessable sequential integers,
+      // so a deliberately invalid request naming a nearby id must still
+      // never trigger a delete. The orphan-file problem (a definitive
+      // rejection after a real upload leaves that file permanently
+      // unattached) is therefore still left OPEN and unresolved by design
+      // -- never silently "fixed" by risking someone else's data.
+      const rejectCreate = (
+        message: string,
+        kind: 'badRequest' | 'forbidden' = 'badRequest',
+      ) => (kind === 'forbidden' ? ctx.forbidden(message) : ctx.badRequest(message));
+
+      // ILAN OLUSTURMA RAPORU ROUND 2 (item 1): mirrors create_listing_page.
+      // dart's own Form validators server-side -- confirmed live (round-2
+      // targeted test) that none of these were previously enforced here at
+      // all. Checked before resolveOperation/the quota claim below so an
+      // invalid request never consumes a ledger slot or a free-tier quota
+      // unit.
+      const modeError = validateListingModeValue(clientPayload.mode);
+      if (modeError) return rejectCreate(modeError);
+      const titleError = validateListingTitle(clientPayload.title);
+      if (titleError) return rejectCreate(titleError);
+      const descriptionError = validateListingDescription(clientPayload.description);
+      if (descriptionError) return rejectCreate(descriptionError);
+      const priceError = validateListingPriceForMode(clientPayload.mode, clientPayload.price);
+      if (priceError) return rejectCreate(priceError);
+      const demandAmountError = validateListingDemandAmountForMode(
+        clientPayload.mode,
+        clientPayload.demandAmount,
+      );
+      if (demandAmountError) return rejectCreate(demandAmountError);
+      const minPhotoError = validateMinListingPhotoCount(new Set(requestedPhotoIds).size);
+      if (minPhotoError) return rejectCreate(minPhotoError);
+
       // LISTING_L20_FINAL_TECHNICAL_INTEGRITY_REPORT.md L20.10: `photos`
       // was previously included in the create fingerprint. Confirmed
       // live: if the FIRST create actually succeeded server-side but the
@@ -642,8 +697,9 @@ export default factories.createCoreController(
           ownerProfileId,
         );
         if (!canCreate) {
-          return ctx.forbidden(
+          return rejectCreate(
             `Normal hesapta ilk ${NORMAL_LISTING_FREE_COUNT} ilan ucretsizdir. Yeni ilan acmak icin ${NORMAL_LISTING_BLOCK_SIZE} ilan hakki paketi satin almalisin.`,
+            'forbidden',
           );
         }
       }
@@ -809,6 +865,9 @@ export default factories.createCoreController(
         'location',
         'ownerName',
         'ownerCity',
+        'mode',
+        'price',
+        'demandAmount',
       ]);
       // İlan 1A (Madde 98): same validated-not-blindly-trusted policy as
       // create() -- see sanitizeOwnerDisplayFields' own doc comment.
@@ -863,6 +922,12 @@ export default factories.createCoreController(
         if (exceedsMaxListingPhotos(requestedPhotoIds)) {
           return ctx.badRequest(`En fazla ${MAX_LISTING_PHOTOS} fotograf eklenebilir.`);
         }
+        // ILAN OLUSTURMA RAPORU ROUND 2: only checked when `photos` is
+        // actually part of THIS update (photosProvided) -- an edit that
+        // never touches photos must not be rejected over the listing's
+        // already-existing (and already valid) photo set.
+        const minPhotoError = validateMinListingPhotoCount(new Set(requestedPhotoIds).size);
+        if (minPhotoError) return ctx.badRequest(minPhotoError);
         const newlyReferencedIds = requestedPhotoIds.filter(
           (id) => !previousPhotoIds.includes(id),
         );
@@ -879,6 +944,57 @@ export default factories.createCoreController(
         if (nonImageId !== null) {
           return ctx.badRequest('Sadece resim dosyalari fotograf olarak eklenebilir.');
         }
+      }
+
+      // ILAN OLUSTURMA RAPORU ROUND 2: only validates a field THIS update
+      // actually submits -- never falls back to (and never rejects over) a
+      // pre-existing, untouched field's value, same "an edit that never
+      // touched this field must not be blocked by it" rule L6.4/L6.7
+      // already established for city/searchNormalized above. `price`/
+      // `demandAmount` are checked against the EFFECTIVE (merged) mode so a
+      // price-only edit on an existing sell listing is validated correctly
+      // even when this request doesn't resend `mode`.
+      const hasField = (key: string) =>
+        Object.prototype.hasOwnProperty.call(cleanInput, key);
+      if (hasField('title')) {
+        const titleError = validateListingTitle(cleanInput.title);
+        if (titleError) return ctx.badRequest(titleError);
+      }
+      if (hasField('description')) {
+        const descriptionError = validateListingDescription(cleanInput.description);
+        if (descriptionError) return ctx.badRequest(descriptionError);
+      }
+      if (hasField('mode')) {
+        const modeError = validateListingModeValue(cleanInput.mode);
+        if (modeError) return ctx.badRequest(modeError);
+      }
+      // ILAN OLUSTURMA RAPORU ROUND 2 (item 2): hasField alone is not
+      // enough here -- a mode change (buy -> sell) without price itself
+      // being resent would otherwise leave the RESULTING row with a
+      // sell listing carrying its old buy-mode price (typically null/
+      // absent), never checked by a plain "was price submitted?" gate.
+      // Validates price/demandAmount against the FINAL merged mode+value
+      // whenever EITHER side of that relationship is actually changing by
+      // THIS edit (the mode itself, or the price/demandAmount itself) --
+      // never purely because of pre-existing, untouched legacy data this
+      // edit doesn't touch at all (same L6.4/L6.7 "untouched field must
+      // not be blocked by it" rule the rest of this function follows).
+      const effectiveMode = hasField('mode') ? cleanInput.mode : (existing as any)?.mode;
+      const modeChanged = hasField('mode') && cleanInput.mode !== (existing as any)?.mode;
+      const effectivePrice = hasField('price') ? cleanInput.price : (existing as any)?.price;
+      const effectiveDemandAmount = hasField('demandAmount')
+        ? cleanInput.demandAmount
+        : (existing as any)?.demandAmount;
+      if (modeChanged || hasField('price')) {
+        const priceError = validateListingPriceForMode(effectiveMode, effectivePrice);
+        if (priceError) return ctx.badRequest(priceError);
+      }
+      if (modeChanged || hasField('demandAmount')) {
+        const demandAmountError = validateListingDemandAmountForMode(
+          effectiveMode,
+          effectiveDemandAmount,
+        );
+        if (demandAmountError) return ctx.badRequest(demandAmountError);
       }
 
       ctx.request.body = {

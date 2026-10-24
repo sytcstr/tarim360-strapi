@@ -57,20 +57,47 @@ async function registerAndLogin(email: string): Promise<string> {
 
 const authed = (jwt: string) => ({ authorization: `Bearer ${jwt}`, 'content-type': 'application/json' });
 
+const ONE_PX_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64',
+);
+
+async function uploadOnePhoto(jwt: string): Promise<number> {
+  const form = new FormData();
+  form.append('files', new Blob([ONE_PX_PNG], { type: 'image/png' }), `${randomUUID()}.png`);
+  const res = await fetch(`${BASE_URL}/upload`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${jwt}` },
+    body: form as any,
+  });
+  const body = await res.json();
+  if (res.status >= 400) throw new Error(`upload failed (${res.status}): ${JSON.stringify(body)}`);
+  return (body as any[])[0].id;
+}
+
+// ILAN OLUSTURMA RAPORU ROUND 2 (item 1): this suite is about client-
+// protected engagement/premium fields being ignored, not content
+// validation -- valid defaults (description/price/a real photo) keep
+// every existing assertion exactly as it was.
 async function createListing(jwt: string, overrides: Record<string, unknown> = {}) {
+  let data: Record<string, unknown> = {
+    title: 'Field Guard Test Ilani',
+    description: 'Field guard testi icin yeterli uzunlukta aciklama.',
+    mainType: 'bitkisel',
+    mode: 'sell',
+    price: 100,
+    location: 'Konya',
+    operationId: randomUUID(),
+    ...overrides,
+  };
+  if (!Object.prototype.hasOwnProperty.call(overrides, 'photos')) {
+    const fileId = await uploadOnePhoto(jwt);
+    data = { ...data, photos: [fileId] };
+  }
   const res = await fetch(`${BASE_URL}/listings`, {
     method: 'POST',
     headers: authed(jwt),
-    body: JSON.stringify({
-      data: {
-        title: 'Field Guard Test Ilani',
-        mainType: 'bitkisel',
-        mode: 'sell',
-        location: 'Konya',
-        operationId: randomUUID(),
-        ...overrides,
-      },
-    }),
+    body: JSON.stringify({ data }),
   });
   return res.json();
 }

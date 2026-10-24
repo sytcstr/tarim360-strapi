@@ -117,6 +117,11 @@ async function uploadOneNonImageFile(jwt: string): Promise<number> {
 function listingPayload(overrides: Record<string, unknown> = {}) {
   return {
     title: 'Offline Media Test Ilani',
+    // ILAN OLUSTURMA RAPORU ROUND 2 (item 1): the server now enforces a
+    // minimum description length -- this file's own tests are all about
+    // photo ownership/type, not content validation, so a valid default
+    // here keeps every existing assertion exactly as it was.
+    description: 'Offline media testi icin yeterli uzunlukta aciklama.',
     mainType: 'tarim',
     mode: 'sell',
     price: 100,
@@ -139,10 +144,19 @@ async function offlineSync(jwt: string, operation: string, listing: Record<strin
 // "the attacker's own listing already exists, now they attach a foreign
 // photo via the OTHER (offline-sync) path" test setup.
 async function createDirectListing(jwt: string, overrides: Record<string, unknown> = {}) {
+  // ILAN OLUSTURMA RAPORU ROUND 2 (item 1): auto-uploads a real photo
+  // unless the caller already supplied its own `photos` -- most callers
+  // of this helper only care about title/ownership, not photos, and the
+  // server now requires >=1.
+  let data: Record<string, unknown> = { ...listingPayload(overrides), operationId: randomUUID() };
+  if (!Object.prototype.hasOwnProperty.call(overrides, 'photos')) {
+    const fileId = await uploadOnePhoto(jwt);
+    data = { ...data, photos: [fileId] };
+  }
   const res = await fetch(`${BASE_URL}/listings`, {
     method: 'POST',
     headers: authed(jwt),
-    body: JSON.stringify({ data: { ...listingPayload(overrides), operationId: randomUUID() } }),
+    body: JSON.stringify({ data }),
   });
   const json = await res.json();
   return { status: res.status, body: json };
@@ -320,10 +334,11 @@ test('offline create: retrying the SAME operationId + SAME content via syncOffli
   const opId = randomUUID();
   const title = `FixB Self Retry ${randomUUID()}`;
 
+  const firstPhotoId = await uploadOnePhoto(user.jwt);
   const first = await offlineSync(user.jwt, 'create', {
     id: `l_${Date.now()}`,
     operationId: opId,
-    ...listingPayload({ title }),
+    ...listingPayload({ title, photos: [firstPhotoId] }),
   });
   assert.equal(first.status, 200);
   assert.notEqual(first.body.data.idempotent, true, 'the first attempt is a genuine new create');
@@ -334,10 +349,11 @@ test('offline create: retrying the SAME operationId + SAME content via syncOffli
 
   // Simulates the offline queue re-sending the identical row (this
   // endpoint's own prior response was lost/never confirmed).
+  const retryPhotoId = await uploadOnePhoto(user.jwt);
   const retry = await offlineSync(user.jwt, 'create', {
     id: `l_${Date.now()}`,
     operationId: opId,
-    ...listingPayload({ title }),
+    ...listingPayload({ title, photos: [retryPhotoId] }),
   });
   assert.equal(retry.status, 200);
   assert.equal(retry.body.data.idempotent, true, 'a retry of syncOfflineListing\'s own create must be recognized as the same operation');
@@ -350,17 +366,19 @@ test('offline create: the SAME operationId with DIFFERENT content is rejected as
   const opId = randomUUID();
   const title = `FixB Self Conflict ${randomUUID()}`;
 
+  const firstPhotoId = await uploadOnePhoto(user.jwt);
   const first = await offlineSync(user.jwt, 'create', {
     id: `l_${Date.now()}`,
     operationId: opId,
-    ...listingPayload({ title }),
+    ...listingPayload({ title, photos: [firstPhotoId] }),
   });
   assert.equal(first.status, 200);
 
+  const conflictPhotoId = await uploadOnePhoto(user.jwt);
   const conflicting = await offlineSync(user.jwt, 'create', {
     id: `l_${Date.now()}`,
     operationId: opId,
-    ...listingPayload({ title: `${title} DIFFERENT` }),
+    ...listingPayload({ title: `${title} DIFFERENT`, photos: [conflictPhotoId] }),
   });
   assert.equal(conflicting.status, 409);
   assert.equal(await countListingsByTitle(title), 1);
@@ -397,16 +415,18 @@ test('offline create: a genuinely different operationId creates a genuinely diff
   const user = await registerAndLogin(`fixB-different-op-${randomUUID()}@test.local`);
   const title = `FixB Different Op ${randomUUID()}`;
 
+  const firstPhotoId = await uploadOnePhoto(user.jwt);
   const first = await offlineSync(user.jwt, 'create', {
     id: `l_${Date.now()}`,
     operationId: randomUUID(),
-    ...listingPayload({ title }),
+    ...listingPayload({ title, photos: [firstPhotoId] }),
   });
   assert.equal(first.status, 200);
+  const secondPhotoId = await uploadOnePhoto(user.jwt);
   const second = await offlineSync(user.jwt, 'create', {
     id: `l_${Date.now()}`,
     operationId: randomUUID(),
-    ...listingPayload({ title }),
+    ...listingPayload({ title, photos: [secondPhotoId] }),
   });
   assert.equal(second.status, 200);
 
@@ -423,19 +443,23 @@ test('offline create: retrying the SAME operationId that was originally used via
   assert.equal(direct.status, 201);
   // createDirectListing uses its own random operationId internally, so
   // redo this one call with the operationId we control instead.
+  const v2PhotoId = await uploadOnePhoto(user.jwt);
   const res = await fetch(`${BASE_URL}/listings`, {
     method: 'POST',
     headers: authed(user.jwt),
-    body: JSON.stringify({ data: { ...listingPayload({ title: `${title} v2` }), operationId: opId } }),
+    body: JSON.stringify({
+      data: { ...listingPayload({ title: `${title} v2`, photos: [v2PhotoId] }), operationId: opId },
+    }),
   });
   const directJson = await res.json();
   assert.equal(res.status, 201);
   const realId = directJson.data.documentId ?? directJson.data.id;
 
+  const retryPhotoId = await uploadOnePhoto(user.jwt);
   const retry = await offlineSync(user.jwt, 'create', {
     id: `l_${Date.now()}`,
     operationId: opId,
-    ...listingPayload({ title: `${title} v2` }),
+    ...listingPayload({ title: `${title} v2`, photos: [retryPhotoId] }),
   });
   assert.equal(retry.status, 200);
   assert.equal(retry.body.data.idempotent, true);
@@ -522,11 +546,12 @@ test('offline update: an unrelated field change (title) also reaches the publish
 test('offline create: a listing created entirely offline (no prior direct-path attempt) is publicly visible via a plain GET', async () => {
   const user = await registerAndLogin(`b-media-offline-create-visible-${randomUUID()}@test.local`);
   const title = `Offline-Only Create ${randomUUID()}`;
+  const photoId = await uploadOnePhoto(user.jwt);
 
   const res = await offlineSync(user.jwt, 'create', {
     id: `l_${Date.now()}`,
     operationId: randomUUID(),
-    ...listingPayload({ title }),
+    ...listingPayload({ title, photos: [photoId] }),
   });
   assert.equal(res.status, 200, JSON.stringify(res.body));
   assert.ok(res.body.data.listing?.publishedAt, 'the offline-sync response itself must reflect a published row');
@@ -542,7 +567,16 @@ test('offline create: a listing created entirely offline (no prior direct-path a
   assert.equal(checkBody.data.title, title);
 });
 
-test('offline update: an explicit empty photos array clears every existing photo (user removed all of them)', async () => {
+test('offline update: an explicit empty photos array is now REJECTED (ILAN OLUSTURMA RAPORU ROUND 2, item 1: min 1 photo applies to update too, not just create)', async () => {
+  // DELIBERATE BEHAVIOR CHANGE, not a fixture fix: before this round, the
+  // direct API let a caller clear a listing to zero photos via an
+  // explicit empty array, even though create_listing_page.dart's own
+  // `_publish()` (`hasAnyPhoto` check) has NEVER allowed a real user to
+  // submit ANY listing -- create or edit -- with zero photos through the
+  // app itself. Mirroring that rule on update too (per this round's
+  // explicit mandate to cover create/update/offline-sync identically)
+  // closes a gap that was only ever reachable by a direct API caller, not
+  // through the real app.
   const user = await registerAndLogin(`b-media-remove-all-${randomUUID()}@test.local`);
   const fileA = await uploadOnePhoto(user.jwt);
   const fileB = await uploadOnePhoto(user.jwt);
@@ -553,17 +587,18 @@ test('offline update: an explicit empty photos array clears every existing photo
     id: created.body.data.id,
     photos: [],
   });
-  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.equal(res.status, 400, JSON.stringify(res.body));
 
   const check = await fetch(`${BASE_URL}/listings/${created.body.data.documentId}?populate[0]=photos`, {
     headers: authed(user.jwt),
   });
   const checkBody = await check.json();
-  // Strapi's REST serializer can return `null` (not `[]`) for a
-  // zero-attachment media relation -- same defensive normalization the
-  // direct path's own L13.10 test already applies via its photoIds()
-  // helper.
-  assert.deepEqual(checkBody.data.photos ?? [], [], 'every photo must be removed from the relation');
+  const remainingIds = (checkBody.data.photos ?? []).map((p: any) => p.id).sort();
+  assert.deepEqual(
+    remainingIds,
+    [fileA, fileB].sort(),
+    'a REJECTED update must leave the existing photos completely untouched, not partially cleared',
+  );
 });
 
 test('offline update: omitting the photos key entirely still leaves existing photos untouched (no-confidence case unaffected by the fix)', async () => {

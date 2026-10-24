@@ -1,5 +1,6 @@
 import type { Core } from '@strapi/strapi';
 import { matchesIdentity, type SessionIdentity } from './identity';
+import { isUploadedByIdentity } from './upload-uploader-identity';
 
 const LISTING_UID = 'api::listing.listing';
 const UPLOAD_FILE_UID = 'plugin::upload.file';
@@ -84,13 +85,21 @@ const findAttachingListingIdentity = async (
 
 /**
  * L13.3: a file id is safe for `identity` to attach to their OWN listing
- * when it is either (a) not currently attached to ANY listing at all
- * (a freshly-uploaded file nobody has claimed yet), or (b) already
- * attached to a listing THIS SAME identity owns (re-saving your own
- * existing photo, or an owner editing one of their other listings).
- * Rejects only the confirmed real attack this phase's forensic found:
- * attaching a file that is CURRENTLY visibly used on someone ELSE's
- * live listing.
+ * when it is either (a) already attached to a listing THIS SAME identity
+ * owns (re-saving your own existing photo, or an owner editing one of
+ * their other listings), or (b) not currently attached to ANY listing at
+ * all AND was genuinely uploaded by this SAME identity (round 3 fix --
+ * see upload-uploader-identity.ts's own header comment: before this, an
+ * unattached file was treated as "fair game" for ANY authenticated
+ * caller, which let user B attach user A's freshly-uploaded, not-yet-
+ * claimed photo to B's own listing; confirmed live). A legacy unattached
+ * file with no recorded uploader (predates this fix) is never attachable
+ * by anyone new -- it stays a known, disclosed orphan rather than being
+ * guessed at.
+ *
+ * Still rejects the original confirmed attack this phase's forensic
+ * found: attaching a file that is CURRENTLY visibly used on someone
+ * ELSE's live listing.
  */
 export const isPhotoOwnedByIdentity = async (
   strapi: Core.Strapi,
@@ -98,7 +107,9 @@ export const isPhotoOwnedByIdentity = async (
   identity: SessionIdentity,
 ): Promise<boolean> => {
   const attachedTo = await findAttachingListingIdentity(strapi, fileId);
-  if (!attachedTo) return true;
+  if (!attachedTo) {
+    return isUploadedByIdentity(strapi, fileId, identity);
+  }
   return matchesIdentity(
     { ownerEmail: attachedTo.email, ownerProfileId: attachedTo.ownerId },
     identity,

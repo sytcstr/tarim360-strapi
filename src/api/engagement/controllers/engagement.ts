@@ -32,6 +32,14 @@ import {
   MAX_LISTING_PHOTOS,
 } from '../../../utils/listing-media';
 import {
+  validateListingDemandAmountForMode,
+  validateListingDescription,
+  validateListingModeValue,
+  validateListingPriceForMode,
+  validateListingTitle,
+  validateMinListingPhotoCount,
+} from '../../../utils/listing-content-validation';
+import {
   fingerprintPayload,
   isValidOperationId,
   resolveOperation,
@@ -130,8 +138,38 @@ const findListingByAnyId = async (strapi: any, rawId: unknown) => {
     const numeric = Number(id);
     if (Number.isInteger(numeric) && numeric > 0) {
       try {
+        // ILAN OLUSTURMA RAPORU ROUND 2 (item 2): widened from the
+        // original ['id','documentId','listingNo','ownerEmail',
+        // 'ownerProfileId','ownerId'] -- confirmed live that for a
+        // NUMERIC rawId (the common case: the offline queue's own row
+        // stores the listing's real numeric id), this made
+        // `existing.title`/`mode`/`price`/etc. all undefined below, which
+        // both the EXISTING computeListingSearchFields merge (title/
+        // description/mainType/subType/location/ownerCity) and this
+        // round's new merged-state price/demandAmount validation need to
+        // be real values, not undefined, to correctly preserve/validate
+        // an untouched field. Strictly additive (more fields returned,
+        // never fewer), so every other existing caller of this function
+        // is unaffected.
         const row = await strapi.entityService.findOne(LISTING_UID as any, numeric as any, {
-          fields: ['id', 'documentId', 'listingNo', 'ownerEmail', 'ownerProfileId', 'ownerId'],
+          fields: [
+            'id',
+            'documentId',
+            'listingNo',
+            'ownerEmail',
+            'ownerProfileId',
+            'ownerId',
+            'title',
+            'description',
+            'mainType',
+            'subType',
+            'location',
+            'ownerName',
+            'ownerCity',
+            'mode',
+            'price',
+            'demandAmount',
+          ],
         });
         if (row) return row;
       } catch (_) {
@@ -562,6 +600,7 @@ export default {
     // -- checked before either the update or create branch below runs any
     // entityService call, so a rejected operation never produces a
     // partial/corrupted listing.
+    const photosProvided = Object.prototype.hasOwnProperty.call(safeListing, 'photos');
     const requestedPhotoIds = extractRequestedPhotoIds(safeListing.photos);
     // İlan 1B (Madde 47): same cap as the direct listing.ts path -- this
     // is a second real create/update path and must enforce it identically.
@@ -585,6 +624,53 @@ export default {
         ['ownerProfileId', 'ownerId'],
       );
       if (!isOwner) return ctx.forbidden('Bu ilan size ait degil.');
+
+      // ILAN OLUSTURMA RAPORU ROUND 2: same "only validate a field this
+      // specific update actually submits" rule as listing.ts's update() --
+      // the offline queue normally resends a full snapshot (see the
+      // comment on offlineOwnerDisplay above), but this stays defensive
+      // rather than assuming so.
+      const hasField = (key: string) =>
+        Object.prototype.hasOwnProperty.call(safeListing, key);
+      if (hasField('title')) {
+        const titleError = validateListingTitle(safeListing.title);
+        if (titleError) return ctx.badRequest(titleError);
+      }
+      if (hasField('description')) {
+        const descriptionError = validateListingDescription(safeListing.description);
+        if (descriptionError) return ctx.badRequest(descriptionError);
+      }
+      if (hasField('mode')) {
+        const modeError = validateListingModeValue(safeListing.mode);
+        if (modeError) return ctx.badRequest(modeError);
+      }
+      // ILAN OLUSTURMA RAPORU ROUND 2 (item 2): same FINAL merged-state
+      // rule as listing.ts's update() -- a mode change (buy -> sell)
+      // without price itself being resent must still be validated against
+      // the resulting row's real price (existing, since this request
+      // never touched it), not skipped just because `price` itself wasn't
+      // submitted.
+      const effectiveMode = hasField('mode') ? safeListing.mode : (existing as any)?.mode;
+      const modeChanged = hasField('mode') && safeListing.mode !== (existing as any)?.mode;
+      const effectivePrice = hasField('price') ? safeListing.price : (existing as any)?.price;
+      const effectiveDemandAmount = hasField('demandAmount')
+        ? safeListing.demandAmount
+        : (existing as any)?.demandAmount;
+      if (modeChanged || hasField('price')) {
+        const priceError = validateListingPriceForMode(effectiveMode, effectivePrice);
+        if (priceError) return ctx.badRequest(priceError);
+      }
+      if (modeChanged || hasField('demandAmount')) {
+        const demandAmountError = validateListingDemandAmountForMode(
+          effectiveMode,
+          effectiveDemandAmount,
+        );
+        if (demandAmountError) return ctx.badRequest(demandAmountError);
+      }
+      if (photosProvided) {
+        const minPhotoError = validateMinListingPhotoCount(new Set(requestedPhotoIds).size);
+        if (minPhotoError) return ctx.badRequest(minPhotoError);
+      }
 
       // LISTING_L6_SERVER_SEARCH_FILTER_SORT_REPORT.md L6.4/L6.7: this is
       // a second real listing-update path (the offline-sync equivalent of
@@ -633,6 +719,44 @@ export default {
       operationId = asString(listing.operationId);
       if (!isValidOperationId(operationId)) {
         return ctx.badRequest('operationId zorunlu ve UUID formatinda olmali.');
+      }
+
+      // ILAN OLUSTURMA RAPORU ROUND 2 (item 3) -- CORRECTION: see
+      // listing.ts's create() for the full reasoning. An earlier version
+      // called cleanupOrphanedPhotoIds() here; reverted. ROUND 3 (item 1):
+      // isPhotoOwnedByIdentity's "ownership" check above now also requires
+      // a genuine, server-stamped uploader-identity match for an
+      // unattached file (see upload-uploader-identity.ts), closing the
+      // real cross-account attach gap -- but deletion is still out of
+      // scope: a deliberately invalid request naming a nearby sequential
+      // file id must still never trigger a delete. The orphan-file
+      // problem stays open and unresolved by design.
+      const rejectOfflineCreate = (
+        message: string,
+        kind: 'badRequest' | 'forbidden' = 'badRequest',
+      ) => (kind === 'forbidden' ? ctx.forbidden(message) : ctx.badRequest(message));
+
+      // ILAN OLUSTURMA RAPORU ROUND 2 (item 1): this is a brand-new
+      // listing (no `existing` row) -- same full-required validation as
+      // listing.ts's create(), checked before resolveOperation/the quota
+      // claim below so an invalid request never consumes a ledger slot or
+      // a free-tier quota unit.
+      {
+        const modeError = validateListingModeValue(safeListing.mode);
+        if (modeError) return rejectOfflineCreate(modeError);
+        const titleError = validateListingTitle(safeListing.title);
+        if (titleError) return rejectOfflineCreate(titleError);
+        const descriptionError = validateListingDescription(safeListing.description);
+        if (descriptionError) return rejectOfflineCreate(descriptionError);
+        const priceError = validateListingPriceForMode(safeListing.mode, safeListing.price);
+        if (priceError) return rejectOfflineCreate(priceError);
+        const demandAmountError = validateListingDemandAmountForMode(
+          safeListing.mode,
+          safeListing.demandAmount,
+        );
+        if (demandAmountError) return rejectOfflineCreate(demandAmountError);
+        const minPhotoError = validateMinListingPhotoCount(new Set(requestedPhotoIds).size);
+        if (minPhotoError) return rejectOfflineCreate(minPhotoError);
       }
 
       // L20.10: `photos` legitimately differs between two attempts of the
@@ -780,8 +904,9 @@ export default {
           identity.ownerId,
         );
         if (!canCreate) {
-          return ctx.forbidden(
+          return rejectOfflineCreate(
             `Normal hesapta ilk ${NORMAL_LISTING_FREE_COUNT} ilan ucretsizdir. Yeni ilan acmak icin ${NORMAL_LISTING_BLOCK_SIZE} ilan hakki paketi satin almalisin.`,
+            'forbidden',
           );
         }
       }

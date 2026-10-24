@@ -114,11 +114,38 @@ function directPayload(overrides: Record<string, unknown> = {}) {
   };
 }
 
+const ONE_PX_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64',
+);
+
+async function uploadOnePhoto(jwt: string): Promise<number> {
+  const form = new FormData();
+  form.append('files', new Blob([ONE_PX_PNG], { type: 'image/png' }), `${randomUUID()}.png`);
+  const res = await fetch(`${BASE_URL}/upload`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${jwt}` },
+    body: form as any,
+  });
+  const body = await res.json();
+  if (res.status >= 400) throw new Error(`upload failed (${res.status}): ${JSON.stringify(body)}`);
+  return (body as any[])[0].id;
+}
+
+// ILAN OLUSTURMA RAPORU ROUND 2 (item 1): `photos` is already excluded
+// from the fingerprint on both paths (a retry legitimately re-uploads
+// under new ids) -- a fresh real upload per call is enough to satisfy the
+// new min-1-photo rule without disturbing cross-path parity.
 async function createDirect(jwt: string, operationId: string, overrides: Record<string, unknown> = {}) {
+  let data: Record<string, unknown> = { ...directPayload(overrides), operationId };
+  if (!Object.prototype.hasOwnProperty.call(overrides, 'photos')) {
+    const fileId = await uploadOnePhoto(jwt);
+    data = { ...data, photos: [fileId] };
+  }
   const res = await fetch(`${BASE_URL}/listings`, {
     method: 'POST',
     headers: authed(jwt),
-    body: JSON.stringify({ data: { ...directPayload(overrides), operationId } }),
+    body: JSON.stringify({ data }),
   });
   const json = await res.json();
   return { status: res.status, body: json };
@@ -179,13 +206,18 @@ function offlineQueueRow(overrides: Record<string, unknown> = {}) {
 }
 
 async function syncOffline(jwt: string, operationId: string, listingOverrides: Record<string, unknown> = {}) {
+  let rowOverrides = listingOverrides;
+  if (!Object.prototype.hasOwnProperty.call(listingOverrides, 'photos')) {
+    const fileId = await uploadOnePhoto(jwt);
+    rowOverrides = { ...listingOverrides, photos: [fileId] };
+  }
   const res = await fetch(`${BASE_URL}/offline-sync/listings`, {
     method: 'POST',
     headers: authed(jwt),
     body: JSON.stringify({
       data: {
         operation: 'create',
-        listing: { ...offlineQueueRow(listingOverrides), operationId },
+        listing: { ...offlineQueueRow(rowOverrides), operationId },
       },
     }),
   });

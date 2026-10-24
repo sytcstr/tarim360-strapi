@@ -84,21 +84,44 @@ async function registerAndLogin(email: string): Promise<string> {
  * was caught by actually running the suite (Faz B-V), exactly the kind of
  * thing a written-but-unexecuted test file cannot surface.
  */
+const ONE_PX_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64',
+);
+
+async function uploadOnePhoto(jwt: string): Promise<number> {
+  const form = new FormData();
+  form.append('files', new Blob([ONE_PX_PNG], { type: 'image/png' }), `${randomUUID()}.png`);
+  const res = await fetch(`${BASE_URL}/upload`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${jwt}` },
+    body: form as any,
+  });
+  const body = await res.json();
+  if (res.status >= 400) throw new Error(`upload failed (${res.status}): ${JSON.stringify(body)}`);
+  return (body as any[])[0].id;
+}
+
 async function createListingOwnedByStranger(overrides: Record<string, unknown> = {}) {
   const ownerJwt = await registerAndLogin(`owner-${randomUUID()}@test.local`);
+  let data: Record<string, unknown> = {
+    title: 'Test listing',
+    description: 'Engagement testi icin yeterli uzunlukta aciklama.',
+    mode: 'sell',
+    price: 100,
+    mainType: 'urun',
+    ownerEmail: 'owner@example.com',
+    operationId: randomUUID(),
+    ...overrides,
+  };
+  if (!Object.prototype.hasOwnProperty.call(overrides, 'photos')) {
+    const fileId = await uploadOnePhoto(ownerJwt);
+    data = { ...data, photos: [fileId] };
+  }
   const res = await fetch(`${BASE_URL}/listings`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${ownerJwt}` },
-    body: JSON.stringify({
-      data: {
-        title: 'Test listing',
-        mode: 'sell',
-        mainType: 'urun',
-        ownerEmail: 'owner@example.com',
-        operationId: randomUUID(),
-        ...overrides,
-      },
-    }),
+    body: JSON.stringify({ data }),
   });
   const json = await res.json();
   return json.data;

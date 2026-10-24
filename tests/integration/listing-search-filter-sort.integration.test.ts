@@ -80,11 +80,34 @@ function listingPayload(overrides: Record<string, unknown> = {}) {
   };
 }
 
+const ONE_PX_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64',
+);
+
+async function uploadOnePhoto(jwt: string): Promise<number> {
+  const form = new FormData();
+  form.append('files', new Blob([ONE_PX_PNG], { type: 'image/png' }), `${randomUUID()}.png`);
+  const res = await fetch(`${BASE_URL}/upload`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${jwt}` },
+    body: form as any,
+  });
+  const body = await res.json();
+  if (res.status >= 400) throw new Error(`upload failed (${res.status}): ${JSON.stringify(body)}`);
+  return (body as any[])[0].id;
+}
+
 async function createListing(jwt: string, overrides: Record<string, unknown> = {}) {
+  let data: Record<string, unknown> = { ...listingPayload(overrides), operationId: randomUUID() };
+  if (!Object.prototype.hasOwnProperty.call(overrides, 'photos')) {
+    const fileId = await uploadOnePhoto(jwt);
+    data = { ...data, photos: [fileId] };
+  }
   const res = await fetch(`${BASE_URL}/listings`, {
     method: 'POST',
     headers: authed(jwt),
-    body: JSON.stringify({ data: { ...listingPayload(overrides), operationId: randomUUID() } }),
+    body: JSON.stringify({ data }),
   });
   const json = await res.json();
   if (res.status >= 400) {
@@ -213,7 +236,7 @@ test('server-side sell filter', async () => {
   const jwt = await freshUserJwt('mode-sell');
   const marker = randomUUID().slice(0, 8);
   await createListing(jwt, { title: `Sell ${marker}`, mode: 'sell' });
-  await createListing(jwt, { title: `Buy ${marker}`, mode: 'buy' });
+  await createListing(jwt, { title: `Buy ${marker}`, mode: 'buy', demandAmount: 10 });
   const { body } = await discover({ mode: 'sell', search: marker });
   assert.ok(body.data.length >= 1);
   assert.ok(body.data.every((row: any) => row.mode === 'sell'));
@@ -223,7 +246,7 @@ test('server-side buy filter', async () => {
   const jwt = await freshUserJwt('mode-buy');
   const marker = randomUUID().slice(0, 8);
   await createListing(jwt, { title: `Sell2 ${marker}`, mode: 'sell' });
-  await createListing(jwt, { title: `Buy2 ${marker}`, mode: 'buy' });
+  await createListing(jwt, { title: `Buy2 ${marker}`, mode: 'buy', demandAmount: 10 });
   const { body } = await discover({ mode: 'buy', search: marker });
   assert.ok(body.data.length >= 1);
   assert.ok(body.data.every((row: any) => row.mode === 'buy'));
@@ -412,7 +435,7 @@ test('a raw filter expression sent alongside the new contract is ignored, not me
   const jwt = await freshUserJwt('security');
   const marker = randomUUID().slice(0, 8);
   await createListing(jwt, { title: `Secure ${marker}`, mode: 'sell' });
-  await createListing(jwt, { title: `Secure2 ${marker}`, mode: 'buy' });
+  await createListing(jwt, { title: `Secure2 ${marker}`, mode: 'buy', demandAmount: 10 });
 
   // Attempt to smuggle an arbitrary raw filter (asking for everything
   // whose mode is NOT 'sell', i.e. attempting to widen the result past

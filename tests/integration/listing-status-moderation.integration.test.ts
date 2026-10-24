@@ -98,9 +98,36 @@ async function call(method: string, url: string, jwt: string | null, body?: unkn
   return { status: res.status, body: await res.json().catch(() => ({})) };
 }
 
+const ONE_PX_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64',
+);
+
+async function uploadOnePhoto(jwt: string): Promise<number> {
+  const form = new FormData();
+  form.append('files', new Blob([ONE_PX_PNG], { type: 'image/png' }), `${randomUUID()}.png`);
+  const res = await fetch(`${BASE_URL}/upload`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${jwt}` },
+    body: form as any,
+  });
+  const body = await res.json();
+  if (res.status >= 400) throw new Error(`upload failed (${res.status}): ${JSON.stringify(body)}`);
+  return (body as any[])[0].id;
+}
+
 async function createListing(owner: { jwt: string }, title: string) {
+  const photoId = await uploadOnePhoto(owner.jwt);
   const r = await call('POST', `${BASE_URL}/listings`, owner.jwt, {
-    data: { operationId: randomUUID(), title, mainType: 'tarim', mode: 'sell', price: 100 },
+    data: {
+      operationId: randomUUID(),
+      title,
+      description: 'Moderasyon testi icin yeterli uzunlukta aciklama.',
+      mainType: 'tarim',
+      mode: 'sell',
+      price: 100,
+      photos: [photoId],
+    },
   });
   assert.equal(r.status, 201, JSON.stringify(r.body));
   return r.body.data as { documentId: string; id: number; listingStatus?: string };
@@ -229,13 +256,16 @@ test('no client can mutate the lifecycle: PUT, create body, offline-sync, and th
 
   // Old app builds still send `status` (+ publishedAt) on create; it must
   // be stripped, not fail Strapi's unknown-key validation.
+  const legacyPhotoId = await uploadOnePhoto(owner.jwt);
   const legacyCreate = await call('POST', `${BASE_URL}/listings`, owner.jwt, {
     data: {
       operationId: randomUUID(),
       title: `Moderasyon legacy create ${randomUUID()}`,
+      description: 'Moderasyon legacy testi icin yeterli uzunlukta aciklama.',
       mainType: 'tarim',
       mode: 'sell',
       price: 1,
+      photos: [legacyPhotoId],
       status: 'rejected',
       listingStatus: 'rejected',
       publishedAt: new Date().toISOString(),

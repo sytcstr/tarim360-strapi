@@ -62,20 +62,43 @@ async function registerAndLogin(email: string): Promise<string> {
   return json.jwt;
 }
 
+const ONE_PX_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64',
+);
+
+async function uploadOnePhoto(jwt: string): Promise<number> {
+  const form = new FormData();
+  form.append('files', new Blob([ONE_PX_PNG], { type: 'image/png' }), `${randomUUID()}.png`);
+  const res = await fetch(`${BASE_URL}/upload`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${jwt}` },
+    body: form as any,
+  });
+  const body = await res.json();
+  if (res.status >= 400) throw new Error(`upload failed (${res.status}): ${JSON.stringify(body)}`);
+  return (body as any[])[0].id;
+}
+
 async function createListingOwnedByStranger(overrides: Record<string, unknown> = {}) {
   const ownerJwt = await registerAndLogin(`l11-owner-${randomUUID()}@test.local`);
+  let data: Record<string, unknown> = {
+    title: 'L11 Test Listing',
+    description: 'L11 testi icin yeterli uzunlukta aciklama.',
+    mode: 'sell',
+    price: 100,
+    mainType: 'urun',
+    operationId: randomUUID(),
+    ...overrides,
+  };
+  if (!Object.prototype.hasOwnProperty.call(overrides, 'photos')) {
+    const fileId = await uploadOnePhoto(ownerJwt);
+    data = { ...data, photos: [fileId] };
+  }
   const res = await fetch(`${BASE_URL}/listings`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${ownerJwt}` },
-    body: JSON.stringify({
-      data: {
-        title: 'L11 Test Listing',
-        mode: 'sell',
-        mainType: 'urun',
-        operationId: randomUUID(),
-        ...overrides,
-      },
-    }),
+    body: JSON.stringify({ data }),
   });
   const json = await res.json();
   return json.data;
@@ -220,11 +243,20 @@ test('L11.4 regression: removing a favorite twice never goes negative', async ()
 
 test('L11.4 regression: a client cannot spoof favoriteCount/likeCount/viewCount/engagementVersion via a listing PUT', async () => {
   const ownerJwt = await registerAndLogin(`l11-spoof-owner-${randomUUID()}@test.local`);
+  const photoId = await uploadOnePhoto(ownerJwt);
   const createRes = await fetch(`${BASE_URL}/listings`, {
     method: 'POST',
     headers: authed(ownerJwt),
     body: JSON.stringify({
-      data: { title: 'Spoof Test', mode: 'sell', mainType: 'urun', operationId: randomUUID() },
+      data: {
+        title: 'Spoof Test',
+        description: 'L11.4 testi icin yeterli uzunlukta aciklama.',
+        mode: 'sell',
+        price: 100,
+        mainType: 'urun',
+        photos: [photoId],
+        operationId: randomUUID(),
+      },
     }),
   });
   const listing = (await createRes.json()).data;
@@ -303,11 +335,20 @@ test('L20.21 regression: like/favorite/view still succeed normally against an AC
 
 test('L20.21 regression: the owner-self-action FORBIDDEN check still fires before the new status check (not masked into a 404)', async () => {
   const ownerJwt = await registerAndLogin(`l20-status-owner-${randomUUID()}@test.local`);
+  const photoId = await uploadOnePhoto(ownerJwt);
   const createRes = await fetch(`${BASE_URL}/listings`, {
     method: 'POST',
     headers: authed(ownerJwt),
     body: JSON.stringify({
-      data: { title: 'L20 Owner Self', mode: 'sell', mainType: 'urun', operationId: randomUUID() },
+      data: {
+        title: 'L20 Owner Self',
+        description: 'L20.21 testi icin yeterli uzunlukta aciklama.',
+        mode: 'sell',
+        price: 100,
+        mainType: 'urun',
+        photos: [photoId],
+        operationId: randomUUID(),
+      },
     }),
   });
   const listing = (await createRes.json()).data;

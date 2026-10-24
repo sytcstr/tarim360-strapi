@@ -71,12 +71,40 @@ const authed = (jwt: string) => ({ authorization: `Bearer ${jwt}`, 'content-type
 const findUserById = (userId: number) =>
   strapiInstance.db.query('plugin::users-permissions.user').findOne({ where: { id: userId } } as any);
 
+const ONE_PX_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64',
+);
+
+async function uploadOnePhoto(jwt: string): Promise<number> {
+  const form = new FormData();
+  form.append('files', new Blob([ONE_PX_PNG], { type: 'image/png' }), `${randomUUID()}.png`);
+  const res = await fetch(`${BASE_URL}/upload`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${jwt}` },
+    body: form as any,
+  });
+  const body = await res.json();
+  if (res.status >= 400) throw new Error(`upload failed (${res.status}): ${JSON.stringify(body)}`);
+  return (body as any[])[0].id;
+}
+
 async function createListingAs(jwt: string) {
+  const photoId = await uploadOnePhoto(jwt);
   const res = await fetch(`${BASE_URL}/listings`, {
     method: 'POST',
     headers: authed(jwt),
     body: JSON.stringify({
-      data: { title: 'N2 Delete Test Ilani', mainType: 'bitkisel', mode: 'sell', location: 'Konya', operationId: randomUUID() },
+      data: {
+        title: 'N2 Delete Test Ilani',
+        description: 'N2 testi icin yeterli uzunlukta aciklama.',
+        mainType: 'bitkisel',
+        mode: 'sell',
+        price: 100,
+        photos: [photoId],
+        location: 'Konya',
+        operationId: randomUUID(),
+      },
     }),
   });
   const json = await res.json();

@@ -66,29 +66,62 @@ const authed = (jwt: string) => ({ authorization: `Bearer ${jwt}`, 'content-type
 function listingPayload(overrides: Record<string, unknown> = {}) {
   return {
     title: 'L3 Test Ilani',
+    description: 'L3 testi icin yeterli uzunlukta aciklama.',
     mainType: 'tarim',
     mode: 'sell',
     price: 100,
+    // ILAN OLUSTURMA RAPORU ROUND 2 (item 1): harmless default for sell
+    // mode (ignored), needed for any override that switches to 'buy'
+    // without itself specifying one.
+    demandAmount: 10,
     location: 'Konya',
     ...overrides,
   };
 }
 
+const ONE_PX_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64',
+);
+
+async function uploadOnePhoto(jwt: string): Promise<number> {
+  const form = new FormData();
+  form.append('files', new Blob([ONE_PX_PNG], { type: 'image/png' }), `${randomUUID()}.png`);
+  const res = await fetch(`${BASE_URL}/upload`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${jwt}` },
+    body: form as any,
+  });
+  const body = await res.json();
+  if (res.status >= 400) throw new Error(`upload failed (${res.status}): ${JSON.stringify(body)}`);
+  return (body as any[])[0].id;
+}
+
 async function createListing(jwt: string, overrides: Record<string, unknown> = {}) {
+  let data: Record<string, unknown> = { ...listingPayload(overrides), operationId: randomUUID() };
+  if (!Object.prototype.hasOwnProperty.call(overrides, 'photos')) {
+    const fileId = await uploadOnePhoto(jwt);
+    data = { ...data, photos: [fileId] };
+  }
   const res = await fetch(`${BASE_URL}/listings`, {
     method: 'POST',
     headers: authed(jwt),
-    body: JSON.stringify({ data: { ...listingPayload(overrides), operationId: randomUUID() } }),
+    body: JSON.stringify({ data }),
   });
   const json = await res.json();
   return { status: res.status, body: json };
 }
 
 async function createListingWithOpId(jwt: string, operationId: string, overrides: Record<string, unknown> = {}) {
+  let data: Record<string, unknown> = { ...listingPayload(overrides), operationId };
+  if (!Object.prototype.hasOwnProperty.call(overrides, 'photos')) {
+    const fileId = await uploadOnePhoto(jwt);
+    data = { ...data, photos: [fileId] };
+  }
   const res = await fetch(`${BASE_URL}/listings`, {
     method: 'POST',
     headers: authed(jwt),
-    body: JSON.stringify({ data: { ...listingPayload(overrides), operationId } }),
+    body: JSON.stringify({ data }),
   });
   const json = await res.json();
   return { status: res.status, body: json };
@@ -151,7 +184,11 @@ test('an invalid mode value is rejected, not silently accepted', async () => {
 
 test('listing type update: a title-only edit leaves mode unchanged; an explicit mode edit changes only mode', async () => {
   const user = await registerAndLogin(`l3-mode-update-${randomUUID()}@test.local`);
-  const created = await createListing(user.jwt, { mode: 'sell', title: 'Baslangic' });
+  // demandAmount explicitly cleared: this test needs a sell listing with
+  // NO stored demandAmount, to genuinely exercise "converting to buy
+  // without supplying one must fail" below (listingPayload()'s own
+  // default would otherwise already satisfy it from creation).
+  const created = await createListing(user.jwt, { mode: 'sell', title: 'Baslangic', demandAmount: undefined });
   const documentId = created.body.data.documentId;
 
   const titleOnly = await updateListing(user.jwt, documentId, { title: 'Guncellendi' });
@@ -160,7 +197,24 @@ test('listing type update: a title-only edit leaves mode unchanged; an explicit 
   assert.equal(read1.body.data.title, 'Guncellendi');
   assert.equal(read1.body.data.mode, 'sell', 'title-only update must not change mode');
 
-  const modeChange = await updateListing(user.jwt, documentId, { mode: 'buy' });
+  // ILAN OLUSTURMA RAPORU ROUND 2 (item 2) -- DELIBERATE BEHAVIOR CHANGE:
+  // changing mode to 'buy' without the new mode's own required field
+  // (demandAmount) is now rejected -- the resulting row would otherwise
+  // carry 'buy' with no valid demand amount, exactly the "alim ilani
+  // satisa cevrilince gecerli fiyat bulunmali" gap in reverse. This was
+  // previously accepted because the old validation only ever looked at
+  // whether `price`/`demandAmount` THEMSELVES were resent, never at the
+  // FINAL merged mode.
+  const modeChangeNoAmount = await updateListing(user.jwt, documentId, { mode: 'buy' });
+  assert.equal(
+    modeChangeNoAmount.status,
+    400,
+    'a mode change to buy without demandAmount must be rejected: the resulting row would have no valid demand amount',
+  );
+  const readUnchanged = await getListing(documentId);
+  assert.equal(readUnchanged.body.data.mode, 'sell', 'a rejected mode change must leave the listing exactly as it was');
+
+  const modeChange = await updateListing(user.jwt, documentId, { mode: 'buy', demandAmount: 10 });
   assert.equal(modeChange.status, 200);
   const read2 = await getListing(documentId);
   assert.equal(read2.body.data.mode, 'buy');
@@ -195,11 +249,12 @@ test('listingNo is unique across many creates, no duplicates', async () => {
 
 test('a client-supplied listingNo on create is ignored -- the server always assigns its own', async () => {
   const user = await registerAndLogin(`l3-no-spoof-create-${randomUUID()}@test.local`);
+  const photoId = await uploadOnePhoto(user.jwt);
   const res = await fetch(`${BASE_URL}/listings`, {
     method: 'POST',
     headers: authed(user.jwt),
     body: JSON.stringify({
-      data: { ...listingPayload(), listingNo: 'T360-00001', operationId: randomUUID() },
+      data: { ...listingPayload({ photos: [photoId] }), listingNo: 'T360-00001', operationId: randomUUID() },
     }),
   });
   assert.equal(res.status, 201);
@@ -261,6 +316,7 @@ test('idempotent retry (same operationId) resolves to the same listing with the 
 
 test('offline create preserves mode', async () => {
   const user = await registerAndLogin(`l3-offline-mode-${randomUUID()}@test.local`);
+  const photoId = await uploadOnePhoto(user.jwt);
   const res = await fetch(`${BASE_URL}/offline-sync/listings`, {
     method: 'POST',
     headers: authed(user.jwt),
@@ -269,7 +325,7 @@ test('offline create preserves mode', async () => {
       listing: {
         id: `l_${Date.now()}`,
         operationId: randomUUID(),
-        ...listingPayload({ mode: 'buy' }),
+        ...listingPayload({ mode: 'buy', photos: [photoId] }),
       },
     }),
   });
@@ -280,6 +336,7 @@ test('offline create preserves mode', async () => {
 
 test('offline create ignores a client-supplied listingNo and assigns its own unique one', async () => {
   const user = await registerAndLogin(`l3-offline-no-spoof-${randomUUID()}@test.local`);
+  const photoId = await uploadOnePhoto(user.jwt);
   const res = await fetch(`${BASE_URL}/offline-sync/listings`, {
     method: 'POST',
     headers: authed(user.jwt),
@@ -289,7 +346,7 @@ test('offline create ignores a client-supplied listingNo and assigns its own uni
         id: `l_${Date.now()}`,
         operationId: randomUUID(),
         listingNo: 'T360-99999',
-        ...listingPayload({ title: `Offline No Spoof ${randomUUID()}` }),
+        ...listingPayload({ title: `Offline No Spoof ${randomUUID()}`, photos: [photoId] }),
       },
     }),
   });

@@ -61,22 +61,44 @@ async function registerAndLogin(email: string): Promise<{ jwt: string }> {
 
 const authed = (jwt: string) => ({ authorization: `Bearer ${jwt}`, 'content-type': 'application/json' });
 
+const ONE_PX_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64',
+);
+
+async function uploadOnePhoto(jwt: string): Promise<number> {
+  const form = new FormData();
+  form.append('files', new Blob([ONE_PX_PNG], { type: 'image/png' }), `${randomUUID()}.png`);
+  const res = await fetch(`${BASE_URL}/upload`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${jwt}` },
+    body: form as any,
+  });
+  const body = await res.json();
+  if (res.status >= 400) throw new Error(`upload failed (${res.status}): ${JSON.stringify(body)}`);
+  return (body as any[])[0].id;
+}
+
 async function createListing(jwt: string, overrides: Record<string, unknown> = {}) {
+  let data: Record<string, unknown> = {
+    title: 'L19 Similar Test Ilani',
+    description: 'L19 similar testi icin yeterli uzunlukta aciklama.',
+    mainType: 'tarim',
+    subType: 'Tahıllar',
+    mode: 'sell',
+    price: 100,
+    location: { city: 'Konya', display: 'Konya' },
+    operationId: randomUUID(),
+    ...overrides,
+  };
+  if (!Object.prototype.hasOwnProperty.call(overrides, 'photos')) {
+    const fileId = await uploadOnePhoto(jwt);
+    data = { ...data, photos: [fileId] };
+  }
   const res = await fetch(`${BASE_URL}/listings`, {
     method: 'POST',
     headers: authed(jwt),
-    body: JSON.stringify({
-      data: {
-        title: 'L19 Similar Test Ilani',
-        mainType: 'tarim',
-        subType: 'Tahıllar',
-        mode: 'sell',
-        price: 100,
-        location: { city: 'Konya', display: 'Konya' },
-        operationId: randomUUID(),
-        ...overrides,
-      },
-    }),
+    body: JSON.stringify({ data }),
   });
   const json = await res.json();
   if (res.status >= 400) {
@@ -208,6 +230,7 @@ test('L19.14 PRODUCT DECISION: a sell-mode reference never returns a buy-mode ca
   const buyCandidate = await createListing(jwt, {
     title: `L19 Sim ModeBuy ${marker}`,
     mode: 'buy',
+    demandAmount: 10,
     subType: 'Bugday',
   });
 
@@ -218,8 +241,19 @@ test('L19.14 PRODUCT DECISION: a sell-mode reference never returns a buy-mode ca
 test('L19.13: a zero-price reference/candidate never crashes and never earns a spurious price-proximity bonus', async () => {
   const { jwt } = await registerAndLogin(`l19-sim-price-${randomUUID()}@test.local`);
   const marker = randomUUID().slice(0, 8);
-  const reference = await createListing(jwt, { title: `L19 Sim PriceRef ${marker}`, price: 0 });
-  const candidate = await createListing(jwt, { title: `L19 Sim PriceCand ${marker}`, price: 0 });
+  // ILAN OLUSTURMA RAPORU ROUND 2 (item 1): price=0 is no longer
+  // ACCEPTABLE as a fresh create (create_listing_page.dart's own form
+  // never allowed it either) -- this test is about the SIMILARITY RANKING
+  // algorithm's defensiveness against a zero-price row, whatever its
+  // origin (legacy data predating this fix, direct DB manipulation, etc.),
+  // not about the create endpoint itself. Creates normally (valid price),
+  // then patches price to 0 directly, to keep testing exactly that.
+  const reference = await createListing(jwt, { title: `L19 Sim PriceRef ${marker}` });
+  const candidate = await createListing(jwt, { title: `L19 Sim PriceCand ${marker}` });
+  await strapiInstance.db.query('api::listing.listing').updateMany({
+    where: { documentId: { $in: [reference.documentId, candidate.documentId] } },
+    data: { price: 0 },
+  } as any);
 
   const { status, body } = await similar(reference.documentId);
   assert.equal(status, 200);

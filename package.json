@@ -16,7 +16,7 @@
     "scan:orphaned-upload-files": "node --import tsx scripts/scan-orphaned-upload-files.ts",
     "strapi": "strapi",
     "test:unit": "node --import tsx --test tests/unit/**/*.test.ts",
-    "test:integration": "node --import tsx --test tests/integration/**/*.test.ts",
+    "test:integration": "node --env-file-if-exists=.env.test --import tsx --test tests/integration/**/*.test.ts",
     "test": "npm run test:unit",
     "upgrade": "npx @strapi/upgrade latest",
     "upgrade:dry": "npx @strapi/upgrade latest --dry"

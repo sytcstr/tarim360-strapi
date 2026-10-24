@@ -6,6 +6,7 @@ import {
   MOCK_INGESTION_DISABLED_LOG,
 } from '../src/services/agri-data-ingestion/production-guard';
 import { runOpenMeteoWeatherIngestion } from '../src/services/agri-weather';
+import { runPremiumFlagsBackfill } from '../src/utils/premium-flags-backfill';
 
 type EnvReader = {
   (key: string, defaultValue?: string): string;
@@ -32,6 +33,20 @@ export default (input: CronConfigInput) => {
       if (count > 0) {
         strapi.log.info(`Expired deleted account records purged: ${count}`);
       }
+    },
+    // ILAN OLUSTURMA RAPORU ROUND 2 (item 4): listing.isPremiumOwner is
+    // used as a Popular/Trending ranking tiebreak (listing-popular-query.
+    // ts's TIER2_SORT) but previously only got re-synced from the owner's
+    // live profile on a profile-setting write or a full server restart --
+    // an owner whose Premium naturally expires by date, with neither of
+    // those happening in between, kept outranking non-premium listings on
+    // a stale flag indefinitely. Runs the exact same existing resync
+    // (runPremiumFlagsBackfill, already proven safe -- it already runs on
+    // every single boot) hourly instead, bounding that staleness window to
+    // at most an hour rather than leaving it open indefinitely. Never
+    // deletes/hides any listing -- only corrects the two boolean flags.
+    '0 0 * * * *': async ({ strapi }) => {
+      await runPremiumFlagsBackfill(strapi);
     },
   };
 

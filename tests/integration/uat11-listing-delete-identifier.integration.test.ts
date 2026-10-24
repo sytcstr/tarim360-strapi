@@ -71,20 +71,42 @@ async function registerAndLogin(email: string): Promise<{ jwt: string }> {
 
 const authed = (jwt: string) => ({ authorization: `Bearer ${jwt}` });
 
+const ONE_PX_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64',
+);
+
+async function uploadOnePhoto(jwt: string): Promise<number> {
+  const form = new FormData();
+  form.append('files', new Blob([ONE_PX_PNG], { type: 'image/png' }), `${randomUUID()}.png`);
+  const res = await fetch(`${BASE_URL}/upload`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${jwt}` },
+    body: form as any,
+  });
+  const body = await res.json();
+  if (res.status >= 400) throw new Error(`upload failed (${res.status}): ${JSON.stringify(body)}`);
+  return (body as any[])[0].id;
+}
+
 async function createListing(jwt: string, overrides: Record<string, unknown> = {}) {
+  let data: Record<string, unknown> = {
+    title: 'UAT11 Delete Test Ilani',
+    description: 'UAT11 testi icin yeterli uzunlukta aciklama.',
+    mainType: 'tarim',
+    mode: 'sell',
+    price: 100,
+    operationId: randomUUID(),
+    ...overrides,
+  };
+  if (!Object.prototype.hasOwnProperty.call(overrides, 'photos')) {
+    const fileId = await uploadOnePhoto(jwt);
+    data = { ...data, photos: [fileId] };
+  }
   const res = await fetch(`${BASE_URL}/listings`, {
     method: 'POST',
     headers: { ...authed(jwt), 'content-type': 'application/json' },
-    body: JSON.stringify({
-      data: {
-        title: 'UAT11 Delete Test Ilani',
-        mainType: 'tarim',
-        mode: 'sell',
-        price: 100,
-        operationId: randomUUID(),
-        ...overrides,
-      },
-    }),
+    body: JSON.stringify({ data }),
   });
   const body = await res.json().catch(() => ({}));
   return { status: res.status, id: body?.data?.id, documentId: body?.data?.documentId };
