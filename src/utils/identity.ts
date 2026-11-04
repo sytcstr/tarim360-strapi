@@ -344,33 +344,49 @@ export const resolveThreadParticipantsByThreadId = async (
 
 /**
  * Madde 1/3 (farmer-question answer identity + notification): resolves
- * the REAL display name AND city for a profileId from its own
+ * the REAL display name, city AND avatar for a profileId from its own
  * profile-setting row (the same field public-profile.ts/conversation.ts's
  * resolveActorDisplayName already serve/use) -- never trusts a client-
- * supplied name/city for a NEW answer's embedded author fields. Falls
- * back to the given defaults (never throws, never blocks on this being
- * unavailable for a brand-new account with no profile-setting row yet).
+ * supplied name/city/avatar for a NEW question/answer/report's embedded
+ * author fields. Falls back to the given defaults (never throws, never
+ * blocks on this being unavailable for a brand-new account with no
+ * profile-setting row yet) -- a missing profile is a safe, self-derived
+ * fallback (e.g. the caller's own email local-part), never a switch to
+ * someone else's identity.
+ *
+ * Avatar resolution mirrors public-profile.ts's own `mediaUrl` preference
+ * (the real `avatarImage` media relation over the dead plain-string
+ * `avatarUrl` column, since `db.query` never auto-populates a relation
+ * unless named in `populate`) -- duplicated here in miniature rather than
+ * imported, to keep this utils module independent of an api/* service.
  */
 export const resolveActorProfile = async (
   strapi: Core.Strapi,
   profileId: string,
   fallback: { name: string; city: string },
-): Promise<{ name: string; city: string }> => {
+): Promise<{ name: string; city: string; avatarUrl: string }> => {
   const id = String(profileId ?? '').trim();
-  if (!id) return fallback;
+  const emptyAvatar = { ...fallback, avatarUrl: '' };
+  if (!id) return emptyAvatar;
   try {
     const row = await strapi.db.query('api::profile-setting.profile-setting').findOne({
       where: { profileId: id },
-      select: ['displayName', 'city'],
+      select: ['displayName', 'city', 'avatarUrl'],
+      populate: { avatarImage: true },
     } as any);
     const name = String((row as any)?.displayName ?? '').trim();
     const city = String((row as any)?.city ?? '').trim();
+    const avatarImage = (row as any)?.avatarImage;
+    const resolvedAvatarUrl =
+      (avatarImage && typeof avatarImage === 'object' ? String((avatarImage as any).url ?? '').trim() : '') ||
+      String((row as any)?.avatarUrl ?? '').trim();
     return {
       name: name || fallback.name,
       city: city || fallback.city,
+      avatarUrl: resolvedAvatarUrl,
     };
   } catch (_) {
-    return fallback;
+    return emptyAvatar;
   }
 };
 
@@ -397,6 +413,54 @@ export const isFarmerQuestionCommentKind = (rawKind: unknown): boolean => {
   if (!k) return false;
   if (k === 'farmerquestioncomment' || k === 'farmer_question_comment') return true;
   return k.includes('farmer') && (k.includes('comment') || k.includes('answer') || k.includes('reply'));
+};
+
+/**
+ * Round 4 privacy/identity fix: farmer_questions_repo.dart's
+ * `_toReportPayload` tags a question/answer report with
+ * `kind:'farmerQuestionReport'` -- a third member of the same
+ * client-authored-body-identity family as the question/comment kinds
+ * above (reporterName/reporterCity/reporterEmail/reporterProfileId live
+ * inside its `body`, exactly like a question's author* fields).
+ */
+export const isFarmerQuestionReportKind = (rawKind: unknown): boolean => {
+  const k = normalizeKindForMatch(rawKind);
+  if (!k) return false;
+  return k === 'farmerquestionreport' || k === 'farmer_question_report';
+};
+
+/**
+ * Soru/Profil/Kart denetimi Madde 10-11 (kapanış, düzeltme): a
+ * farmerQuestion row's owner has ALWAYS had an unconditional bypass of
+ * the hidden-state check (block/hidden/draft/unpublish/etc. -- moderation
+ * states where the owner legitimately still needs to see their own
+ * content's status; several pre-existing tests, e.g.
+ * farmer-question-privacy-round4's own Madde 1/4, assert exactly this and
+ * must keep passing UNCHANGED). This fix narrows that bypass only for:
+ *  - state:'deleted' (the new soft-delete marker) -- always hidden from
+ *    the owner too, regardless of the deleted/isDeleted flags;
+ *  - state:'archived' TOGETHER WITH deleted:true or isDeleted:true -- the
+ *    OLD, genuinely ambiguous shape the pre-fix `_archivedQuestionPayload`
+ *    produced (its real original intent -- a deliberate user archive vs.
+ *    some other cleanup path -- is unknown, so it is not auto-resurfaced
+ *    to the owner just because this fix shipped).
+ * A row with state:'archived' and NO deleted/isDeleted flag set to true
+ * (whether a pre-existing row with no such flag at all, or a NEW,
+ * deliberate archive that explicitly sets both to false) is NOT in this
+ * denylist -- the owner's bypass still covers it (Madde 11: "arşivli
+ * soruyu sahibi görebilsin"). Never treat a bare state:'archived' row as
+ * deleted without that additional, explicit evidence.
+ */
+export const FARMER_QUESTION_DELETED_STATE = 'deleted';
+const LEGACY_ARCHIVED_STATE = 'archived';
+
+export const isOwnerAlsoHiddenFarmerQuestionState = (
+  row: Record<string, unknown>,
+): boolean => {
+  const state = String(row.state ?? '').trim();
+  if (state === FARMER_QUESTION_DELETED_STATE) return true;
+  if (state !== LEGACY_ARCHIVED_STATE) return false;
+  return row.deleted === true || row.isDeleted === true;
 };
 
 export const isDeletedOrHiddenState = (row: Record<string, unknown>): boolean => {

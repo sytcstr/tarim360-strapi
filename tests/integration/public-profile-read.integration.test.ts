@@ -112,7 +112,15 @@ test('response exposes exactly the allowlisted fields -- nothing else', async ()
     new Set([
       'ownerId', 'displayName', 'publicUsername', 'brandName', 'city', 'bio', 'aboutText',
       'logisticsAboutText', 'accountType', 'avatarUrl', 'coverUrl', 'coverFocusY', 'avatarZoom',
-      'showcasePinnedIds', 'showcasePinnedOrder', 'ratingAverage', 'ratingCount', 'isPremium',
+      'showcasePinnedIds', 'showcasePinnedOrder', 'ratingAverage', 'ratingCount',
+      // Soru/Profil/Kart denetimi Madde 15: real, server-computed
+      // follower/following COUNTS (never the raw id lists) added to the
+      // allowlist alongside the pre-existing rating average/count.
+      'followerCount', 'followingCount',
+      // Soru/Profil/Kart denetimi Madde 13 (yorumların gerçek okuma
+      // akışı): redacted (no fromEmail/operationId/fingerprint) comments
+      // list, completing the existing "Yorumlar" tab for any viewer.
+      'comments', 'isPremium',
     ]),
   );
 });

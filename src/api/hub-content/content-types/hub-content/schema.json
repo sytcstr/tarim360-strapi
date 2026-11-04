@@ -111,6 +111,14 @@
     },
     "readingTimeMinutes": {
       "type": "integer"
+    },
+    "deleted": {
+      "type": "boolean",
+      "default": false
+    },
+    "isDeleted": {
+      "type": "boolean",
+      "default": false
     }
   }
 }

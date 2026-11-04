@@ -474,6 +474,11 @@ const authenticatedActions: string[] = [
   // answer identity + atomic per-answer insert + owner notification --
   // replaces the client-driven full-row PUT for new answers.
   'api::hub-content.hub-content.addFarmerQuestionAnswer',
+  // Soru/Profil/Kart denetimi Madde 5: server-verified answer deletion --
+  // replaces the client-driven full-row PUT, which never reached a
+  // standalone answer row at all and swallowed rejection errors as
+  // success.
+  'api::hub-content.hub-content.deleteFarmerQuestionAnswer',
 
   // Profile settings
   'api::profile-setting.profile-setting.create',
@@ -481,6 +486,17 @@ const authenticatedActions: string[] = [
   'api::profile-setting.profile-setting.findOne',
   'api::profile-setting.profile-setting.update',
   'api::profile-setting.profile-setting.delete',
+  // Soru/Profil/Kart denetimi Madde 13/14: the only real, server-
+  // controlled write paths for rating/commenting on or following
+  // someone ELSE's profile -- the generic create/update above can never
+  // reach another user's document (profile-setting-ownership.ts), and
+  // these actions are the narrow, JWT-identity-scoped exception that is
+  // allowed to.
+  'api::profile-setting.profile-setting.rateProfile',
+  'api::profile-setting.profile-setting.addProfileComment',
+  'api::profile-setting.profile-setting.followProfile',
+  'api::profile-setting.profile-setting.unfollowProfile',
+  'api::profile-setting.profile-setting.deleteProfileComment',
 
   // Engagement API v1 (ENGAGEMENT_API_CONTRACT.md) — confirmed via a real
   // boot (Faz B-V) that these action IDs were NOT granted to the

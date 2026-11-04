@@ -88,11 +88,59 @@ const SELECT_FIELDS = [
   'ratingAverageBase',
   'ratingVotesByViewer',
   'ratingVotes',
+  // Soru/Profil/Kart denetimi Madde 15/16 (düzeltme): follower/following
+  // COUNTS only (never the raw id lists -- those stay as private as the
+  // per-viewer rating vote map above). This is now ALWAYS the real,
+  // VERIFIED followerIds/followingIds length -- NOT blended with
+  // followersFallback/followingFallback at all (those are intentionally
+  // not selected here anymore). A prior version of this fix used
+  // max(real, fallback), which meant a genuine unfollow against a
+  // profile with a large legacy fallback barely moved the shown number
+  // and -- more importantly -- let an unverified, pre-fix,
+  // client-writable historic guess be PRESENTED as if it were a real,
+  // verified follower total forever. That was wrong: the fallback is
+  // not verifiable data (its individual composition is unknown and it
+  // was writable by the client before Madde 17/18's strip), so it must
+  // never be the number shown as "doğrulanabilir takip ilişkileri".
+  // KNOWN, DISCLOSED CONSEQUENCE: any profile that only has historic,
+  // pre-fix followers (never re-confirmed through followProfile) will
+  // show a VISIBLY LOWER public follower count than before this change
+  // -- this is intentional and correct (the old number was never a
+  // verified count), not a bug. followersFallback/followingFallback
+  // themselves are left exactly as stored in production (never read,
+  // written, deleted, or migrated here) -- they simply stop being
+  // blended into the PUBLIC-facing total.
+  'followerIds',
+  'followingIds',
+  // Soru/Profil/Kart denetimi Madde 13 (yorumların gerçek okuma akışı):
+  // completes the EXISTING "Yorumlar" tab, which already renders
+  // whatever incomingForProfile(profileId) returns for ANY viewer (owner
+  // or visitor) with no follower-gating/block-list of any kind anywhere
+  // in this codebase (confirmed by reading profile_comments_store.dart,
+  // hesabim_page.dart's `_isOwnerView` branch, and this controller --
+  // none of them restrict WHO can see a comment, only how the OWNER's
+  // own management UI differs from a visitor's composer UI) -- so this
+  // mirrors the exact same guest-reachable access model as every other
+  // field in this response (`auth:false` on the route), never a new
+  // visibility rule. Redacted below (fromEmail/operationId/fingerprint
+  // never leave this service).
+  'incomingProfileComments',
+  'incomingComments',
   // Selected ONLY to feed isPremiumActiveFromProfile below -- never
   // spread into PublicProfileFields / the response body.
   'activePremium',
   'activePremiumSubscription',
 ] as const;
+
+export interface PublicProfileComment {
+  id: string;
+  fromName: string;
+  fromProfileId: string;
+  avatarUrl: string;
+  text: string;
+  timeText: string;
+  rating: number;
+}
 
 export interface PublicProfileFields {
   ownerId: string;
@@ -114,6 +162,9 @@ export interface PublicProfileFields {
   showcasePinnedOrder: string;
   ratingAverage: number;
   ratingCount: number;
+  followerCount: number;
+  followingCount: number;
+  comments: PublicProfileComment[];
   isPremium: boolean;
 }
 
@@ -134,6 +185,17 @@ const num = (v: unknown, fallback = 0): number => {
  * base (seed) count/average combined with the dynamic per-viewer votes --
  * only the resulting two numbers are ever exposed, never the vote map
  * itself (which ties individual viewer identities to individual votes). */
+/** Soru/Profil/Kart denetimi Madde 15/16 (düzeltme): the real, VERIFIED
+ * follow relationship count -- ONLY the real followerIds/followingIds
+ * array length, never blended with the legacy followersFallback/
+ * followingFallback counter (see this function's callers' own SELECT_FIELDS
+ * comment for the full reasoning: the fallback is not verifiable data
+ * and must never be presented as if it were the real total). */
+const computeFollowCount = (idsRaw: unknown): number => {
+  const ids = Array.isArray(idsRaw) ? new Set(idsRaw.map((v) => String(v ?? '').trim()).filter(Boolean)) : new Set();
+  return ids.size;
+};
+
 const computeRating = (row: Record<string, any>): { average: number; count: number } => {
   const baseCount = Math.max(0, num(row.ratingBaseCount ?? row.voteCountBase, 0));
   const baseAverage = Math.min(5, Math.max(0, num(row.ratingBaseAverage ?? row.ratingAverageBase, 0)));
@@ -168,6 +230,35 @@ const MEDIA_POPULATE = { avatarImage: true, coverImage: true } as any;
 const mediaUrl = (media: unknown): string => {
   if (!media || typeof media !== 'object') return '';
   return str((media as Record<string, unknown>).url);
+};
+
+/** Soru/Profil/Kart denetimi Madde 13: redacts every entry -- fromEmail
+ * (PII) and operationId/fingerprint (internal idempotency bookkeeping,
+ * never meant to be public) are dropped; only the fields the "Yorumlar"
+ * tab actually renders are kept. An entry with no real text/fromName is
+ * skipped (matches ProfileCommentsStore._toProfileCommentList's own
+ * Flutter-side validation, so a malformed historic entry can't render
+ * as a blank comment on either side). */
+const toPublicComments = (raw: unknown): PublicProfileComment[] => {
+  if (!Array.isArray(raw)) return [];
+  const out: PublicProfileComment[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue;
+    const map = entry as Record<string, unknown>;
+    const fromName = str(map.fromName);
+    const text = str(map.text);
+    if (!fromName || !text) continue;
+    out.push({
+      id: str(map.id),
+      fromName,
+      fromProfileId: str(map.fromProfileId),
+      avatarUrl: str(map.avatarUrl),
+      text,
+      timeText: str(map.timeText) || 'Şimdi',
+      rating: Math.max(0, Math.min(5, num(map.rating, 0))),
+    });
+  }
+  return out;
 };
 
 export const resolvePublicProfile = async (
@@ -233,6 +324,9 @@ export const resolvePublicProfile = async (
       showcasePinnedOrder: str(row.showcasePinnedOrder),
       ratingAverage: average,
       ratingCount: count,
+      followerCount: computeFollowCount(row.followerIds),
+      followingCount: computeFollowCount(row.followingIds),
+      comments: toPublicComments(row.incomingProfileComments ?? row.incomingComments),
       isPremium: isPremiumActiveFromProfile(row),
     },
   };

@@ -345,3 +345,28 @@ test('UAT #1: a Popular-sorted row carries its real photo (photos relation popul
     'the populated photo must carry a resolvable url, same flat shape every other listing surface already returns',
   );
 });
+
+// ---------------------------------------------------------------------
+// Soru/Profil/Kart denetimi (kapanis denetimi) Madde 53 -- the private
+// `ownerEmail` strip at listing.ts's `sortBy=popular` branch
+// (`results.map(({ ownerEmail, ...rest }) => rest)`) had no dedicated
+// regression test, unlike the structurally identical strip on the
+// `similar()` path (listing-similar.integration.test.ts's own
+// "L19.45" test, which this mirrors exactly). The strip is read-code
+// confirmed correct today; this closes the coverage gap so a future
+// refactor of fetchPopularListingsPage's return shape can't silently
+// reintroduce an ownerEmail leak with no test catching it.
+// ---------------------------------------------------------------------
+
+test('Madde 53: Popular-sorted rows never leak the private ownerEmail field', async () => {
+  const tag = uniqueTag();
+  const owner = await registerAndLogin(`madde53-popular-privacy-${randomUUID()}@test.local`);
+  await createListing(owner, tag, { title: 'Madde53 Popular Privacy Row' });
+
+  const { status, body } = await fetchPopular(tag, '&pageSize=10');
+  assert.equal(status, 200);
+  assert.ok(body.data.length > 0);
+  for (const row of body.data) {
+    assert.equal(row.ownerEmail, undefined);
+  }
+});
