@@ -737,6 +737,13 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
       status: verified.status,
       expiresAt: asString(verified.expiresAt) || null,
       message: verified.message,
+      // Abonelik denetimi (kapanış, madde "ertelenmiş düşürme"):
+      // additive-only -- a genuinely authenticated purchase that is
+      // real but not yet active (Google's own deferred-replacement
+      // scheduling) is never shown to the client as a plain rejection
+      // or as a granted success; this makes that distinct from the
+      // HTTP contract itself.
+      deferred: verified.deferred ?? false,
     };
   },
 
@@ -909,9 +916,90 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
     const nowMs = Date.now();
     const expiresMs = Number(tx.expiresDate ?? 0) || 0;
     const revoked = Number(tx.revocationDate ?? 0) > 0;
+
+    // Abonelik denetimi (kapanış, Apple grace period -- field-source
+    // correction): Apple's real, store-extended grace deadline lives
+    // ONLY on `signedRenewalInfo.gracePeriodExpiresDate` -- a SEPARATE
+    // signed payload this webhook previously never decoded at all.
+    // Verified the SAME way as the transaction JWS (same x5c chain/root
+    // pin) -- never trusted unless its own signature checks out.
+    //
+    // Apple's official JWSRenewalInfoDecodedPayload does NOT carry a
+    // `bundleId` field at all (confirmed against Apple's own field list
+    // for this payload type -- unlike JWSTransactionDecodedPayload,
+    // which does). An earlier version of this check read
+    // `renewalInfo.bundleId`, which is always absent on genuine Apple
+    // traffic -- so in production `verifiedGracePeriodExpiresMs` would
+    // always have been 0, silently disabling the whole fix; it only
+    // "passed" its own test because that test's fake payload artificially
+    // added a field Apple never sends. The real anti-forgery/anti-mixup
+    // checks for this payload, using fields Apple actually documents:
+    //  - `originalTransactionId` must match the ALREADY bundle-verified
+    //    transaction's own originalTransactionId (tx.bundleId ===
+    //    apple.bundleId was checked earlier) -- this is what rejects a
+    //    renewalInfo for a different app/subscription, transitively,
+    //    since Apple's transaction identity space is already scoped to
+    //    this app by that earlier check.
+    //  - `environment` must match the transaction's own environment
+    //    (both decoded from the same signed notification; a mismatch
+    //    means the two payloads do not genuinely describe the same
+    //    sandbox/production context).
+    //  - `autoRenewProductId` must match the transaction's own
+    //    productId -- this round only ever extends a GRACE PERIOD (the
+    //    same subscription continuing), never a mid-grace plan change;
+    //    a differing autoRenewProductId is conservatively treated as
+    //    "not a proven grace extension for THIS subscription" rather
+    //    than guessed at.
+    // A verification failure, or any of these mismatches, does not
+    // reject the whole webhook (the notification envelope and
+    // transaction are independently already verified); it just means
+    // there is no PROVEN grace extension to honour, so this falls
+    // through to the ordinary expiry rules below -- never a guessed/
+    // invented duration.
+    let renewalInfo: Record<string, unknown> | null = null;
+    const signedRenewal = asString(data.signedRenewalInfo);
+    if (signedRenewal) {
+      try {
+        renewalInfo = verifyAppleJws(signedRenewal, { trustedRootSha256: roots });
+      } catch (e) {
+        strapi.log.warn(`Apple webhook renewalInfo rejected (ignored, no grace extension honoured): ${String(e)}`);
+      }
+    }
+    const renewalInfoMatchesThisSubscription =
+      renewalInfo != null &&
+      originalTransactionId !== '' &&
+      asString(renewalInfo.originalTransactionId) === originalTransactionId &&
+      asString(renewalInfo.environment) === asString(tx.environment) &&
+      asString(renewalInfo.autoRenewProductId) === asString(tx.productId);
+    const verifiedGracePeriodExpiresMs = renewalInfoMatchesThisSubscription
+      ? Number((renewalInfo as Record<string, unknown>).gracePeriodExpiresDate ?? 0) || 0
+      : 0;
+    // Only a PROVEN, still-future grace deadline counts as "the store is
+    // still extending access" -- a past or missing one must never be
+    // treated as if it did (see `ek süre tanınmamış` requirement below).
+    const inVerifiedGracePeriod =
+      notificationType === 'DID_FAIL_TO_RENEW' &&
+      subtype === 'GRACE_PERIOD' &&
+      verifiedGracePeriodExpiresMs > nowMs;
+    // The EFFECTIVE expiry this notification establishes: the real,
+    // signed grace deadline while genuinely still inside a proven grace
+    // window, otherwise the transaction's own (unmodified) expiresDate --
+    // never a client-supplied value, never an estimated/padded duration.
+    const effectiveExpiresMs = inVerifiedGracePeriod ? verifiedGracePeriodExpiresMs : expiresMs;
+
     let status: PurchaseStatus;
     if (revoked || notificationType === 'REFUND' || notificationType === 'REVOKE') {
       status = 'refunded';
+    } else if (inVerifiedGracePeriod) {
+      // BUG (now fixed): previously this branch only kept `status`
+      // 'pending' without ever updating the stored endsAt -- so if the
+      // ORIGINAL period had already ended by the time grace started
+      // (the normal case: grace exists precisely because the renewal
+      // failed AT the original expiry), `isCurrentlyActive` still read
+      // the stale, already-past endsAt and access was NOT actually
+      // preserved despite the record surviving. `effectiveExpiresMs`
+      // (the proven grace deadline) is what actually fixes that below.
+      status = 'pending';
     } else if (
       notificationType === 'EXPIRED' ||
       notificationType === 'GRACE_PERIOD_EXPIRED' ||
@@ -921,12 +1009,21 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
     } else if (notificationType === 'DID_CHANGE_RENEWAL_STATUS' && subtype === 'AUTO_RENEW_DISABLED') {
       status = 'canceled';
     } else if (notificationType === 'DID_FAIL_TO_RENEW') {
+      // No PROVEN Billing Grace Period extension (not enabled for this
+      // group, already exhausted, or signedRenewalInfo missing/invalid)
+      // -- no extra access was granted by the store; the expiresMs<=nowMs
+      // branch above already decided 'expired' for the normal case. This
+      // only still matters for a failed-renewal notification that
+      // happens to arrive before the current period's own expiresDate --
+      // unchanged from the prior behaviour. Never confused with a real
+      // grace extension: a payment failure with NO grace must end access
+      // exactly like before.
       status = 'pending';
     } else {
       status = 'verified';
     }
 
-    const expiresAt = expiresMs > 0 ? new Date(expiresMs).toISOString() : undefined;
+    const expiresAt = effectiveExpiresMs > 0 ? new Date(effectiveExpiresMs).toISOString() : undefined;
     const purchaseMs = Number(tx.purchaseDate ?? 0) || 0;
     const purchasedAt = purchaseMs > 0 ? new Date(purchaseMs).toISOString() : undefined;
     const claimedProduct = asString(tx.productId);

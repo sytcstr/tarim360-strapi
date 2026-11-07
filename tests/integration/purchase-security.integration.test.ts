@@ -61,7 +61,18 @@ let strapiInstance: any;
 const realFetch = globalThis.fetch;
 
 // ---- fake Google / real (test-chain-signed) Apple ---------------------------------------
-type GoogleSub = { subscriptionState: string; latestOrderId: string; lineItems: { productId: string; expiryTime: string }[]; linkedPurchaseToken?: string };
+type GoogleSub = {
+  subscriptionState: string;
+  latestOrderId: string;
+  // Abonelik denetimi (kapanış, madde "ertelenmiş düşürme"):
+  // `deferredItemReplacement` is additive/optional -- mirrors Google's
+  // own purchases.subscriptionsv2 REST shape for a deferred
+  // upgrade/downgrade (the OLD, currently-active line item carries it,
+  // pointing at the NEW product, until the real switch happens).
+  // Every existing call site that never sets it is unaffected.
+  lineItems: { productId: string; expiryTime: string; deferredItemReplacement?: { productId: string } }[];
+  linkedPurchaseToken?: string;
+};
 const googleSubs = new Map<string, GoogleSub>();
 const googleProducts = new Map<string, { purchaseState: number; orderId: string }>();
 let googleFailing = false;
@@ -654,6 +665,115 @@ test('BUG (now fixed), security gap #2 (concurrency): two concurrent idempotent-
   );
 });
 
+// Abonelik denetimi (madde 2c): a GENUINE plan change -- a DIFFERENT
+// originalTransactionId/productId, never the SAME transaction being
+// repaired/idempotently repeated -- is deliberately NOT exercised by any
+// of the "security gap #2" tests above (those all repair/repeat the
+// SAME subscription). upsertProfilePurchase's own real branch for this
+// (`!input.forcePremiumStatus || 'verified'` -> `nextPremium =
+// premiumPayload`, premiumPayloadForProduct's `rocketRemaining:
+// input.rocketRemainingOverride ?? spec.rocketIncludedTotal`) never
+// passes `rocketRemainingOverride` for a genuinely new verify() call
+// (only the idempotent-repair path above ever computes/passes it) --
+// so the DOCUMENTED, DERIVED policy is: a real new transaction always
+// grants the NEW plan's full, fresh rocket allotment, with no carry-over
+// or deduction for whatever was already consumed under the OLD plan's
+// now-superseded period. This is consistent with PurchaseStore.buy()'s
+// own identical full-reset on the Flutter side. No written product
+// policy document says otherwise, so this test records the existing,
+// derived behaviour -- it does not invent or assert a different "correct"
+// credit amount.
+test('Abonelik denetimi (madde 2c): gerçek plan değişikliği (Pro -> Eco, YENİ ve farklı bir transactionId) -- eski plandan kalan kullanılmış roket kredisi, yeni planın tam kotasını DÜŞÜRMEZ (mevcut politika, onarım senaryosuyla karıştırılmıyor)', async () => {
+  const A = await register('plan-change-rocket');
+  const pro = appleTransactionJws('pro_premium_12ay', 30);
+  const r1 = await verify(A.jwt, { productId: 'pro_premium_12ay', planTitle: 'Pro Premium', platform: 'ios', receipt: pro.receipt, transactionId: pro.transactionId });
+  assert.equal(r1.body.verified, true, JSON.stringify(r1.body));
+  assert.equal((await premiumOf(A.ownerId)).rocketRemaining, 14, 'sanity: Pro plan starts with its own full 14 credits');
+
+  // 5 premium-credit rocket activations consumed under the OLD (Pro) plan.
+  for (let i = 0; i < 5; i += 1) {
+    await strapiInstance.entityService.create('api::rocket-activation.rocket-activation', {
+      data: {
+        operationId: `op-${uid()}`,
+        payloadFingerprint: 'fp',
+        listingId: `plan-change-listing-${i}`,
+        ownerProfileId: A.ownerId,
+        sourceType: 'premium_credit',
+        days: 14,
+        rocketEndsAt: new Date(Date.now() + 14 * 86_400_000),
+      },
+    });
+  }
+
+  // A GENUINE downgrade: a brand-new, separate Apple transaction/
+  // originalTransactionId for a DIFFERENT product (Eco), never a repair
+  // or repeat of the Pro transaction above.
+  const eco = appleTransactionJws('eco_premium_12ay', 365);
+  const r2 = await verify(A.jwt, { productId: 'eco_premium_12ay', planTitle: 'Eco Premium', platform: 'ios', receipt: eco.receipt, transactionId: eco.transactionId });
+  assert.equal(r2.body.verified, true, JSON.stringify(r2.body));
+  assert.notEqual(r2.body.idempotent, true, 'this must be a genuinely NEW transaction, not the idempotent/repair path');
+
+  const after = await premiumOf(A.ownerId);
+  assert.ok(isActive(after));
+  assert.equal(after.planTitle, 'Eco Premium', 'the new plan is now current');
+  assert.equal(
+    after.rocketRemaining,
+    8,
+    'derived existing policy: a genuinely new transaction always grants the NEW plan\'s full allotment (Eco=8) -- it does not subtract the 5 credits already consumed under the superseded Pro period, and this test does not invent a different amount',
+  );
+});
+
+// Abonelik denetimi (madde 2d): distinct from the refund/stale-JWS tests
+// above (which resubmit an OLD JWS for the SAME, already-refunded
+// transaction) -- this exercises a genuinely NEW plan-change REQUEST that
+// itself gets rejected or hits a transient provider error, while the
+// user's CURRENT, unrelated membership is still valid. verify()'s own
+// control flow guarantees this structurally: a thrown provider exception
+// (line ~590 catch) and a non-verified outcome both return before
+// upsertPurchaseEvent/upsertProfilePurchase are ever called, so there is
+// nothing to assert beyond confirming no observable side effect occurs.
+test('Abonelik denetimi (madde 2d): geçerli mevcut üyelik varken yeni plan isteği reddedilirse (sahte makbuz) veya geçici hata alırsa (mağaza API\'si 500 döner), mevcut üyelik ve kalan haklar DEĞİŞMEDEN korunur', async () => {
+  const A = await register('plan-change-failed');
+  const pro = appleTransactionJws('pro_premium_12ay', 30);
+  const r1 = await verify(A.jwt, { productId: 'pro_premium_12ay', planTitle: 'Pro Premium', platform: 'ios', receipt: pro.receipt, transactionId: pro.transactionId });
+  assert.equal(r1.body.verified, true, JSON.stringify(r1.body));
+  for (let i = 0; i < 2; i += 1) {
+    await strapiInstance.entityService.create('api::rocket-activation.rocket-activation', {
+      data: {
+        operationId: `op-${uid()}`,
+        payloadFingerprint: 'fp',
+        listingId: `plan-change-failed-listing-${i}`,
+        ownerProfileId: A.ownerId,
+        sourceType: 'premium_credit',
+        days: 14,
+        rocketEndsAt: new Date(Date.now() + 14 * 86_400_000),
+      },
+    });
+  }
+  const before = await premiumOf(A.ownerId);
+  assert.ok(isActive(before));
+
+  // Rejected: a genuinely new plan-change attempt (Eco) with a fake,
+  // unverifiable receipt -- never the SAME Pro transaction/identity.
+  const rejected = await verify(A.jwt, { productId: 'eco_premium_12ay', planTitle: 'Eco Premium', platform: 'ios', receipt: `fake-${uid()}`, transactionId: `tx-${uid()}` });
+  assert.notEqual(rejected.body.verified, true, JSON.stringify(rejected.body));
+  const afterRejected = await premiumOf(A.ownerId);
+  assert.deepEqual(afterRejected, before, 'a rejected NEW plan request must not touch the existing, valid Pro membership at all');
+
+  // Transient: a genuinely new plan-change attempt (Android Eco) while
+  // the store's own API is down.
+  googleFailing = true;
+  try {
+    const token = `tok-${uid()}`;
+    const transient = await verify(A.jwt, { productId: 'premium_eco_yearly_1599', planTitle: 'Eco Premium', platform: 'android', receipt: token, transactionId: `GPA.${uid()}` });
+    assert.equal(transient.status, 400, JSON.stringify(transient.body));
+  } finally {
+    googleFailing = false;
+  }
+  const afterTransient = await premiumOf(A.ownerId);
+  assert.deepEqual(afterTransient, before, 'a transient provider outage during a NEW plan request must not touch the existing, valid Pro membership at all');
+});
+
 test('BUG (now fixed): after a REAL webhook refund, the client resubmitting its OLD (pre-refund) cached JWS through the NORMAL (non-idempotent) verify() path must not resurrect the entitlement', async () => {
   const A = await register('stale-jws-normal-verify');
   const orig = `100${uid()}`;
@@ -1017,6 +1137,25 @@ test('Google webhook: cancellation keeps access until the store expiry, expirati
   assert.equal(await premiumOf(A.ownerId), null, 'expired -> entitlement removed');
 });
 
+test('Abonelik denetimi (madde 2b, mevcut koruma doğrulandı): Google Play Billing Grace Period -- unlike Apple, Play\'s own live Subscriptions v2 API dynamically extends lineItems[].expiryTime forward for the duration of the grace window (confirmed against Google\'s official subscription-lifecycle documentation) -- this backend never special-cases SUBSCRIPTION_STATE_IN_GRACE_PERIOD by name, but still keeps access active because it trusts the live, store-extended expiryTime rather than a static notification field', async () => {
+  const A = await register('ggrace');
+  const token = `tok-${uid()}`;
+  googlePurchase(token, 'premium_pro_yearly_3599', 20, 'GPA.8888');
+  await verify(A.jwt, { productId: 'premium_pro_yearly_3599', platform: 'android', receipt: token, transactionId: 'GPA.8888' });
+
+  // Real Play traffic while in grace: subscriptionState flips to
+  // IN_GRACE_PERIOD, but the live API's own expiryTime is pushed FORWARD
+  // to the grace window's end (Google's documented behaviour) -- never
+  // left at the original, already-lapsed renewal date the way Apple's
+  // local JWS is.
+  googleSubs.get(token)!.subscriptionState = 'SUBSCRIPTION_STATE_IN_GRACE_PERIOD';
+  googleSubs.get(token)!.lineItems[0].expiryTime = isoIn(3);
+  const gracePush = await gpush(subNote(token, 6));
+  assert.equal(gracePush.status, 200, JSON.stringify(gracePush.body));
+  const inGrace = await premiumOf(A.ownerId);
+  assert.ok(isActive(inGrace), 'store is still extending access during its own grace period -- must not be nulled');
+});
+
 test('Google webhook: a voided (refunded) purchase removes the entitlement', async () => {
   const A = await register('grefund');
   const token = `tok-${uid()}`;
@@ -1046,10 +1185,240 @@ test('Google webhook: a forged pointer at an unknown token, a foreign package an
   assert.equal((await premiumOf(A.ownerId)).endsAt, kept.endsAt, 'store outage must not change the entitlement');
 });
 
+// Abonelik denetimi (kapanış, madde 1): Android plan değişikliği --
+// backend'in GERÇEK verify()/webhook yollarıyla doğrulanması (sadece
+// Flutter tarafındaki replacementMode assertion'ı yeterli değil).
+test('Google (kapanış, madde 1): YÜKSELTME (Eco -> Pro) -- eski token için GECİKMİŞ bir iptal/expired webhook bildirimi, YENİ (Pro) hak kaydını SİLMEZ (eski/yeni token bağlantısı aynı hesap için doğru işleniyor)', async () => {
+  const A = await register('gupgrade');
+  const oldToken = `tok-${uid()}`;
+  googlePurchase(oldToken, 'premium_eco_yearly_1599', 20, 'GPA.old-order');
+  const r1 = await verify(A.jwt, { productId: 'premium_eco_yearly_1599', planTitle: 'Eco Premium', platform: 'android', receipt: oldToken, transactionId: `t-${uid()}` });
+  assert.equal(r1.body.verified, true, JSON.stringify(r1.body));
+  const eco = await premiumOf(A.ownerId);
+  assert.ok(isActive(eco), 'sanity: Eco active before the upgrade');
+
+  // Genuine upgrade: a REAL NEW transaction with a DIFFERENT token --
+  // what Play actually delivers once ChangeSubscriptionParam's replace
+  // genuinely completes (never the SAME token/transaction being
+  // repaired/repeated).
+  const newToken = `tok-${uid()}`;
+  googlePurchase(newToken, 'premium_pro_yearly_3599', 365, 'GPA.new-order');
+  const r2 = await verify(A.jwt, { productId: 'premium_pro_yearly_3599', planTitle: 'Pro Premium', platform: 'android', receipt: newToken, transactionId: `t-${uid()}` });
+  assert.equal(r2.body.verified, true, JSON.stringify(r2.body));
+  assert.notEqual(r2.body.idempotent, true, 'this must be a genuinely NEW transaction, not a repeat of the Eco one');
+  const pro = await premiumOf(A.ownerId);
+  assert.ok(isActive(pro));
+  assert.notEqual(pro.endsAt, eco.endsAt, 'the new Pro period is its own, real expiry -- not reused from Eco');
+
+  // Google eventually invalidates the OLD (Eco) token once the replace
+  // fully processes on its side -- the webhook's own LIVE re-query for
+  // that exact old token now correctly reflects that, and may arrive
+  // well AFTER the new Pro transaction was already verified above
+  // (Pub/Sub does not guarantee ordering).
+  googleSubs.get(oldToken).subscriptionState = 'SUBSCRIPTION_STATE_EXPIRED';
+  googleSubs.get(oldToken).lineItems[0].expiryTime = isoIn(-1);
+  const late = await gpush(subNote(oldToken, 13));
+  assert.equal(late.status, 200, JSON.stringify(late.body));
+
+  const after = await premiumOf(A.ownerId);
+  assert.ok(isActive(after), 'the delayed OLD-token (Eco) notification must not remove the CURRENT (Pro) entitlement');
+  assert.equal(after.endsAt, pro.endsAt, 'the current Pro entitlement must be completely untouched by the old token\'s own late notification');
+  assert.equal(after.planTitle, pro.planTitle);
+});
+
+// Abonelik denetimi (kapanış, madde "ertelenmiş düşürme"): the REAL
+// Google response shape for a deferred replacement (confirmed from
+// Google's own purchases.subscriptionsv2 REST reference and the
+// "Implement Subscription replacements" codelab) -- the NEW token's own
+// subscriptionsv2 response still contains the OLD (currently active)
+// line item, which carries `deferredItemReplacement.productId` pointing
+// at the new product, until the real switch happens.
+test('BUG (now fixed), kapanış madde "ertelenmiş düşürme": Pro -> Easy ertelenmiş düşürme isteğinde Play HEMEN yeni bir Easy token/olayı verir (Google\'ın kendi codelab\'ının belgelediği davranış) -- ama mevcut Pro dönemi HÂLÂ AKTİF (deferredItemReplacement), bu nedenle Easy HENÜZ uygulanmaz; Pro planı, bitiş tarihi ve kalan krediler değişmeden kalır', async () => {
+  const A = await register('gdeferred');
+  const proToken = `tok-${uid()}`;
+  googlePurchase(proToken, 'premium_pro_yearly_3599', 300, 'GPA.pro-deferred-order');
+  const r1 = await verify(A.jwt, { productId: 'premium_pro_yearly_3599', planTitle: 'Pro Premium', platform: 'android', receipt: proToken, transactionId: `t-${uid()}` });
+  assert.equal(r1.body.verified, true, JSON.stringify(r1.body));
+  const proBefore = await premiumOf(A.ownerId);
+  assert.ok(isActive(proBefore));
+  assert.equal(proBefore.rocketRemaining, 14);
+
+  // 3 premium-credit rocket activations consumed under the still-
+  // current Pro plan, BEFORE the immediate-but-deferred Easy event
+  // below arrives.
+  for (let i = 0; i < 3; i += 1) {
+    await strapiInstance.entityService.create('api::rocket-activation.rocket-activation', {
+      data: {
+        operationId: `op-${uid()}`,
+        payloadFingerprint: 'fp',
+        listingId: `g-deferred-listing-${i}`,
+        ownerProfileId: A.ownerId,
+        sourceType: 'premium_credit',
+        days: 14,
+        rocketEndsAt: new Date(Date.now() + 14 * 86_400_000),
+      },
+    });
+  }
+
+  // The deferred downgrade request: Play issues a NEW Easy token RIGHT
+  // AWAY, but querying subscriptionsv2 with it still shows Pro as the
+  // real, currently-active line item -- with `deferredItemReplacement`
+  // pointing at Easy -- exactly Google's own documented shape. Built
+  // directly (not via the `googlePurchase()` helper, which only ever
+  // models ONE line item) since a real deferred response genuinely
+  // carries two.
+  const easyToken = `tok-${uid()}`;
+  googleSubs.set(easyToken, {
+    subscriptionState: 'SUBSCRIPTION_STATE_ACTIVE',
+    latestOrderId: 'GPA.easy-deferred-order',
+    lineItems: [
+      { productId: 'premium_pro_yearly_3599', expiryTime: isoIn(300), deferredItemReplacement: { productId: 'premium_easy_yearly_999' } },
+      { productId: 'premium_easy_yearly_999', expiryTime: isoIn(665) },
+    ],
+  });
+  const r2 = await verify(A.jwt, { productId: 'premium_easy_yearly_999', planTitle: 'Easy Premium', platform: 'android', receipt: easyToken, transactionId: `t-${uid()}` });
+  assert.equal(r2.body.verified, false, 'a deferred-but-not-yet-active replacement must never be granted as if it were already active');
+  assert.equal(r2.body.deferred, true, 'the response must honestly say this is a pending/scheduled change, not a plain rejection');
+
+  const proAfterImmediateEvent = await premiumOf(A.ownerId);
+  assert.ok(isActive(proAfterImmediateEvent), 'Pro must still be the active entitlement');
+  assert.equal(proAfterImmediateEvent.planTitle, 'Pro Premium');
+  assert.equal(new Date(proAfterImmediateEvent.endsAt).getTime(), new Date(proBefore.endsAt).getTime(), 'Pro\'s own endsAt must be completely untouched');
+  assert.equal(proAfterImmediateEvent.rocketRemaining, 14, 'Pro\'s remaining credits must be completely untouched by the immediate-but-deferred Easy event');
+
+  // A REPEATED delivery of the SAME immediate (still-deferred) event
+  // must not grant Easy either, and must not duplicate/alter anything.
+  const r2repeat = await verify(A.jwt, { productId: 'premium_easy_yearly_999', planTitle: 'Easy Premium', platform: 'android', receipt: easyToken, transactionId: `t-${uid()}` });
+  assert.equal(r2repeat.body.verified, false);
+  const proAfterRepeat = await premiumOf(A.ownerId);
+  assert.equal(proAfterRepeat.rocketRemaining, 14);
+  assert.equal(proAfterRepeat.planTitle, 'Pro Premium');
+
+  // A genuine Google webhook notification for the SAME (still-deferred)
+  // Easy token must ALSO never apply it early -- the webhook path calls
+  // upsertProfilePurchase unconditionally (no `verified` gate the way
+  // the interactive flow has), so this is a real, independently
+  // necessary check, not a duplicate of the assertions above.
+  const webhookWhileDeferred = await gpush(subNote(easyToken, 4));
+  assert.equal(webhookWhileDeferred.status, 200, JSON.stringify(webhookWhileDeferred.body));
+  const proAfterWebhook = await premiumOf(A.ownerId);
+  assert.equal(proAfterWebhook.planTitle, 'Pro Premium', 'a webhook for the still-deferred Easy token must not apply it either');
+  assert.equal(proAfterWebhook.rocketRemaining, 14);
+
+  // NOW the real period actually starts: Google's own data naturally
+  // reflects that (the old Pro line item has genuinely expired and no
+  // longer carries deferredItemReplacement; the Easy line item now
+  // carries the current period) -- exactly what the official docs say
+  // happens "after the old period ends".
+  googleSubs.set(easyToken, {
+    subscriptionState: 'SUBSCRIPTION_STATE_ACTIVE',
+    latestOrderId: 'GPA.easy-deferred-order',
+    lineItems: [{ productId: 'premium_easy_yearly_999', expiryTime: isoIn(365) }],
+  });
+  const activation = await gpush(subNote(easyToken, 2));
+  assert.equal(activation.status, 200, JSON.stringify(activation.body));
+  const easyNowActive = await premiumOf(A.ownerId);
+  assert.ok(isActive(easyNowActive));
+  assert.equal(easyNowActive.planTitle, 'Easy Premium', 'once Google\'s own data shows the real switch happened, Easy must now be correctly granted');
+  assert.equal(easyNowActive.rocketRemaining, 1, 'the real activation grants Easy\'s own full allotment -- not inherited/reduced by Pro\'s consumption (same policy as the non-deferred case)');
+
+  // A REPEATED notification for the NOW-genuinely-active Easy token must
+  // not grant a second time / duplicate credits.
+  const repeatAfterActivation = await gpush(subNote(easyToken, 2));
+  assert.equal(repeatAfterActivation.status, 200);
+  const stillOneGrant = await premiumOf(A.ownerId);
+  assert.equal(stillOneGrant.rocketRemaining, 1, 'a repeated notification after the real activation must not grant Easy\'s allotment a second time');
+});
+
+test('Google (kapanış, madde 1): DÜŞÜRME (Pro -> Easy) -- gerçek yeni dönem başladığında (GENUINE yeni Easy işlemi doğrulanınca) Easy UYGULANIR, kullanılmış roket kredisi Pro\'dan taşınmaz (mevcut "gerçek plan değişimi = tam sıfırlama" politikası Google yolu için de doğrulanıyor)', async () => {
+  const A = await register('gdowngrade');
+  const oldToken = `tok-${uid()}`;
+  googlePurchase(oldToken, 'premium_pro_yearly_3599', 30, 'GPA.pro-order');
+  const r1 = await verify(A.jwt, { productId: 'premium_pro_yearly_3599', planTitle: 'Pro Premium', platform: 'android', receipt: oldToken, transactionId: `t-${uid()}` });
+  assert.equal(r1.body.verified, true, JSON.stringify(r1.body));
+  assert.equal((await premiumOf(A.ownerId)).rocketRemaining, 14, 'sanity: Pro starts with its own full 14 credits');
+
+  // 5 premium-credit rocket activations consumed under the (still
+  // current, not-yet-downgraded) Pro plan -- Google's own deferred
+  // downgrade means NOTHING backend-side happens yet at this point;
+  // there is no "schedule a downgrade" endpoint at all -- confirmed by
+  // reading billing_gateway.dart's buy(): the client only ever calls
+  // launchBillingFlow() and waits for a REAL purchaseStream event, it
+  // never calls verify() off the native call's boolean success alone.
+  for (let i = 0; i < 5; i += 1) {
+    await strapiInstance.entityService.create('api::rocket-activation.rocket-activation', {
+      data: {
+        operationId: `op-${uid()}`,
+        payloadFingerprint: 'fp',
+        listingId: `g-downgrade-listing-${i}`,
+        ownerProfileId: A.ownerId,
+        sourceType: 'premium_credit',
+        days: 14,
+        rocketEndsAt: new Date(Date.now() + 14 * 86_400_000),
+      },
+    });
+  }
+  const stillPro = await premiumOf(A.ownerId);
+  assert.equal(stillPro.planTitle, 'Pro Premium', 'merely requesting a deferred downgrade must not change anything until a real new period actually verifies');
+  assert.equal(stillPro.rocketRemaining, 14, 'consumed credits are irrelevant until the real plan change -- nothing has touched this yet');
+
+  // The REAL new period starts: Play actually processes the deferred
+  // downgrade and delivers a genuinely NEW Easy transaction/token.
+  const newToken = `tok-${uid()}`;
+  googlePurchase(newToken, 'premium_easy_yearly_999', 365, 'GPA.easy-order');
+  const r2 = await verify(A.jwt, { productId: 'premium_easy_yearly_999', planTitle: 'Easy Premium', platform: 'android', receipt: newToken, transactionId: `t-${uid()}` });
+  assert.equal(r2.body.verified, true, JSON.stringify(r2.body));
+  const easy = await premiumOf(A.ownerId);
+  assert.ok(isActive(easy));
+  assert.equal(easy.planTitle, 'Easy Premium');
+  assert.equal(easy.rocketRemaining, 1, 'derived policy (same as Apple\'s, madde 2c): a genuinely new transaction grants the NEW plan\'s own full allotment (Easy=1), it does not inherit/reduce by Pro\'s consumption');
+
+  // The OLD (Pro) token's own late terminal notification, arriving AFTER
+  // Easy is already current, must not remove it.
+  googleSubs.get(oldToken).subscriptionState = 'SUBSCRIPTION_STATE_EXPIRED';
+  googleSubs.get(oldToken).lineItems[0].expiryTime = isoIn(-1);
+  const late = await gpush(subNote(oldToken, 13));
+  assert.equal(late.status, 200, JSON.stringify(late.body));
+  const after = await premiumOf(A.ownerId);
+  assert.ok(isActive(after), 'the delayed OLD-token (Pro) notification must not remove the CURRENT (Easy) entitlement');
+  assert.equal(after.planTitle, 'Easy Premium');
+  assert.equal(after.rocketRemaining, 1);
+});
+
 // ======================================================================================
 // D. Apple App Store Server Notifications V2 (signed payload verified against the chain)
 // ======================================================================================
-const anote = (orig: string, o: { type?: string; subtype?: string; signedDate?: number; txSignedDate?: number; expires?: number; revoked?: number; env?: string; bundle?: string; product?: string; signer?: typeof EVIL } = {}) => {
+const anote = (
+  orig: string,
+  o: {
+    type?: string;
+    subtype?: string;
+    signedDate?: number;
+    txSignedDate?: number;
+    expires?: number;
+    revoked?: number;
+    env?: string;
+    bundle?: string;
+    product?: string;
+    signer?: typeof EVIL;
+    // Apple grace period closure: when set, a SIGNED
+    // signedRenewalInfo (same x5c chain as the transaction, or
+    // `renewalSigner` when deliberately different/untrusted) is
+    // attached carrying this gracePeriodExpiresDate -- the only field
+    // appleWebhook is allowed to treat as the store's real, extended
+    // grace deadline. Omitted entirely (not just absent/invalid) by
+    // every existing call site, so nothing pre-existing is affected.
+    gracePeriodExpiresDate?: number;
+    renewalSigner?: typeof EVIL;
+    // Deliberate MISMATCHES against the real transaction, to prove the
+    // renewalInfo-matches-this-subscription checks actually reject them
+    // -- never present on normal, consistent traffic.
+    renewalOriginalTransactionId?: string;
+    renewalEnvironment?: string;
+    renewalProduct?: string;
+    omitRenewalInfo?: boolean;
+  } = {},
+) => {
   const tx = {
     transactionId: `T${orig}-${uid()}`, originalTransactionId: orig, productId: o.product ?? 'pro_premium_12ay', bundleId: o.bundle ?? BUNDLE,
     expiresDate: o.expires ?? Date.now() + 30 * 86_400_000, environment: o.env ?? 'Production',
@@ -1062,9 +1431,35 @@ const anote = (orig: string, o: { type?: string; subtype?: string; signedDate?: 
     signedDate: o.txSignedDate ?? o.signedDate ?? Date.now(),
     ...(o.revoked ? { revocationDate: o.revoked } : {}),
   };
+  // Apple's real JWSRenewalInfoDecodedPayload shape -- deliberately NO
+  // `bundleId` field (confirmed: that field does not exist on this
+  // payload type, unlike the transaction's own JWSTransactionDecodedPayload).
+  // Consistent by default (same originalTransactionId/environment/
+  // autoRenewProductId as `tx` above, as real Apple traffic always is);
+  // a test overrides one deliberately to prove the mismatch is rejected.
+  const renewalInfo = {
+    originalTransactionId: o.renewalOriginalTransactionId ?? orig,
+    autoRenewProductId: o.renewalProduct ?? o.product ?? 'pro_premium_12ay',
+    environment: o.renewalEnvironment ?? o.env ?? 'Production',
+    signedDate: o.signedDate ?? Date.now(),
+    ...(o.gracePeriodExpiresDate ? { gracePeriodExpiresDate: o.gracePeriodExpiresDate } : {}),
+  };
   return post('/purchases/webhooks/apple', null, {
     signedPayload: jws(
-      { notificationType: o.type ?? 'DID_RENEW', subtype: o.subtype ?? '', notificationUUID: uid(), signedDate: o.signedDate ?? Date.now(), data: { bundleId: o.bundle ?? BUNDLE, environment: o.env ?? 'Production', signedTransactionInfo: jws(tx, o.signer ?? {}) } },
+      {
+        notificationType: o.type ?? 'DID_RENEW',
+        subtype: o.subtype ?? '',
+        notificationUUID: uid(),
+        signedDate: o.signedDate ?? Date.now(),
+        data: {
+          bundleId: o.bundle ?? BUNDLE,
+          environment: o.env ?? 'Production',
+          signedTransactionInfo: jws(tx, o.signer ?? {}),
+          ...(o.gracePeriodExpiresDate !== undefined && !o.omitRenewalInfo
+            ? { signedRenewalInfo: jws(renewalInfo, o.renewalSigner ?? o.signer ?? {}) }
+            : {}),
+        },
+      },
       o.signer ?? {},
     ),
   });
@@ -1122,6 +1517,195 @@ test('Apple webhook: auto-renew off keeps access until expiry; expiration and re
   const second = await boundAppleUser('arefund', 20);
   await anote(second.orig, { type: 'REFUND', signedDate: Date.now() + 10, revoked: Date.now() });
   assert.equal(await premiumOf(second.A.ownerId), null, 'refund/revocation -> removed');
+});
+
+// Abonelik denetimi (kapanış, Apple grace period): sets the stored
+// activePremium.endsAt directly into the past, simulating the NORMAL
+// real-world case -- the original period has ALREADY ended (that is
+// WHY the renewal failed and grace exists at all). The earlier version
+// of this test accidentally left the original 20-day-future endsAt
+// untouched, so "access preserved" was trivially true for the WRONG
+// reason (the original period had not actually ended), never actually
+// proving the grace deadline itself was being honoured.
+const forceStoredEndsAtIntoPast = async (ownerId: string) => {
+  const row = await strapiInstance.db.query('api::profile-setting.profile-setting').findOne({ where: { profileId: ownerId } });
+  const premium = (row as any)?.activePremium ?? (row as any)?.activePremiumSubscription;
+  const past = { ...premium, endsAt: new Date(Date.now() - 86_400_000).toISOString() };
+  await strapiInstance.db.query('api::profile-setting.profile-setting').update({
+    where: { profileId: ownerId },
+    data: { activePremium: past, activePremiumSubscription: past },
+  });
+};
+
+test('Abonelik denetimi (kapanış): Apple Billing Grace Period -- ORİJİNAL endsAt zaten geçmişken, imzası doğrulanmış signedRenewalInfo.gracePeriodExpiresDate kullanılarak erişim GERÇEKTEN uzatılıyor (kayıt silinmemesi tek başına yeterli değildi)', async () => {
+  const { A, orig } = await boundAppleUser('agrace2', 20);
+  await forceStoredEndsAtIntoPast(A.ownerId);
+  assert.ok(!isActive(await premiumOf(A.ownerId)), 'sanity: the original period has genuinely already ended');
+
+  const t = Date.now();
+  const graceDeadline = t + 3 * 86_400_000;
+  await anote(orig, {
+    type: 'DID_FAIL_TO_RENEW',
+    subtype: 'GRACE_PERIOD',
+    signedDate: t + 10,
+    expires: t - 5000,
+    gracePeriodExpiresDate: graceDeadline,
+  });
+  const inGrace = await premiumOf(A.ownerId);
+  assert.ok(isActive(inGrace), 'the PROVEN grace deadline, not the stale original endsAt, must now decide activity');
+  assert.ok(
+    Math.abs(new Date(inGrace.endsAt).getTime() - graceDeadline) < 5000,
+    'endsAt must be advanced to the real, signed gracePeriodExpiresDate -- not left at the past original expiry',
+  );
+  assert.equal(inGrace.autoRenew, false);
+  assert.equal(inGrace.autoRenewOffReason, 'payment_pending');
+});
+
+test('Abonelik denetimi (kapanış): aynı senaryo ama signedRenewalInfo YOK (veya imzası geçersiz) -- tahmini/varsayılan süre EKLENMEZ, orijinal endsAt zaten geçmişse erişim doğru şekilde kapanır', async () => {
+  const { A, orig } = await boundAppleUser('agrace-noinfo', 20);
+  await forceStoredEndsAtIntoPast(A.ownerId);
+
+  const t = Date.now();
+  // No gracePeriodExpiresDate passed at all -- anote() omits
+  // signedRenewalInfo entirely in that case (see its own doc comment).
+  await anote(orig, { type: 'DID_FAIL_TO_RENEW', subtype: 'GRACE_PERIOD', signedDate: t + 10, expires: t - 5000 });
+  const result = await premiumOf(A.ownerId);
+  assert.equal(result, null, 'no proven grace extension exists -- a payment failure with NO real grace must end access exactly like before, never guessed into staying active');
+});
+
+test('Abonelik denetimi (kapanış): signedRenewalInfo VAR ama imzası GEÇERSİZ (saldırgan tarafından üretilmiş) -- yine tahmini süre eklenmez, aynı davranış', async () => {
+  const { A, orig } = await boundAppleUser('agrace-forged', 20);
+  await forceStoredEndsAtIntoPast(A.ownerId);
+
+  const t = Date.now();
+  await anote(orig, {
+    type: 'DID_FAIL_TO_RENEW',
+    subtype: 'GRACE_PERIOD',
+    signedDate: t + 10,
+    expires: t - 5000,
+    gracePeriodExpiresDate: t + 3 * 86_400_000,
+    renewalSigner: EVIL,
+  });
+  const result = await premiumOf(A.ownerId);
+  assert.equal(result, null, 'a forged/unsigned grace deadline must never be trusted, regardless of what date it claims');
+});
+
+test('Abonelik denetimi (kapanış, alan kaynağı düzeltmesi): Apple\'ın GERÇEK şemasına uygun signedRenewalInfo -- bundleId alanı YOK (Apple bunu hiç göndermez), yine de originalTransactionId/environment/autoRenewProductId tutarlı olduğu için grace süresi geçerli sayılır', async () => {
+  const { A, orig } = await boundAppleUser('agrace-realshape', 20);
+  await forceStoredEndsAtIntoPast(A.ownerId);
+  const t = Date.now();
+  const graceDeadline = t + 3 * 86_400_000;
+  await anote(orig, {
+    type: 'DID_FAIL_TO_RENEW',
+    subtype: 'GRACE_PERIOD',
+    signedDate: t + 10,
+    expires: t - 5000,
+    gracePeriodExpiresDate: graceDeadline,
+  });
+  const inGrace = await premiumOf(A.ownerId);
+  assert.ok(isActive(inGrace), 'real-shaped (no bundleId) but internally consistent renewalInfo must still extend access');
+  assert.ok(Math.abs(new Date(inGrace.endsAt).getTime() - graceDeadline) < 5000);
+});
+
+test('Abonelik denetimi (kapanış, alan kaynağı düzeltmesi): signedRenewalInfo GEÇERLİ imzalı ama BAŞKA bir originalTransactionId\'ye ait (başka abonelik/uygulama) -- reddedilir', async () => {
+  const { A, orig } = await boundAppleUser('agrace-wrongtx', 20);
+  await forceStoredEndsAtIntoPast(A.ownerId);
+  const t = Date.now();
+  await anote(orig, {
+    type: 'DID_FAIL_TO_RENEW',
+    subtype: 'GRACE_PERIOD',
+    signedDate: t + 10,
+    expires: t - 5000,
+    gracePeriodExpiresDate: t + 3 * 86_400_000,
+    renewalOriginalTransactionId: `other-${uid()}`,
+  });
+  assert.equal(await premiumOf(A.ownerId), null, 'a genuinely signed grace deadline for a DIFFERENT subscription must never be honoured');
+});
+
+test('Abonelik denetimi (kapanış, alan kaynağı düzeltmesi): signedRenewalInfo GEÇERLİ imzalı ama ortam (environment) işlemle uyuşmuyor (Sandbox/Production karışması) -- reddedilir', async () => {
+  const { A, orig } = await boundAppleUser('agrace-wrongenv', 20);
+  await forceStoredEndsAtIntoPast(A.ownerId);
+  const t = Date.now();
+  await anote(orig, {
+    type: 'DID_FAIL_TO_RENEW',
+    subtype: 'GRACE_PERIOD',
+    signedDate: t + 10,
+    expires: t - 5000,
+    gracePeriodExpiresDate: t + 3 * 86_400_000,
+    renewalEnvironment: 'Sandbox',
+  });
+  assert.equal(await premiumOf(A.ownerId), null, 'a renewalInfo whose environment does not match the transaction\'s own must never be honoured');
+});
+
+test('Abonelik denetimi (kapanış, alan kaynağı düzeltmesi): signedRenewalInfo GEÇERLİ imzalı ama autoRenewProductId işlemin productId\'siyle uyuşmuyor (olası plan değişimi) -- bu tur bunu grace uzatması saymaz, reddedilir', async () => {
+  const { A, orig } = await boundAppleUser('agrace-wrongproduct', 20);
+  await forceStoredEndsAtIntoPast(A.ownerId);
+  const t = Date.now();
+  await anote(orig, {
+    type: 'DID_FAIL_TO_RENEW',
+    subtype: 'GRACE_PERIOD',
+    signedDate: t + 10,
+    expires: t - 5000,
+    gracePeriodExpiresDate: t + 3 * 86_400_000,
+    renewalProduct: 'eco_premium_12ay',
+  });
+  assert.equal(await premiumOf(A.ownerId), null, 'a mismatched autoRenewProductId is conservatively NOT treated as a proven grace extension for this subscription');
+});
+
+test('Abonelik denetimi (kapanış): grace içindeyken ödeme kurtarılır (gerçek DID_RENEW) -- endsAt GERÇEK yeni döneme geçer, autoRenew tekrar true olur, autoRenewOffReason temizlenir', async () => {
+  const { A, orig } = await boundAppleUser('agrace-recover', 20);
+  await forceStoredEndsAtIntoPast(A.ownerId);
+  const t = Date.now();
+  await anote(orig, { type: 'DID_FAIL_TO_RENEW', subtype: 'GRACE_PERIOD', signedDate: t + 10, expires: t - 5000, gracePeriodExpiresDate: t + 3 * 86_400_000 });
+  assert.ok(isActive(await premiumOf(A.ownerId)));
+
+  const newExpiry = t + 400 * 86_400_000;
+  await anote(orig, { type: 'DID_RENEW', signedDate: t + 20, expires: newExpiry });
+  const recovered = await premiumOf(A.ownerId);
+  assert.ok(isActive(recovered));
+  assert.equal(new Date(recovered.endsAt).getTime(), newExpiry, 'a real recovery uses the genuinely new period, not the grace deadline');
+  assert.equal(recovered.autoRenew, true);
+  assert.ok(!recovered.autoRenewOffReason, 'a fresh verified renewal is a full reset -- the stale payment-pending reason must not linger');
+});
+
+test('Abonelik denetimi (kapanış): grace içindeyken İADE gelirse hak tamamen kaldırılır (grace devam ediyor olması iadeyi engellemez)', async () => {
+  const { A, orig } = await boundAppleUser('agrace-refund', 20);
+  await forceStoredEndsAtIntoPast(A.ownerId);
+  const t = Date.now();
+  await anote(orig, { type: 'DID_FAIL_TO_RENEW', subtype: 'GRACE_PERIOD', signedDate: t + 10, expires: t - 5000, gracePeriodExpiresDate: t + 3 * 86_400_000 });
+  assert.ok(isActive(await premiumOf(A.ownerId)));
+
+  await anote(orig, { type: 'REFUND', signedDate: t + 20, revoked: t + 20 });
+  assert.equal(await premiumOf(A.ownerId), null, 'a refund during grace must still fully remove the entitlement');
+});
+
+test('Abonelik denetimi (madde 2g): kullanıcının kendi iptali ile mağazanın ödeme sorunu/grace period sırasında autoRenew=false olması ARTIK aynı sebep olarak görünmüyor -- Flutter ekranı ikisini aynı kesin "Yenileme Kapalı" metniyle karıştırmasın diye ayrı bir autoRenewOffReason taşınıyor', async () => {
+  const canceled = await boundAppleUser('madde2g-canceled', 20);
+  await anote(canceled.orig, { type: 'DID_CHANGE_RENEWAL_STATUS', subtype: 'AUTO_RENEW_DISABLED', signedDate: Date.now() + 10 });
+  const canceledSub = await premiumOf(canceled.A.ownerId);
+  assert.ok(isActive(canceledSub));
+  assert.equal(canceledSub.autoRenew, false);
+  assert.equal(canceledSub.autoRenewOffReason, 'user_canceled');
+
+  const grace = await boundAppleUser('madde2g-grace', 20);
+  const t = Date.now();
+  await anote(grace.orig, {
+    type: 'DID_FAIL_TO_RENEW',
+    subtype: 'GRACE_PERIOD',
+    signedDate: t + 10,
+    expires: t - 5000,
+    gracePeriodExpiresDate: t + 3 * 86_400_000,
+  });
+  const graceSub = await premiumOf(grace.A.ownerId);
+  assert.ok(isActive(graceSub));
+  assert.equal(graceSub.autoRenew, false);
+  assert.equal(graceSub.autoRenewOffReason, 'payment_pending');
+
+  assert.notEqual(
+    canceledSub.autoRenewOffReason,
+    graceSub.autoRenewOffReason,
+    'a deliberate cancellation and a store-side payment problem must be distinguishable, not collapsed into the same autoRenew=false with no further signal',
+  );
 });
 
 test('BUG (now fixed): a webhook for an OLD, already-superseded original transaction (e.g. a late/duplicate notification arriving after the SAME owner already re-subscribed with a genuinely NEW, separate transaction) reporting expired/refunded must NOT null out the CURRENT, still-valid Premium entitlement that the new transaction produced', async () => {

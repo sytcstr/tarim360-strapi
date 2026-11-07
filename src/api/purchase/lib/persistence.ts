@@ -277,9 +277,39 @@ export const upsertProfilePurchase = async (
     nextPremium &&
     typeof nextPremium === 'object'
   ) {
+    // Abonelik denetimi (madde 2g): 'canceled' (user turned auto-renew
+    // off themselves, e.g. DID_CHANGE_RENEWAL_STATUS/AUTO_RENEW_DISABLED)
+    // and 'pending' (a payment/renewal PROBLEM the store is still
+    // retrying -- e.g. DID_FAIL_TO_RENEW, including the Billing Grace
+    // Period branch above) used to collapse into the exact same
+    // `autoRenew: false` with no further distinction -- so the Flutter
+    // UI (which only ever reads `autoRenew`) showed the identical
+    // "Yenileme Kapalı" wording for a user's own deliberate
+    // cancellation and for a failing/retrying payment it did not cause
+    // and that may yet resolve on its own. Additive-only field; a
+    // genuinely new/renewed verified purchase (the unconditional
+    // `nextPremium = premiumPayload` branch above) never carries this
+    // key at all, so it never lingers once the real cause clears.
+    //
+    // BUG (now fixed), Apple grace period closure: this branch used to
+    // leave `endsAt` completely untouched -- so if the ORIGINAL period
+    // had already ended by the time a Billing Grace Period notification
+    // arrived (the normal case: grace exists because the renewal failed
+    // AT the original expiry), the stored endsAt stayed in the past and
+    // `isCurrentlyActive` read the subscription as inactive regardless
+    // of "the record was not deleted". `premiumPayload.endsAt` here is
+    // the webhook's own PROVEN effective expiry (see appleWebhook's
+    // `effectiveExpiresMs`: the real, signature-verified
+    // `gracePeriodExpiresDate` while genuinely still in a verified grace
+    // window, otherwise the transaction's own real expiresDate) -- never
+    // a client-supplied or estimated value. Applying it here is what
+    // actually extends access, not merely "not nulling the record".
     nextPremium = {
       ...(nextPremium as Record<string, unknown>),
+      endsAt: (premiumPayload as Record<string, unknown>).endsAt,
       autoRenew: false,
+      autoRenewOffReason:
+        input.forcePremiumStatus === 'pending' ? 'payment_pending' : 'user_canceled',
     };
   }
   if (

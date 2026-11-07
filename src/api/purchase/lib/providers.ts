@@ -65,6 +65,25 @@ export type VerifyOutcome = {
    * true` with `verified: false`).
    */
   identityAuthenticated: boolean;
+  /**
+   * Abonelik denetimi (kapanış, madde "ertelenmiş düşürme"): true only
+   * for a Google subscription whose OWN purchases.subscriptionsv2
+   * response shows this exact productId as the TARGET of another line
+   * item's `deferredItemReplacement` -- i.e. Google has already issued
+   * this token/purchase (confirmed, real, `identityAuthenticated: true`)
+   * but the CURRENTLY active entitlement is still the OLD product; this
+   * one only takes over at the old item's own next renewal. Per
+   * Google's own official purchases.subscriptionsv2 reference: the old
+   * line item carries `deferredItemReplacement` pointing at the new
+   * product until the old period ends, at which point the old item's
+   * expiryTime moves into the past, `deferredItemReplacement`
+   * disappears, and the new item "carries the current period" --so a
+   * LATER verify()/webhook for this SAME token, once that has actually
+   * happened, no longer sees this flag and proceeds normally. Never set
+   * true from client-supplied data -- only from Google's own live API
+   * response.
+   */
+  deferred?: boolean;
 };
 
 /** A 5xx / 429 from a store is transient: surface it as an error so callers retry
@@ -193,6 +212,55 @@ export const verifyGoogle = async (input: {
         payload: body,
         message: 'Google aboneliği talep edilen ürünle eşleşmiyor.',
         identityAuthenticated: false,
+      };
+    }
+    // Abonelik denetimi (kapanış, madde "ertelenmiş düşürme"): a
+    // DEFERRED replacement (ChangeSubscriptionParam.replacementMode ==
+    // DEFERRED, e.g. a downgrade) makes Google issue the NEW product's
+    // own token/purchase IMMEDIATELY -- confirmed from Google's own
+    // "Implement Subscription replacements" codelab: "the new purchase
+    // is issued right away" even though the entitlement itself only
+    // switches at the OLD item's next renewal. Querying
+    // purchases.subscriptionsv2 with this NEW token still returns BOTH
+    // line items; the OLD (currently active) one carries
+    // `deferredItemReplacement.productId` pointing at THIS exact
+    // productId until the real switch happens. Checking for that here
+    // -- scoped to exactly `input.productId` being the TARGET, never
+    // merely "some deferredItemReplacement exists somewhere in this
+    // response" -- is what correctly tells apart "this product is a
+    // real, currently active entitlement" from "this product is a
+    // real, authenticated, but not-yet-active scheduled change": a
+    // normal verify() for the CURRENTLY active product (whose own line
+    // item is never itself the TARGET of a replacement) is completely
+    // unaffected by this check.
+    const deferredToThisProduct = lineItems.some((item) => {
+      const rec = item as Record<string, unknown>;
+      const replacement = rec.deferredItemReplacement as
+        | Record<string, unknown>
+        | undefined;
+      return (
+        replacement != null &&
+        asString(replacement.productId) === input.productId
+      );
+    });
+    if (deferredToThisProduct) {
+      // Genuinely authenticated by Google (a real token for a real,
+      // scheduled change) -- never granted/applied now. The caller
+      // (purchase.ts) must never call upsertProfilePurchase's full-
+      // reset branch for a `verified: false` outcome, so the CURRENT
+      // (old) plan's entitlement, endsAt and remaining credits are left
+      // completely untouched by this request.
+      return {
+        verified: false,
+        status: 'pending',
+        provider: 'google_play',
+        transactionId: asString(body.latestOrderId) || asString(body.orderId),
+        purchaseToken,
+        payload: body,
+        message:
+          'Plan değişikliği mağaza tarafından onaylandı; mevcut dönem bitince uygulanacak.',
+        identityAuthenticated: true,
+        deferred: true,
       };
     }
     const exp = parseIso(asString(matched?.expiryTime));
