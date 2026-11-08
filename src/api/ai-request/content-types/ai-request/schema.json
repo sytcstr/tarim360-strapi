@@ -1,0 +1,41 @@
+{
+  "kind": "collectionType",
+  "collectionName": "ai_requests",
+  "info": {
+    "singularName": "ai-request",
+    "pluralName": "ai-requests",
+    "displayName": "AI Istek Kaydi"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "attributes": {
+    "operationId": {
+      "type": "string",
+      "unique": true
+    },
+    "payloadFingerprint": {
+      "type": "string"
+    },
+    "ownerProfileId": {
+      "type": "string"
+    },
+    "hasImage": {
+      "type": "boolean",
+      "default": false
+    },
+    "status": {
+      "type": "string"
+    },
+    "resultJson": {
+      "type": "json"
+    },
+    "forceRulesOnly": {
+      "type": "boolean",
+      "default": false
+    },
+    "errorType": {
+      "type": "string"
+    }
+  }
+}

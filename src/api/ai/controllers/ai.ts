@@ -1,6 +1,27 @@
+import { randomUUID } from 'crypto';
 import { readIdentity } from '../../../utils/identity';
-import { generateAgriAiReply } from '../../../utils/agri-ai';
+import {
+  generateAgriAiReply,
+  AgriAiProviderError,
+  isPromptWithinSupportedScope,
+  type AgriAiResult,
+} from '../../../utils/agri-ai';
 import { isPremiumActiveFromProfile } from '../../../utils/premium-sync';
+import {
+  fingerprintPayload,
+  isValidOperationId,
+  resolveOperation,
+} from '../../../utils/operation-idempotency';
+import {
+  claimUsageSlot,
+  releaseUsageSlot,
+  releaseUsageSlotByOperationId,
+  countUsageSlotsToday,
+  dayKeyFor,
+  isStalePending,
+  AI_REQUEST_UID,
+  type AiUsageChannel,
+} from '../../../utils/agri-ai-quota';
 
 const AI_LOG_UID = 'api::ai-log.ai-log';
 const PROFILE_SETTING_UID = 'api::profile-setting.profile-setting';
@@ -155,34 +176,35 @@ const cleanupOldAiLogs = async (ownerProfileId: string) => {
   }
 };
 
+/**
+ * textRemoteCount/imageRemoteCount now come from the atomic ai-usage-slot
+ * ledger (agri-ai-quota.ts), not from counting ai-log rows after the fact -
+ * ai-log is written only once a reply is fully produced, which is exactly
+ * the gap that let two concurrent near-limit requests both pass the old
+ * count-then-compare check. todayCount/historyCount/lastProvider stay
+ * ai-log-based (unaffected, purely informational/history fields).
+ */
 const loadTodayUsage = async (ownerProfileId: string) => {
-  const rows = (await strapi.entityService.findMany(AI_LOG_UID as any, {
-    filters: {
-      ownerProfileId,
-      createdAt: {
-        $gte: dayStartIso(),
-        $lte: dayEndIso(),
+  const dayKey = dayKeyFor(new Date());
+  const [rows, textRemoteCount, imageRemoteCount] = await Promise.all([
+    strapi.entityService.findMany(AI_LOG_UID as any, {
+      filters: {
+        ownerProfileId,
+        createdAt: { $gte: dayStartIso(), $lte: dayEndIso() },
       },
-    },
-    sort: ['createdAt:desc'],
-    limit: 200,
-    fields: ['provider', 'createdAt', 'scope', 'hasImage'],
-  })) as Record<string, unknown>[];
+      sort: ['createdAt:desc'],
+      limit: 200,
+      fields: ['provider', 'createdAt'],
+    }) as Promise<Record<string, unknown>[]>,
+    countUsageSlotsToday(strapi, { ownerProfileId, dayKey, channel: 'text' }),
+    countUsageSlotsToday(strapi, { ownerProfileId, dayKey, channel: 'vision' }),
+  ]);
 
   const list = Array.isArray(rows) ? rows : [];
-  const remoteRows = list.filter(
-    (row) => asString(row.provider).toLowerCase() === 'openai',
-  );
-  const textRemoteCount = remoteRows.filter(
-    (row) => !asBool(row.hasImage, false),
-  ).length;
-  const imageRemoteCount = remoteRows.filter((row) => asBool(row.hasImage, false))
-    .length;
   const lastProvider = list.length > 0 ? asString(list[0]?.provider) : '';
 
   return {
     todayCount: list.length,
-    remoteCount: remoteRows.length,
     textRemoteCount,
     imageRemoteCount,
     textRemoteLimit: DEFAULT_DAILY_TEXT_LIMIT,
@@ -190,6 +212,295 @@ const loadTodayUsage = async (ownerProfileId: string) => {
     historyCount: list.length,
     lastProvider,
   };
+};
+
+/**
+ * A real OpenAI call was attempted and failed. Log ONLY error type, duration
+ * and a request id - never the question text, photo data, tokens or the API
+ * key - and answer with an explicit error so the client can show a real
+ * error state (and offer retry) instead of a disguised local answer.
+ */
+const respondToAiProviderFailure = (ctx: any, err: AgriAiProviderError) => {
+  const requestId = randomUUID();
+  strapi.log.warn('[agri-ai] provider request failed', {
+    type: err.type,
+    durationMs: err.durationMs,
+    requestId,
+  });
+  ctx.internalServerError(
+    `Yapay zeka servisine su anda ulasilamiyor, lutfen tekrar deneyin. (hata kodu: ${requestId})`,
+  );
+};
+
+const respondStillProcessing = (ctx: any) => {
+  ctx.status = 409;
+  ctx.body = {
+    data: null,
+    error: {
+      status: 409,
+      name: 'RequestInProgress',
+      message:
+        'Onceki istegin hala isleniyor. Lutfen birkac saniye sonra tekrar deneyin.',
+    },
+  };
+};
+
+/**
+ * A prior attempt under this SAME operationId went stale (its 'pending' row
+ * is old enough that the handler that created it almost certainly
+ * crashed/restarted before ever recording an outcome) - whether the
+ * provider was actually reached is now permanently unknowable. Rather than
+ * silently opening a second provider call under the same id, this is a
+ * terminal, honest answer: tell the caller the outcome could not be
+ * confirmed and a genuinely NEW request (new operationId) is needed.
+ */
+const respondUnverified = (ctx: any) => {
+  ctx.status = 422;
+  ctx.body = {
+    data: null,
+    error: {
+      status: 422,
+      name: 'RequestUnverified',
+      message:
+        'Onceki istegin sonucu dogrulanamadi (sunucu yeniden baslamis olabilir). Lutfen yeni bir istek baslatin.',
+    },
+  };
+};
+
+const respondWithResult = (
+  ctx: any,
+  result: AgriAiResult,
+  identity: { email: string; ownerId: string },
+  forceRulesOnly: boolean,
+) => {
+  ctx.body = {
+    data: {
+      ...result,
+      email: identity.email,
+      ownerId: identity.ownerId,
+      forceRulesOnly,
+    },
+  };
+};
+
+type ChannelInput = {
+  channel: AiUsageChannel;
+  limit: number;
+  prompt: string;
+  rawPrompt: string;
+  scope: string;
+  imageBase64?: string;
+  fileName?: string;
+  hasImage: boolean;
+};
+
+/**
+ * Shared request/quota/idempotency flow for both agriAssistant and
+ * agriVision. Every new question carries a client-generated operationId
+ * (UUID); "Tekrar Dene" on the SAME question reuses it. The database (not
+ * an in-memory lock) arbitrates: operationId is unique on ai-request, and
+ * each unit of daily capacity is its own unique-keyed ai-usage-slot row
+ * (agri-ai-quota.ts) - two concurrent requests racing for the same
+ * operationId or the same last slot can only ever have one winner, enforced
+ * by the DB's own unique index, the same mechanism this codebase's existing
+ * operationId pattern (operation-idempotency.ts) already relies on.
+ */
+const handleAgriAiRequest = async (
+  ctx: any,
+  identity: { email: string; ownerId: string },
+  input: ChannelInput,
+) => {
+  // Old clients (no AI quota/retry round in their build yet) never send
+  // operationId at all - the field is simply missing. Generate one
+  // server-side so these clients keep getting a working AI reply with the
+  // SAME subscription/scope/quota enforcement as before; they just get no
+  // replay/dedup guarantee across their own retries (each request becomes a
+  // genuinely new one server-side, since nothing ties two of their requests
+  // together). A field that IS present but malformed still means the
+  // caller is trying to use the idempotency contract and getting it wrong -
+  // that stays a hard 400, unchanged.
+  const rawOperationId = asString(
+    (ctx.request?.body as Record<string, unknown>)?.operationId,
+  );
+  let operationId: string;
+  if (!rawOperationId) {
+    operationId = randomUUID();
+  } else if (isValidOperationId(rawOperationId)) {
+    operationId = rawOperationId;
+  } else {
+    return ctx.badRequest('operationId zorunlu ve UUID formatinda olmali.');
+  }
+
+  const fingerprint = fingerprintPayload({
+    channel: input.channel,
+    ownerId: identity.ownerId,
+    prompt: input.prompt,
+    rawPrompt: input.rawPrompt,
+    scope: input.scope,
+    imageBase64: input.imageBase64 ?? '',
+    fileName: input.fileName ?? '',
+  });
+
+  const resolution = await resolveOperation(
+    strapi,
+    AI_REQUEST_UID,
+    operationId,
+    fingerprint,
+  );
+
+  if (resolution.status === 'conflict') {
+    return ctx.badRequest(
+      'Bu istek kimligi farkli bir soru icerigiyle daha once kullanilmis.',
+    );
+  }
+
+  let existingRowId: number | null = null;
+  if (resolution.status === 'duplicate') {
+    const existing = resolution.existing;
+    if (existing.status === 'unknown') {
+      // This operationId was already given up on (see below) - terminal,
+      // forever. Never silently reopen a provider call under it again.
+      return respondUnverified(ctx);
+    }
+    if (existing.status === 'completed' && existing.resultJson) {
+      return respondWithResult(
+        ctx,
+        existing.resultJson as AgriAiResult,
+        identity,
+        asBool(existing.forceRulesOnly, false),
+      );
+    }
+    if (existing.status === 'pending') {
+      if (!isStalePending(existing)) {
+        // The first attempt (this device or another) is still genuinely in
+        // flight - never open a second provider call for the same question.
+        return respondStillProcessing(ctx);
+      }
+      // Stale: the provider may or may not have been reached before the
+      // handler that owned this row crashed/restarted - unknowable now.
+      // Do NOT silently retry under the same id (that is exactly the
+      // "second provider call after a crash" gap). Free whatever quota
+      // this attempt reserved so it isn't held hostage, mark the id
+      // terminal, and tell the caller to start a genuinely new request.
+      await releaseUsageSlotByOperationId(strapi, operationId);
+      await strapi.db.query(AI_REQUEST_UID).update({
+        where: { id: existing.id },
+        data: { status: 'unknown' },
+      });
+      return respondUnverified(ctx);
+    }
+    // status === 'failed': we KNOW what happened (our own code caught and
+    // recorded a definitive provider error, not a crash) - safe to retry
+    // under the same id. Reuse the existing row (update, not create) so
+    // operationId stays unique.
+    existingRowId = Number(existing.id);
+  }
+
+  const dayKey = dayKeyFor(new Date());
+  const withinScope = isPromptWithinSupportedScope({
+    prompt: input.prompt,
+    rawPrompt: input.rawPrompt,
+    scope: input.scope,
+    imageBase64: input.imageBase64,
+  });
+
+  let claimedSlotKey: string | null = null;
+  let forceRulesOnly = false;
+  if (withinScope) {
+    if (REMOTE_AI_ENABLED) {
+      const claim = await claimUsageSlot(strapi, {
+        ownerProfileId: identity.ownerId,
+        dayKey,
+        channel: input.channel,
+        limit: input.limit,
+        operationId,
+      });
+      claimedSlotKey = claim.claimed ? claim.slotKey ?? null : null;
+      forceRulesOnly = !claim.claimed;
+    } else {
+      forceRulesOnly = false; // generateAgriAiReply falls back locally anyway (no API key)
+    }
+  }
+
+  const persistRequestRow = async (
+    data: Record<string, unknown>,
+  ): Promise<void> => {
+    if (existingRowId) {
+      await strapi.db
+        .query(AI_REQUEST_UID)
+        .update({ where: { id: existingRowId }, data });
+      return;
+    }
+    try {
+      const created = await strapi.entityService.create(AI_REQUEST_UID as any, {
+        data: {
+          operationId,
+          payloadFingerprint: fingerprint,
+          ownerProfileId: identity.ownerId,
+          hasImage: input.hasImage,
+          ...data,
+        },
+      });
+      // This request is now the owner of this row - every later
+      // persistRequestRow call (e.g. pending -> completed/failed) must
+      // UPDATE it, never attempt a second create of the same operationId.
+      existingRowId = Number((created as Record<string, unknown>).id);
+    } catch (err) {
+      // Someone else's concurrent "new" request already inserted this
+      // operationId first - nothing more to persist on our side; the
+      // winner's row is already correct. Mirrors listing-comment.ts's
+      // create-then-reresolve recovery for the same race.
+      const already = await strapi.db
+        .query(AI_REQUEST_UID)
+        .findOne({ where: { operationId } });
+      if (!already) throw err;
+    }
+  };
+
+  await persistRequestRow({ status: 'pending' });
+
+  let result: AgriAiResult;
+  try {
+    result = await generateAgriAiReply({
+      prompt: input.prompt,
+      rawPrompt: input.rawPrompt,
+      scope: input.scope,
+      imageBase64: input.imageBase64,
+      fileName: input.fileName,
+      forceRulesOnly,
+    });
+  } catch (err) {
+    if (claimedSlotKey) await releaseUsageSlot(strapi, claimedSlotKey);
+    if (err instanceof AgriAiProviderError) {
+      await persistRequestRow({ status: 'failed', errorType: err.type });
+      return respondToAiProviderFailure(ctx, err);
+    }
+    await persistRequestRow({ status: 'failed', errorType: 'unknown' });
+    throw err;
+  }
+
+  if (claimedSlotKey && result.provider !== 'openai') {
+    await releaseUsageSlot(strapi, claimedSlotKey);
+  }
+
+  await persistRequestRow({
+    status: 'completed',
+    resultJson: result,
+    forceRulesOnly,
+  });
+
+  await cleanupOldAiLogs(identity.ownerId);
+  await createAiLog({
+    ownerEmail: identity.email,
+    ownerProfileId: identity.ownerId,
+    prompt: input.prompt,
+    rawPrompt: input.rawPrompt,
+    scope: input.scope,
+    hasImage: input.hasImage,
+    result,
+  });
+
+  return respondWithResult(ctx, result, identity, forceRulesOnly);
 };
 
 export default {
@@ -205,36 +516,14 @@ export default {
       return ctx.badRequest('Soru metni zorunludur.');
     }
 
-    const usage = await loadTodayUsage(identity.ownerId);
-    const forceRulesOnly =
-      REMOTE_AI_ENABLED &&
-      usage.textRemoteCount >= DEFAULT_DAILY_TEXT_LIMIT;
-
-    const result = await generateAgriAiReply({
-      prompt,
-      rawPrompt,
-      scope,
-      forceRulesOnly,
-    });
-    await cleanupOldAiLogs(identity.ownerId);
-    await createAiLog({
-      ownerEmail: identity.email,
-      ownerProfileId: identity.ownerId,
+    return handleAgriAiRequest(ctx, identity, {
+      channel: 'text',
+      limit: DEFAULT_DAILY_TEXT_LIMIT,
       prompt,
       rawPrompt,
       scope,
       hasImage: false,
-      result,
     });
-
-    ctx.body = {
-      data: {
-        ...result,
-        email: identity.email,
-        ownerId: identity.ownerId,
-        forceRulesOnly,
-      },
-    };
   },
 
   async agriVision(ctx) {
@@ -250,38 +539,16 @@ export default {
       return ctx.badRequest('Fotograf verisi zorunludur.');
     }
 
-    const usage = await loadTodayUsage(identity.ownerId);
-    const forceRulesOnly =
-      REMOTE_AI_ENABLED &&
-      usage.imageRemoteCount >= DEFAULT_DAILY_VISION_LIMIT;
-
-    const result = await generateAgriAiReply({
+    return handleAgriAiRequest(ctx, identity, {
+      channel: 'vision',
+      limit: DEFAULT_DAILY_VISION_LIMIT,
       prompt,
       rawPrompt,
       scope: 'agriculture',
       imageBase64,
       fileName,
-      forceRulesOnly,
-    });
-    await cleanupOldAiLogs(identity.ownerId);
-    await createAiLog({
-      ownerEmail: identity.email,
-      ownerProfileId: identity.ownerId,
-      prompt: prompt || 'Fotograf analizi',
-      rawPrompt: rawPrompt || 'Fotograf analizi',
-      scope: 'agriculture',
       hasImage: true,
-      result,
     });
-
-    ctx.body = {
-      data: {
-        ...result,
-        email: identity.email,
-        ownerId: identity.ownerId,
-        forceRulesOnly,
-      },
-    };
   },
 
   async history(ctx) {

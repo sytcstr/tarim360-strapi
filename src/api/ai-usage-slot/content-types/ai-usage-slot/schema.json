@@ -1,0 +1,30 @@
+{
+  "kind": "collectionType",
+  "collectionName": "ai_usage_slots",
+  "info": {
+    "singularName": "ai-usage-slot",
+    "pluralName": "ai-usage-slots",
+    "displayName": "AI Kullanim Slotu"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "attributes": {
+    "slotKey": {
+      "type": "string",
+      "unique": true
+    },
+    "ownerProfileId": {
+      "type": "string"
+    },
+    "dayKey": {
+      "type": "string"
+    },
+    "channel": {
+      "type": "string"
+    },
+    "operationId": {
+      "type": "string"
+    }
+  }
+}

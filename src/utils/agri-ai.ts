@@ -12,7 +12,7 @@ const OPENAI_BASE_URL =
 const OPENAI_MODEL = asString(process.env.OPENAI_MODEL) || 'gpt-4o-mini';
 const OPENAI_VISION_MODEL =
   asString(process.env.OPENAI_VISION_MODEL) || OPENAI_MODEL;
-const AI_TIMEOUT_MS = Math.max(
+export const AI_TIMEOUT_MS = Math.max(
   10000,
   asInt(process.env.AGRI_AI_TIMEOUT_MS, 35000),
 );
@@ -33,7 +33,27 @@ export type AgriAiResult = {
   confidenceLabel: string;
   provider: string;
   scope: string;
+  photoAnalyzed: boolean;
 };
+
+/**
+ * Thrown only when a real OpenAI call was attempted and failed (timeout,
+ * non-2xx, bad JSON, empty answer, network error). Deliberate local-answer
+ * paths (scope guard, forceRulesOnly, no API key configured) never throw
+ * this - they return a AgriAiResult directly. Callers must not fold this
+ * into a silent rules-based answer; it has to reach the client as an
+ * explicit error so a disguised "fake success" bubble is never shown.
+ */
+export class AgriAiProviderError extends Error {
+  type: string;
+  durationMs: number;
+  constructor(type: string, durationMs: number, message?: string) {
+    super(message || type);
+    this.name = 'AgriAiProviderError';
+    this.type = type;
+    this.durationMs = durationMs;
+  }
+}
 
 const parseJsonObject = (raw: string): Record<string, unknown> | null => {
   const text = asString(raw);
@@ -222,7 +242,7 @@ const mimeFromFileName = (fileName: string): string => {
   return 'image/jpeg';
 };
 
-const isPromptWithinSupportedScope = (input: AgriAiInput): boolean => {
+export const isPromptWithinSupportedScope = (input: AgriAiInput): boolean => {
   const scope = normalizeScope(input.scope);
   if (scope == 'app') return true;
   if (asString(input.imageBase64).length > 0 && !asString(input.rawPrompt || input.prompt)) {
@@ -263,6 +283,7 @@ const buildOutOfScopeReply = (scope: string): AgriAiResult => ({
   confidenceLabel: 'Yuksek',
   provider: 'scope_guard',
   scope,
+  photoAnalyzed: false,
 });
 
 const fallbackForApp = (prompt: string): AgriAiResult => {
@@ -307,6 +328,7 @@ const fallbackForApp = (prompt: string): AgriAiResult => {
     confidenceLabel: 'Yuksek',
     provider: 'server_rules',
     scope: 'app',
+    photoAnalyzed: false,
   };
 };
 
@@ -327,7 +349,10 @@ const fallbackForAgriculture = (
   const isNakliye = normalizedScope.startsWith('agriculture_nakliye');
   const isAlet = normalizedScope.startsWith('agriculture_alet');
   let suspectedIssue = 'Saha verisi eksikligi nedeniyle genel risk degerlendirmesi';
-  let confidenceLabel = hasImage ? 'Orta-Yuksek' : 'Orta';
+  // confidenceLabel never varies with hasImage here - this function is pure
+  // keyword-matching on text and never inspects the photo, so a photo's
+  // presence must not look like it raised certainty.
+  let confidenceLabel = 'Orta';
   let answer =
     `Sorunu ${domain} baglaminda ilk once gozlem, tarihce ve son degisiklikler uzerinden ele almak gerekir. Kesin teshis icin belirtilerin ne zaman basladigi, ne kadar alana yayildigi ve son uygulanan islem ya da yem-sulama degisikligi kritik olur.`;
   let recommendations = [
@@ -353,7 +378,7 @@ const fallbackForAgriculture = (
     ])
   ) {
     suspectedIssue = 'Yaprak hastaligi, mantar baskisi veya besin stresi olabilir';
-    confidenceLabel = hasImage ? 'Yuksek' : 'Orta-Yuksek';
+    confidenceLabel = 'Orta-Yuksek';
     answer =
       'Yaprakta leke, sararma veya kuruma varsa tek bir nedene atlamak dogru olmaz. Once sulama duzeni, yaprak alti zararlilari, son ilaclama ve mikro besin dengesini ayni tabloda kontrol etmek gerekir. Nem yuksekse mantar baskisi, duzensiz sulama varsa stres kaynagi one cikabilir.';
     recommendations = [
@@ -429,7 +454,7 @@ const fallbackForAgriculture = (
     ])
   ) {
     suspectedIssue = 'Zararli baskisi veya ikincil hastalik riski olabilir';
-    confidenceLabel = hasImage ? 'Orta-Yuksek' : 'Orta';
+    confidenceLabel = 'Orta';
     answer =
       'Zararli baskisinda dogru mudahale icin once zararlinin tipi, yogunlugu ve yayilim alani gorulmelidir. Erken donemde mekanik kontrol ve hedefli uygulama, gec kalmis genis alan ilaclamadan daha verimli olabilir.';
     recommendations = [
@@ -719,12 +744,12 @@ const fallbackForAgriculture = (
       'Dekara dusen miktari saha denemesiyle yeniden kalibre et.',
     ];
   } else if (hasImage && !asString(prompt)) {
-    suspectedIssue = 'Yalniz foto ile ilk tarama yapildi, ek metin gerekli';
+    suspectedIssue = 'Fotografiniz bu yanitta analiz edilmedi';
     answer =
-      'Fotograf ilk tarama icin yararlidir ancak kesin yonlendirme icin urunun turu, belirti suresi ve son uygulamalar gerekir. Gorselde riskli gorunen noktayi tarif eden kisa bir metin eklersen daha net yonlendirme verilebilir.';
+      'Bu yanit fotografinizin yapay zeka ile incelenmesiyle degil, genel bilgiye dayali olarak olusturuldu. Fotografin gercekten degerlendirilmesi icin bir sure sonra tekrar deneyebilir, ya da urunun turunu, belirtinin ne zaman basladigini ve hangi alanda oldugunu kisa bir metinle yazabilirsiniz.';
     recommendations = [
-      'Yakindan ve genel gorunum olacak iki farkli foto ekle.',
-      'Belirtinin suresini ve yayilim hizini yaz.',
+      'Bir sure sonra "Tekrar Dene" ile fotografi yeniden gonder.',
+      'Urun turunu, belirtinin suresini ve yayilim hizini yaz.',
       'Son sulama, ilac, gubre veya yem degisikligini ekle.',
     ];
   }
@@ -736,6 +761,7 @@ const fallbackForAgriculture = (
     confidenceLabel,
     provider: 'server_rules',
     scope,
+    photoAnalyzed: false,
   };
 };
 
@@ -777,6 +803,8 @@ const callOpenAi = async (input: AgriAiInput): Promise<AgriAiResult> => {
   const hasImage = asString(input.imageBase64).length > 0;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
+  const startedAt = Date.now();
+  const elapsed = () => Date.now() - startedAt;
   try {
     const userContent = hasImage
       ? [
@@ -790,33 +818,38 @@ const callOpenAi = async (input: AgriAiInput): Promise<AgriAiResult> => {
         ]
       : prompt || 'Lutfen kullanicinin tarimsal sorununu analiz et.';
 
-    const res = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: hasImage ? OPENAI_VISION_MODEL : OPENAI_MODEL,
-        temperature: 0.2,
-        response_format: { type: 'json_object' },
-        messages: [
-          {
-            role: 'system',
-            content: buildSystemPrompt(input),
-          },
-          {
-            role: 'user',
-            content: userContent,
-          },
-        ],
-      }),
-      signal: controller.signal,
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: hasImage ? OPENAI_VISION_MODEL : OPENAI_MODEL,
+          temperature: 0.2,
+          response_format: { type: 'json_object' },
+          messages: [
+            {
+              role: 'system',
+              content: buildSystemPrompt(input),
+            },
+            {
+              role: 'user',
+              content: userContent,
+            },
+          ],
+        }),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      const isAbort = err instanceof Error && err.name === 'AbortError';
+      throw new AgriAiProviderError(isAbort ? 'timeout' : 'network', elapsed());
+    }
 
     if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`AI provider failed (${res.status}): ${text}`);
+      throw new AgriAiProviderError(`http_${res.status}`, elapsed());
     }
 
     const body = (await res.json()) as Record<string, any>;
@@ -835,13 +868,13 @@ const callOpenAi = async (input: AgriAiInput): Promise<AgriAiResult> => {
           : '';
     const data = parseJsonObject(contentText);
     if (!data) {
-      throw new Error('AI provider response is not valid JSON.');
+      throw new AgriAiProviderError('invalid_json', elapsed());
     }
 
     const fallback = buildRulesFallback(input);
     const answer = asString(data.answer || data.message || data.text);
     if (!answer) {
-      throw new Error('AI provider returned empty answer.');
+      throw new AgriAiProviderError('empty_answer', elapsed());
     }
 
     const remoteTips = asStringList(
@@ -859,12 +892,20 @@ const callOpenAi = async (input: AgriAiInput): Promise<AgriAiResult> => {
         fallback.confidenceLabel,
       provider: 'openai',
       scope: normalizeScope(input.scope),
+      photoAnalyzed: hasImage,
     };
   } finally {
     clearTimeout(timer);
   }
 };
 
+/**
+ * Deliberate local-answer paths (out-of-scope, daily limit, no API key
+ * configured) still return a AgriAiResult quietly - those are not failures.
+ * A real attempted OpenAI call that fails throws AgriAiProviderError instead
+ * of being swallowed into a disguised rules-based answer; the controller is
+ * responsible for turning that into an explicit error response.
+ */
 export const generateAgriAiReply = async (
   input: AgriAiInput,
 ): Promise<AgriAiResult> => {
@@ -875,12 +916,8 @@ export const generateAgriAiReply = async (
   if (input.forceRulesOnly) {
     return buildRulesFallback(input);
   }
-  if (OPENAI_API_KEY) {
-    try {
-      return await callOpenAi(input);
-    } catch (_) {
-      return buildRulesFallback(input);
-    }
+  if (!OPENAI_API_KEY) {
+    return buildRulesFallback(input);
   }
-  return buildRulesFallback(input);
+  return await callOpenAi(input);
 };
