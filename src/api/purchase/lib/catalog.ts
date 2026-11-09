@@ -84,6 +84,17 @@ export const resolveCanonicalProductId = (productId: string): string => {
   return IOS_PREMIUM_PRODUCT_ALIASES[id] || id;
 };
 
+/**
+ * Premium abonelik güncelleme düzeltmesi: the ONE place every write path
+ * (interactive verify, idempotent-repair, Apple AND Google webhook) must
+ * go through to get a premium plan's display title -- never a caller-
+ * supplied/stale string. Returns null for a non-premium productId (doping,
+ * smart-ads, normal-listing quota), which still legitimately carry their
+ * own caller-supplied title (they have no catalog entry here at all).
+ */
+export const premiumPlanTitleForProduct = (productId: string): string | null =>
+  PREMIUM_PRODUCTS[resolveCanonicalProductId(productId)]?.planTitle ?? null;
+
 export const normalizeProvider = (platform: string): Provider | null => {
   const p = lower(platform);
   if (

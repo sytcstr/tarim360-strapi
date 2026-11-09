@@ -1319,7 +1319,11 @@ test('BUG (now fixed), kapanış madde "ertelenmiş düşürme": Pro -> Easy ert
   assert.equal(activation.status, 200, JSON.stringify(activation.body));
   const easyNowActive = await premiumOf(A.ownerId);
   assert.ok(isActive(easyNowActive));
-  assert.equal(easyNowActive.planTitle, 'Easy Premium', 'once Google\'s own data shows the real switch happened, Easy must now be correctly granted');
+  // Premium abonelik güncelleme düzeltmesi: planTitle is now ALWAYS the
+  // catalog's own title for the verified productId (never whatever label
+  // the client happened to send on the original, still-deferred verify()
+  // call) -- 'Kolay Premium' is PREMIUM_PRODUCTS['premium_easy_yearly_999'].planTitle (catalog.ts).
+  assert.equal(easyNowActive.planTitle, 'Kolay Premium', 'once Google\'s own data shows the real switch happened, Easy must now be correctly granted, with the catalog\'s own title');
   assert.equal(easyNowActive.rocketRemaining, 1, 'the real activation grants Easy\'s own full allotment -- not inherited/reduced by Pro\'s consumption (same policy as the non-deferred case)');
 
   // A REPEATED notification for the NOW-genuinely-active Easy token must
@@ -1370,7 +1374,10 @@ test('Google (kapanış, madde 1): DÜŞÜRME (Pro -> Easy) -- gerçek yeni dön
   assert.equal(r2.body.verified, true, JSON.stringify(r2.body));
   const easy = await premiumOf(A.ownerId);
   assert.ok(isActive(easy));
-  assert.equal(easy.planTitle, 'Easy Premium');
+  // Premium abonelik güncelleme düzeltmesi: catalog's own title for the
+  // verified productId wins, regardless of the 'Easy Premium' label this
+  // call itself sent above.
+  assert.equal(easy.planTitle, 'Kolay Premium');
   assert.equal(easy.rocketRemaining, 1, 'derived policy (same as Apple\'s, madde 2c): a genuinely new transaction grants the NEW plan\'s own full allotment (Easy=1), it does not inherit/reduce by Pro\'s consumption');
 
   // The OLD (Pro) token's own late terminal notification, arriving AFTER
@@ -1381,7 +1388,7 @@ test('Google (kapanış, madde 1): DÜŞÜRME (Pro -> Easy) -- gerçek yeni dön
   assert.equal(late.status, 200, JSON.stringify(late.body));
   const after = await premiumOf(A.ownerId);
   assert.ok(isActive(after), 'the delayed OLD-token (Pro) notification must not remove the CURRENT (Easy) entitlement');
-  assert.equal(after.planTitle, 'Easy Premium');
+  assert.equal(after.planTitle, 'Kolay Premium');
   assert.equal(after.rocketRemaining, 1);
 });
 
@@ -1517,6 +1524,165 @@ test('Apple webhook: auto-renew off keeps access until expiry; expiration and re
   const second = await boundAppleUser('arefund', 20);
   await anote(second.orig, { type: 'REFUND', signedDate: Date.now() + 10, revoked: Date.now() });
   assert.equal(await premiumOf(second.A.ownerId), null, 'refund/revocation -> removed');
+});
+
+// Premium abonelik güncelleme düzeltmesi: planTitle must ALWAYS come from
+// the SAME catalog row as hasAiAssistant/other rights for whichever
+// productId is the currently verified/active one -- never a caller-
+// supplied or stale-stored title carried over from a different product.
+test('Apple (abonelik güncelleme düzeltmesi): Easy -> Pro GERÇEKTEN aktifleşince paket adı VE AI hakkı birlikte Pro\'ya geçer', async () => {
+  const A = await register('easytopro');
+  const easy = appleTransactionJws('easy_premium_12ay', 365);
+  // Deliberately NOT overriding verify()'s default planTitle:'Plan'
+  // placeholder -- proves the backend derives the real title from the
+  // catalog/productId, never from whatever (possibly wrong) title a
+  // caller happens to send.
+  const r1 = await verify(A.jwt, { productId: 'easy_premium_12ay', platform: 'ios', receipt: easy.receipt, transactionId: easy.transactionId });
+  assert.equal(r1.body.verified, true, JSON.stringify(r1.body));
+  const before = await premiumOf(A.ownerId);
+  assert.ok(isActive(before));
+  assert.equal(before.planTitle, 'Kolay Premium', 'henüz yükseltme doğrulanmadı -- Easy adı ve hakları kalmalı');
+  assert.equal(before.hasAiAssistant, false, 'Easy planında AI hakkı olmamalı');
+
+  const pro = appleTransactionJws('pro_premium_12ay', 365);
+  const r2 = await verify(A.jwt, { productId: 'pro_premium_12ay', platform: 'ios', receipt: pro.receipt, transactionId: pro.transactionId });
+  assert.equal(r2.body.verified, true, JSON.stringify(r2.body));
+  assert.notEqual(r2.body.idempotent, true, 'bu gerçekten YENİ bir işlem olmalı, Easy işleminin tekrarı değil');
+
+  const after = await premiumOf(A.ownerId);
+  assert.ok(isActive(after));
+  assert.equal(after.planTitle, 'Pro Premium', 'Apple Pro\'nun aktif olduğunu doğruladığı anda paket adı Pro olmalı');
+  assert.equal(after.hasAiAssistant, true, 'AI hakkı paket adıyla BİRLİKTE, aynı anda açılmalı');
+});
+
+test('Apple (abonelik güncelleme düzeltmesi): Pro -> Easy SONRAKİ DÖNEME planlandıysa, gerçek geçişe kadar Pro adı VE AI hakkı birlikte korunur; geçiş gerçekleşince ikisi birlikte Easy\'ye döner', async () => {
+  const { A, orig } = await boundAppleUser('prodowngrade', 30);
+  const before = await premiumOf(A.ownerId);
+  assert.equal(before.planTitle, 'Pro Premium');
+  assert.equal(before.hasAiAssistant, true);
+
+  // Apple bir "sonraki yenilemede Easy'ye düş" bildirimi gönderir -- ama
+  // bu bildirimin KENDİ işlem anlık görüntüsü (signedTransactionInfo,
+  // `tx.productId`) hâlâ GEÇERLİ dönemin ürününü (Pro) taşır; sadece
+  // SONRAKİ yenileme için PLANLANAN ürün değişmiştir, aktif ürün değil
+  // (bkz. anote()'un ayrı tuttuğu `product` vs `renewalProduct`).
+  const scheduled = await anote(orig, { type: 'DID_CHANGE_RENEWAL_PREF', subtype: 'DOWNGRADE', signedDate: Date.now() + 10 });
+  assert.equal(scheduled.status, 200, JSON.stringify(scheduled.body));
+  const stillPro = await premiumOf(A.ownerId);
+  assert.ok(isActive(stillPro));
+  assert.equal(stillPro.planTitle, 'Pro Premium', 'sonraki dönem için PLANLANAN ürün, aktif paket sayılamaz');
+  assert.equal(stillPro.hasAiAssistant, true, 'gerçek geçişe kadar AI hakkı Pro ile birlikte korunmalı');
+
+  // Gerçek geçiş: Apple'ın bir SONRAKİ (gerçek) bildiriminin kendi işlem
+  // anlık görüntüsü artık GERÇEKTEN Easy'yi taşıyor.
+  const switched = await anote(orig, { type: 'DID_RENEW', product: 'easy_premium_12ay', signedDate: Date.now() + 20, expires: Date.now() + 400 * 86_400_000 });
+  assert.equal(switched.status, 200, JSON.stringify(switched.body));
+  const afterSwitch = await premiumOf(A.ownerId);
+  assert.ok(isActive(afterSwitch));
+  assert.equal(afterSwitch.planTitle, 'Kolay Premium', 'gerçek geçiş sonrası paket adı Easy olmalı');
+  assert.equal(afterSwitch.hasAiAssistant, false, 'AI hakkı paket adıyla BİRLİKTE, aynı anda Easy\'ye dönmeli');
+});
+
+test('Apple (abonelik güncelleme düzeltmesi): eski (düşük signedDate) bir Apple bildirimi, daha yeni doğrulanmış paketin üzerine yazamaz', async () => {
+  const { A, orig } = await boundAppleUser('stalenotify', 30);
+  const t0 = Date.now();
+
+  // Gerçek, daha YENİ bir geçiş: Easy'ye gerçekten geçiliyor.
+  const switched = await anote(orig, { type: 'DID_RENEW', product: 'easy_premium_12ay', signedDate: t0 + 1000, expires: t0 + 400 * 86_400_000 });
+  assert.equal(switched.status, 200, JSON.stringify(switched.body));
+  const easyNow = await premiumOf(A.ownerId);
+  assert.equal(easyNow.planTitle, 'Kolay Premium');
+  assert.equal(easyNow.hasAiAssistant, false);
+
+  // Apple'ın ESKİ (daha düşük signedDate), Pro'ya ait bir bildirimi GEÇ
+  // gelir -- yukarıdaki Easy geçişinden ÖNCEKİ bir duruma ait.
+  const stale = await anote(orig, { type: 'DID_RENEW', product: 'pro_premium_12ay', signedDate: t0 + 500, expires: t0 + 300 * 86_400_000 });
+  assert.equal(stale.body.skipped, true, 'eski/geç gelen bildirim işlenmemeli');
+
+  const after = await premiumOf(A.ownerId);
+  assert.equal(after.planTitle, 'Kolay Premium', 'eski Pro bildirimi, daha yeni doğrulanan Easy paketinin üzerine yazamamalı');
+  assert.equal(after.hasAiAssistant, false, 'AI hakkı da eski bildirimle geri açılmamalı');
+});
+
+// Gerçek üretim bulgusu (transactionId 2000001247297845, zincir
+// 2000001174918064): purchase-event'in ÜST DÜZEY productId/status/
+// expiresAt alanları Easy/verified/yeni bir tarihi gösterirken,
+// `payload.productId`/`payload.environment`/`payload.expiresDate` HÂLÂ
+// Pro/Sandbox/eski tarihi gösteriyordu. Bu test bunun TAM OLARAK NEDEN
+// olduğunu -- appleWebhook'un üst düzey alanları günceller ama
+// `payload`'ı ESKİ haliyle (sadece appleWebhook metadata'sı eklenmiş
+// şekilde) SAKLAR -- kesin olarak yeniden üretir.
+test('Apple webhook: ÜST DÜZEY productId/status/expiresAt güncellenir, ama saklı payload\'ın KENDİ productId/environment/expiresDate alanları İLK doğrulamadan dondurulmuş kalır (gerçek üretim bulgusunun yeniden üretimi)', async () => {
+  // 1) İLK doğrulama: Sandbox'ta bir Pro satın alma. payload = o anki tam
+  // Apple işlem anlık görüntüsü (productId:pro, environment:Sandbox,
+  // expiresDate:<orijinal>).
+  const A = await register('frozen-payload');
+  const original = appleTransactionJws('pro_premium_12ay', 30);
+  const r1 = await verify(A.jwt, {
+    productId: 'pro_premium_12ay',
+    platform: 'ios',
+    receipt: original.receipt,
+    transactionId: original.transactionId,
+  });
+  assert.equal(r1.body.verified, true, JSON.stringify(r1.body));
+
+  const rowAfterVerify = (await strapiInstance.db
+    .query('api::purchase-event.purchase-event')
+    .findOne({ where: { originalTransactionId: original.orig } })) as any;
+  assert.equal(rowAfterVerify.productId, 'pro_premium_12ay', 'sanity: ilk doğrulama üst düzey productId\'yi Pro yazdı');
+  assert.equal(rowAfterVerify.payload.productId, 'pro_premium_12ay', 'sanity: payload da Pro\'yu yansıtıyor (ilk anlık görüntü)');
+  const originalExpiresDate = rowAfterVerify.payload.expiresDate;
+  assert.ok(originalExpiresDate, 'sanity: payload.expiresDate ilk doğrulamadan saklanmış');
+
+  // 2) SONRAKİ, GERÇEKTEN Apple-imzalı bir webhook bildirimi -- AYNI
+  // abonelik (aynı originalTransactionId), ama ŞİMDİ Easy'ye geçmiş ve
+  // FARKLI (daha ileri) bir expiresDate taşıyor. Apple'ın kendi ortamı
+  // (anote() default: Production) -- bu adım production/sandbox'tan
+  // bağımsız, her ikisinde de AYNI mekanizma çalışır.
+  const newExpiry = Date.now() + 365 * 86_400_000;
+  const switched = await anote(original.orig, {
+    type: 'DID_RENEW',
+    product: 'easy_premium_12ay',
+    signedDate: Date.now() + 10,
+    expires: newExpiry,
+  });
+  assert.equal(switched.status, 200, JSON.stringify(switched.body));
+
+  const rowAfterWebhook = (await strapiInstance.db
+    .query('api::purchase-event.purchase-event')
+    .findOne({ where: { originalTransactionId: original.orig } })) as any;
+
+  // --- ÜST DÜZEY alanlar: GÜNCEL, doğru değerler (bu alanlar activePremium'u besler) ---
+  assert.equal(rowAfterWebhook.productId, 'easy_premium_12ay', 'üst düzey productId webhook ile Easy\'e güncellendi');
+  assert.equal(rowAfterWebhook.status, 'verified');
+  assert.ok(
+    Math.abs(new Date(rowAfterWebhook.expiresAt).getTime() - newExpiry) < 5000,
+    'üst düzey expiresAt webhook\'un GERÇEKTEN verdiği yeni tarihe güncellendi',
+  );
+
+  // --- payload'ın İÇİNDEKİ alanlar: HÂLÂ İLK doğrulamadan DONMUŞ -------
+  // purchase.ts'nin appleWebhook'u (payload: {...freshExisting.payload,
+  // appleLastSignedDate, appleLastTransactionSignedDate, appleWebhook:{...}})
+  // ESKİ payload'ı aynen yayıyor -- payload.productId/environment/
+  // expiresDate'i KENDİSİ hiçbir zaman güncellemiyor, sadece
+  // `appleWebhook` adlı YENİ, iç içe bir anahtar ekliyor.
+  assert.equal(rowAfterWebhook.payload.productId, 'pro_premium_12ay', 'payload.productId İLK (Pro) işlemden donmuş kalır -- webhook bunu asla güncellemez');
+  assert.equal(rowAfterWebhook.payload.expiresDate, originalExpiresDate, 'payload.expiresDate de aynı şekilde donmuş kalır');
+  assert.equal(rowAfterWebhook.payload.appleWebhook.notificationType, 'DID_RENEW', 'webhook SADECE kendi anlık bildirim verisini ayrı, iç içe bir alana EKLER');
+
+  // --- Sonuç: activePremium (profil) ÜST DÜZEY (güncel) alanlardan beslenir, donmuş payload'tan DEĞİL ---
+  const premium = await premiumOf(A.ownerId);
+  assert.equal(premium.planTitle, 'Kolay Premium', 'activePremium üst düzey (güncel) productId\'den doğru şekilde Easy\'e döner');
+  assert.equal(premium.hasAiAssistant, false);
+  assert.ok(
+    Math.abs(new Date(premium.endsAt).getTime() - newExpiry) < 5000,
+    'activePremium.endsAt üst düzey (güncel) expiresAt\'i yansıtır, payload.expiresDate\'teki ESKİ tarihi DEĞİL',
+  );
+  assert.notEqual(
+    new Date(premium.endsAt).getTime(),
+    new Date(originalExpiresDate).getTime(),
+    'profilin endsAt\'i ile payload\'daki donmuş expiresDate FARKLI olmalı -- gerçek üretim bulgusunun aynısı',
+  );
 });
 
 // Abonelik denetimi (kapanış, Apple grace period): sets the stored

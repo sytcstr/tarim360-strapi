@@ -137,7 +137,17 @@ const premiumPayloadForProduct = (input: {
     parsedEnds ||
     new Date(startsAt.getTime() + spec.durationDays * 24 * 60 * 60 * 1000);
   return {
-    planTitle: input.planTitle || spec.planTitle,
+    // Premium abonelik güncelleme düzeltmesi: the display title is ALWAYS
+    // derived from the catalog entry for the productId this call actually
+    // verified -- never from whatever title a caller (a webhook replaying
+    // an OLD purchase-event's stored title alongside a NEWLY verified,
+    // different productId; see appleWebhook) happens to pass in. `spec` is
+    // already resolved from `input.productId` above, so title and every
+    // other entitlement field below (hasAiAssistant, rocket/smartAd
+    // credits, ...) are always read from the exact same catalog row --
+    // they can never again diverge the way planTitle:"Pro Premium" +
+    // hasAiAssistant:false (Easy's real value) did.
+    planTitle: spec.planTitle,
     priceTl: input.priceTl > 0 ? input.priceTl : spec.priceTl,
     startedAt: startsAt.toISOString(),
     endsAt: endsAt.toISOString(),
@@ -189,9 +199,29 @@ export const upsertProfilePurchase = async (
     | Record<string, unknown>
     | null;
 
+  // Premium abonelik güncelleme düzeltmesi: resolved BEFORE the history
+  // record below so a premium product's history entry gets the same
+  // catalog-derived title `premiumPayloadForProduct` computed for
+  // `activePremium` -- never a separately-trusted `input.planTitle` that
+  // could name a DIFFERENT plan than the productId being recorded (e.g. a
+  // webhook replaying an old purchase-event's stale title alongside a
+  // newly-verified, different productId).
+  const premiumPayload = premiumPayloadForProduct({
+    productId: input.productId,
+    provider: input.provider,
+    planTitle: input.planTitle,
+    priceTl: input.priceTl,
+    premiumEndsAt: input.premiumEndsAt,
+    autoRenew: input.autoRenew,
+    transactionId: input.transactionId,
+    originalTransactionId: input.originalTransactionId,
+    purchasedAt: input.purchasedAt,
+    rocketRemainingOverride: input.rocketRemainingOverride,
+  });
+
   const record = toHistoryRecord({
     categoryTitle: input.categoryTitle,
-    planTitle: input.planTitle,
+    planTitle: premiumPayload ? premiumPayload.planTitle : input.planTitle,
     priceTl: input.priceTl,
     paymentProvider: input.provider,
     transactionId: input.transactionId,
@@ -254,18 +284,6 @@ export const upsertProfilePurchase = async (
   // scenario. `matchesCurrentEntitlement` alone is correct here.
   const canApplyDestructiveUpdate = matchesCurrentEntitlement;
 
-  const premiumPayload = premiumPayloadForProduct({
-    productId: input.productId,
-    provider: input.provider,
-    planTitle: input.planTitle,
-    priceTl: input.priceTl,
-    premiumEndsAt: input.premiumEndsAt,
-    autoRenew: input.autoRenew,
-    transactionId: input.transactionId,
-    originalTransactionId: input.originalTransactionId,
-    purchasedAt: input.purchasedAt,
-    rocketRemainingOverride: input.rocketRemainingOverride,
-  });
   if (premiumPayload && (!input.forcePremiumStatus || input.forcePremiumStatus === 'verified')) {
     nextPremium = premiumPayload;
   }

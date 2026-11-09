@@ -6,6 +6,7 @@ import {
   normalizeProvider,
   parseIso,
   PREMIUM_PRODUCTS,
+  premiumPlanTitleForProduct,
   PurchaseStatus,
   resolveCanonicalProductId,
 } from '../lib/catalog';
@@ -1065,9 +1066,21 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
 
         const productId = ALL_PRODUCTS.has(claimedProduct) ? claimedProduct : asString(freshExisting.productId);
         const tid = asString(freshExisting.transactionId);
+        // Premium abonelik güncelleme düzeltmesi: when this notification
+        // carries a genuinely verified, DIFFERENT productId than the
+        // purchase-event row already had (an upgrade/downgrade taking
+        // effect at renewal), the event's own stored planTitle must be
+        // re-derived from the SAME catalog row the new productId resolves
+        // to -- never left as whatever title the OLD product had. Falls
+        // back to the existing stored title only for a non-premium
+        // productId, which this subscription-specific webhook should never
+        // actually see.
+        const catalogPlanTitle = premiumPlanTitleForProduct(productId);
+        const eventPlanTitle = catalogPlanTitle ?? asString(freshExisting.planTitle);
         await upsertPurchaseEvent(strapi, {
           ...freshExisting,
           productId,
+          planTitle: eventPlanTitle,
           status,
           source: 'apple_webhook',
           expiresAt: expiresAt ?? null,
@@ -1089,7 +1102,12 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
         await upsertProfilePurchase(strapi, {
           ownerId: asString(freshExisting.ownerProfileId),
           categoryTitle: asString(freshExisting.categoryTitle),
-          planTitle: asString(freshExisting.planTitle),
+          // premiumPayloadForProduct ignores this for a resolved premium
+          // productId (always uses the catalog's own title instead) -- see
+          // persistence.ts. Passed as `eventPlanTitle` (not the raw stale
+          // freshExisting.planTitle) purely so a future non-premium caller
+          // of this same path never regresses to the old behavior.
+          planTitle: eventPlanTitle,
           priceTl: Number(freshExisting.priceTl ?? 0) || 0,
           provider: 'app_store',
           transactionId: tid,
