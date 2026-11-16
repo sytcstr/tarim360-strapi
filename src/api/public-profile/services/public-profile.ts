@@ -37,15 +37,23 @@
  * selected/spread when the corresponding flag is off; there is no
  * client-facing distinction between "no phone on file" and "has a phone
  * but chose not to show it" -- both simply omit the field.
- * Also excluded: activeModules/businessModules/disabledBusinessModules
- * (their availability computation is entangled with activePremium/
- * activePremiumSubscription, which must stay private) -- business-
- * vertical sections on a viewed profile may not reflect the owner's
- * active modules until a dedicated, deliberately public "which modules
- * are active" signal is designed. "Herkese açık ilan sayısı" from the
- * field inventory is also not implemented here: it is not a
- * profile-setting field at all (it would require aggregating other
- * content-types by owner), out of this endpoint's scope.
+ * The raw activeModules/businessModules/disabledBusinessModules/
+ * activePremium/activePremiumSubscription columns stay excluded (their
+ * availability computation is entangled with premium plan/price/dates,
+ * which must stay private) -- but `activeBusinessVerticals` below is now
+ * the dedicated, deliberately public "which modules are active" signal
+ * this comment used to say was still missing: just the resulting
+ * canonical vertical codes (`islenmis_urunler`/`lojistik`), computed the
+ * same way require-logistics-premium.ts's policy already does, never the
+ * private columns that feed it. Business_vertical_store.dart's
+ * activeModulesFor() previously had no way to resolve module state for
+ * any owner other than the current session, so a visitor viewing someone
+ * else's profile always saw every business-vertical section as inactive
+ * regardless of the real owner's state -- this closes that gap.
+ * "Herkese açık ilan sayısı" from the field inventory is also not
+ * implemented here: it is not a profile-setting field at all (it would
+ * require aggregating other content-types by owner), out of this
+ * endpoint's scope.
  *
  * PROFILE_RELEASE_AUDIT.md / BUG-002: `activePremium`/
  * `activePremiumSubscription` themselves stay private (selected here
@@ -130,7 +138,85 @@ const SELECT_FIELDS = [
   // spread into PublicProfileFields / the response body.
   'activePremium',
   'activePremiumSubscription',
+  // Selected ONLY to compute `activeBusinessVerticals` below (the raw
+  // columns themselves never leave this service) -- the "dedicated,
+  // deliberately public 'which modules are active' signal" this file's
+  // own header comment said was missing. Without it, business_vertical_
+  // store.dart's activeModulesFor() has no way to resolve module state
+  // for any owner OTHER than the current session (it only ever loads
+  // local prefs + a remote fetch for "me") -- so a visitor opening
+  // someone else's profile always saw İşlenmiş Ürünler/Nakliye & Lojistik
+  // as inactive regardless of the real owner's state, hiding those
+  // sections even when the owner has real products/vehicles/loads.
+  'businessModules',
+  'activeModules',
+  'disabledBusinessModules',
 ] as const;
+
+/** Mirrors require-logistics-premium.ts's own toList/normalizeModule --
+ * same shape, kept local here (that policy file has no exports) rather
+ * than risking a shared-util refactor touching an already-tested write
+ * path for this read-only addition. */
+const toModuleList = (value: unknown): unknown[] => {
+  if (!value) return [];
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) return parsed;
+      if (parsed && typeof parsed === 'object') return Object.values(parsed as Record<string, unknown>);
+    } catch (_) {
+      return value.split(',');
+    }
+  }
+  if (typeof value === 'object') return Object.values(value as Record<string, unknown>);
+  return [];
+};
+
+const normalizeModuleKey = (value: unknown): string => {
+  if (value == null) return '';
+  if (typeof value === 'object') {
+    const row = value as Record<string, unknown>;
+    return String(row.code || row.key || row.id || row.name || '').trim().toLowerCase();
+  }
+  return String(value).trim().toLowerCase();
+};
+
+// Same alias sets business_vertical_store.dart's _decode() accepts for
+// each vertical, so a module string written by either side of the sync
+// path is recognized the same way here.
+const PROCESSED_MODULE_KEYS = new Set([
+  'processed',
+  'processed_products',
+  'processed_products_store',
+  'islenmis_urunler',
+]);
+const LOGISTICS_MODULE_KEYS = new Set(['logistics', 'lojistik', 'nakliye', 'nakliyat']);
+
+const hasAnyModule = (row: Record<string, any>, keys: Set<string>): boolean => {
+  const modules = [...toModuleList(row?.activeModules), ...toModuleList(row?.businessModules)];
+  return modules.some((item) => keys.has(normalizeModuleKey(item)));
+};
+
+const isModuleDisabled = (row: Record<string, any>, keys: Set<string>): boolean => {
+  const disabled = toModuleList(row?.disabledBusinessModules);
+  return disabled.some((item) => keys.has(normalizeModuleKey(item)));
+};
+
+/** business_vertical_store.dart's own canonical encode() strings --
+ * `kIncludedPremiumBusinessVerticals`'s rule (active premium alone makes
+ * BOTH verticals "active" regardless of the explicit module list) is
+ * mirrored here via the `premiumActive ||` branch, then disabled-list
+ * gates either one off exactly like disabledModulesFor()'s own
+ * `entitled.where((v) => !disabled.contains(v))`. */
+const computeActiveBusinessVerticals = (row: Record<string, any>, premiumActive: boolean): string[] => {
+  const out: string[] = [];
+  const processedOn = premiumActive || hasAnyModule(row, PROCESSED_MODULE_KEYS);
+  if (processedOn && !isModuleDisabled(row, PROCESSED_MODULE_KEYS)) out.push('islenmis_urunler');
+  const logisticsOn = premiumActive || hasAnyModule(row, LOGISTICS_MODULE_KEYS);
+  if (logisticsOn && !isModuleDisabled(row, LOGISTICS_MODULE_KEYS)) out.push('lojistik');
+  return out;
+};
 
 export interface PublicProfileComment {
   id: string;
@@ -166,6 +252,7 @@ export interface PublicProfileFields {
   followingCount: number;
   comments: PublicProfileComment[];
   isPremium: boolean;
+  activeBusinessVerticals: string[];
 }
 
 export interface PublicProfileResult {
@@ -290,6 +377,7 @@ export const resolvePublicProfile = async (
   const { average, count } = computeRating(row);
   const phone = str(row.phone);
   const whatsapp = str(row.whatsapp);
+  const premiumActive = isPremiumActiveFromProfile(row);
 
   return {
     found: true,
@@ -327,7 +415,8 @@ export const resolvePublicProfile = async (
       followerCount: computeFollowCount(row.followerIds),
       followingCount: computeFollowCount(row.followingIds),
       comments: toPublicComments(row.incomingProfileComments ?? row.incomingComments),
-      isPremium: isPremiumActiveFromProfile(row),
+      isPremium: premiumActive,
+      activeBusinessVerticals: computeActiveBusinessVerticals(row, premiumActive),
     },
   };
 };

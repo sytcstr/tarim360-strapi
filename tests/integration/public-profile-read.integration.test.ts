@@ -121,8 +121,85 @@ test('response exposes exactly the allowlisted fields -- nothing else', async ()
       // akışı): redacted (no fromEmail/operationId/fingerprint) comments
       // list, completing the existing "Yorumlar" tab for any viewer.
       'comments', 'isPremium',
+      // Visitor-visibility fix: the dedicated, privacy-safe "which
+      // business verticals are active" signal this file's own header
+      // comment said was missing -- the raw businessModules/activeModules/
+      // disabledBusinessModules/activePremium columns never leave this
+      // service, only the already-computed canonical vertical codes.
+      'activeBusinessVerticals',
     ]),
   );
+});
+
+// ---------------------------------------------------------------------
+// Visitor-visibility fix: activeBusinessVerticals computation
+// ---------------------------------------------------------------------
+
+async function createProfileDirect(overrides: Record<string, unknown> = {}) {
+  return strapiInstance.entityService.create('api::profile-setting.profile-setting', {
+    data: {
+      profileId: `u_abv_${randomUUID().replace(/-/g, '_')}`,
+      ownerEmail: `abv-${randomUUID()}@test.local`,
+      displayName: 'Test Profil',
+      ...overrides,
+    },
+  });
+}
+
+test('activeBusinessVerticals: an explicit module with no premium exposes only that vertical', async () => {
+  const profile = await createProfileDirect({ businessModules: ['lojistik'] });
+  const res = await fetch(`${BASE_URL}/public-profiles/${profile.profileId}`);
+  const body = await res.json();
+  assert.equal(res.status, 200);
+  assert.deepEqual(body.profile.activeBusinessVerticals, ['lojistik']);
+});
+
+test('activeBusinessVerticals: active premium alone exposes both verticals, with no explicit module list', async () => {
+  const premium = {
+    planTitle: 'Pro Premium',
+    priceTl: 1999,
+    startedAt: new Date().toISOString(),
+    endsAt: new Date(Date.now() + 30 * 24 * 3600_000).toISOString(),
+    autoRenew: true,
+  };
+  const profile = await createProfileDirect({ activePremium: premium });
+  const res = await fetch(`${BASE_URL}/public-profiles/${profile.profileId}`);
+  const body = await res.json();
+  assert.equal(res.status, 200);
+  assert.deepEqual(new Set(body.profile.activeBusinessVerticals), new Set(['islenmis_urunler', 'lojistik']));
+});
+
+test('activeBusinessVerticals: active premium but one vertical explicitly disabled excludes only that one', async () => {
+  const premium = {
+    planTitle: 'Pro Premium',
+    priceTl: 1999,
+    startedAt: new Date().toISOString(),
+    endsAt: new Date(Date.now() + 30 * 24 * 3600_000).toISOString(),
+    autoRenew: true,
+  };
+  const profile = await createProfileDirect({
+    activePremium: premium,
+    disabledBusinessModules: ['lojistik'],
+  });
+  const res = await fetch(`${BASE_URL}/public-profiles/${profile.profileId}`);
+  const body = await res.json();
+  assert.equal(res.status, 200);
+  assert.deepEqual(body.profile.activeBusinessVerticals, ['islenmis_urunler']);
+});
+
+test('activeBusinessVerticals: an expired premium and no explicit modules exposes nothing', async () => {
+  const expiredPremium = {
+    planTitle: 'Eco Premium',
+    priceTl: 1599,
+    startedAt: new Date(Date.now() - 60 * 24 * 3600_000).toISOString(),
+    endsAt: new Date(Date.now() - 24 * 3600_000).toISOString(),
+    autoRenew: false,
+  };
+  const profile = await createProfileDirect({ activePremium: expiredPremium });
+  const res = await fetch(`${BASE_URL}/public-profiles/${profile.profileId}`);
+  const body = await res.json();
+  assert.equal(res.status, 200);
+  assert.deepEqual(body.profile.activeBusinessVerticals, []);
 });
 
 // ---------------------------------------------------------------------
