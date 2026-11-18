@@ -267,7 +267,17 @@ export const isPromptWithinSupportedScope = (input: AgriAiInput): boolean => {
   if (scope.startsWith('agriculture_alet')) {
     return hasAny(normalized, AGRI_KEYWORDS.alet);
   }
-  return hasAny(normalized, ALL_AGRI_KEYWORDS);
+  // Generic/auto 'agriculture' scope (the client's default, used whenever
+  // the user hasn't picked one of the narrower domain chips): a strict
+  // keyword allowlist here bounced many genuine questions - real users
+  // write in slang, with typos, or just don't happen to use one of the
+  // ~100 exact hardcoded roots - into the SAME static "out of scope" reply
+  // every time, which looked indistinguishable from the assistant being
+  // broken. Only the explicit, user-chosen sub-domain scopes above still
+  // enforce their narrower keyword guard; this generic path now matches
+  // 'app' scope's permissiveness and lets the real provider (and the daily
+  // quota, which already bounds cost) make the call instead.
+  return true;
 };
 
 const buildOutOfScopeReply = (scope: string): AgriAiResult => ({
