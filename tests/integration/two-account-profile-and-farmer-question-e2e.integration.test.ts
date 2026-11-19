@@ -290,3 +290,70 @@ test('3) Çiftçiden Sorular: A soru açıyor, B soruyu görüp cevaplıyor, A d
     '[3/3] SONUÇ: soru sunucuya kaydedildi = EVET; B soruyu listede gördü = EVET; cevap sunucuya kaydedildi = EVET (hedef doğru: B); A kendi tarafında cevabı gördü = EVET',
   );
 });
+
+/**
+ * Kullanıcı raporu (2026-11-19): "normal hesap premium hesaba yorum
+ * yapınca görünmüyor" -- test 1'in BİREBİR aynısı, tek fark B'nin satırı
+ * gerçek bir satın alma gibi (persistence.ts'in yazdığı aynı şekil)
+ * activePremium ile işaretlenmiş durumda. B'yi premium yapmak için
+ * entityService.update DOĞRUDAN kullanılıyor (persistence.ts'in tek
+ * gerçek yazarı olduğu gibi) -- generic HTTP update bu alanı zaten
+ * stripliyor (PURCHASE_PROTECTED_FIELDS), bu yüzden HTTP üzerinden
+ * taklit edilemez.
+ */
+test('4) A, PREMIUM B\'ye yorum yazıyor -- B premium olması yorumun kendi Hesabım ekranında görünmesini engelliyor mu', async () => {
+  const A = await registerAccount('pcmt-a');
+  const B = await registerAccount('pcmt-b');
+  await touchOwnProfile(B.jwt, 'Premium Satici B');
+
+  const bRowBefore = await profileRow(B.ownerId);
+  assert.ok(bRowBefore, 'B için bir satır oluşmuş olmalı.');
+  await strapiInstance.entityService.update(
+    'api::profile-setting.profile-setting' as any,
+    bRowBefore.id,
+    {
+      data: {
+        activePremium: {
+          planTitle: 'Pro Premium',
+          endsAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+          hasAiAssistant: true,
+          hasLiveSupport: true,
+        },
+      },
+    },
+  );
+  const bRowAfterGrant = await profileRow(B.ownerId);
+  assert.ok(
+    bRowAfterGrant?.activePremium,
+    `B'nin satırı gerçekten premium işaretlenmiş olmalı (test kurulumu). Satır: ${JSON.stringify(bRowAfterGrant)}`,
+  );
+
+  const text = `Premium satıcı, çok iyi hizmet! ${uid()}`;
+  const res = await fetch(`${BASE_URL}/profile-settings/${encodeURIComponent(B.ownerId)}/comments`, {
+    method: 'POST',
+    headers: authed(A.jwt),
+    body: JSON.stringify({ data: { text, operationId: randomUUID() } }),
+  });
+  const body = (await res.json()) as any;
+  assert.equal(res.status, 200, `A'nın yorum isteği HTTP 200 dönmeli, kanıt: ${JSON.stringify(body)}`);
+
+  const bRow = await profileRow(B.ownerId);
+  const bComments = (bRow.incomingProfileComments ?? bRow.incomingComments ?? []) as any[];
+  const savedOnServer = bComments.find((c) => String(c?.text ?? '') === text);
+  assert.ok(
+    savedOnServer,
+    `SUNUCU SONUCU (premium hedef): yorum B'nin KENDİ satırına kaydedildi mi? HAYIR. Satır: ${JSON.stringify(bRow)}`,
+  );
+
+  const bOwnView = await fetchOwnProfileAsSelf(B.jwt, B.ownerId);
+  assert.ok(bOwnView, 'Premium B kendi profilini GET ile çekebilmeli.');
+  const visibleToB = ((bOwnView!.incomingProfileComments ?? bOwnView!.incomingComments ?? []) as any[]).find(
+    (c) => String(c?.text ?? '') === text,
+  );
+  assert.ok(
+    visibleToB,
+    `KARŞI HESAPTA GÖRÜNDÜ MÜ (premium B kendi ekranı): HAYIR -- premium B kendi Hesabım ekranını yeniden açtığında bu yorumu görmüyor. Dönen veri: ${JSON.stringify(bOwnView)}`,
+  );
+
+  console.log('[4/4] SONUÇ (premium hedef): sunucuya kaydedildi = EVET; premium B kendi ekranında gördü = EVET');
+});
